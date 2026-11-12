@@ -37,12 +37,30 @@ from typing import Any, Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent      # .../dofus-network
 ROOT = REPO_ROOT.parent                                  # .../dofus-emu
 
-# Mutation targets the sweep runs no test against, measured 2026-11-04: 24 files,
-# 175 mutations. Most are exercised behaviourally by a test that does not name the
-# file (`planner.py` is 66 of them), so this is a bookkeeping ratchet, not a claim
-# that 175 mutations are unguarded -- but a *new* file with no witness is exactly
-# how the currency mutations came to report MISSED with every arm green.
-_MUT_UNWITNESSED_BASELINE = 24
+# Mutation targets no test the sweep runs touches, named rather than counted. Measured
+# 2026-11-04 by matching the text of each test body: 24 files, 175 mutations --
+# `planner.py` alone was 66 of them, because the tests exercise it without ever spelling
+# its path. That number was a fact about prose, not about coverage, and it hid the case it
+# was built for: a comment naming a file satisfied it (G114).
+#
+# Re-measured 2026-11-12 against what the tests actually execute, open and spawn
+# (`agent/witness.py`): 1 of 77. Twenty-three of the old 24 were text artefacts -- they
+# were witnessed all along. Two of the ones the new measurement found were wiring, not
+# coverage, and are fixed by naming the tests in the snippet (`test_tool_vocabulary`,
+# `test_brain_lifecycle`). The survivor is real: nothing in the gate loads that file, and
+# the only thing that does is a delegated `node tools/apply-map-resilience.js --check`,
+# whose argv does not name it, so its five mutations are invisible to every check the
+# sweep runs. Fixing that means giving the JS suite a witness, not editing this list.
+_MUT_UNWITNESSED_KNOWN = ("tools/patch-engine.js",)
+
+# Suites deliberately removed, with what replaced them. Without this, a deletion is
+# indistinguishable from a suite that stopped answering: the previous run's per-suite
+# count is still in `data/last_gate_run.json` and nothing in this run contradicts it.
+_RETIRED_SUITES = {
+    "test_the_snippet_can_see_its_own_mutation_targets":
+        "matched the text of each test body, so a comment counted as a witness; replaced "
+        "2026-11-12 by test_mutation_targets_have_witnesses, which measures (G114)",
+}
 
 _FAILURES: List[str] = []
 _CHECKS = 0
@@ -2162,7 +2180,7 @@ def test_client_confirmed_starts() -> None:
     import inspect
 
     from agent import planner as planner_module
-    from agent.planner import QuestPlanner, client_quest_ids
+    from agent.planner import START_ATTEMPT_LIMIT, QuestPlanner, client_quest_ids
 
     section("Client-confirmed quest starts (G31: no request for a quest this game lacks)")
 
@@ -2236,17 +2254,49 @@ def test_client_confirmed_starts() -> None:
 
     # The refusal must not be a side effect of the retirement set: `_skipped` is cleared
     # whenever the quest log changes (a quest given up on under the old log deserves a
-    # fresh look), so the only thing still holding the refused request down is the
-    # client-confirmed memory. Without it this is how 584 was sent 297 times by one
-    # character walking between maps.
+    # fresh look), so what holds a refused start down has to be the attempt count. Without
+    # it this is how 584 was sent 297 times by one character walking between maps.
+    #
+    # This check used to pass for the wrong reason: it wiped `_skipped` on a planner whose
+    # quest the client had never named, and the *not-confirmed* branch re-retired it, so
+    # the set refilled and the check read green. It now walks the real path -- ask, be
+    # ignored by the server, ask again until the attempt limit -- and what holds the
+    # refusal down afterwards is `_start_refused`, which no quest-log change clears.
     rearm = stub_planner()
-    rearm.choose("do all the quests", obs())
+    for _ in range(START_ATTEMPT_LIMIT + 2):
+        rearm.choose("do all the quests", obs(current_objective=tracker))
+        rearm.note_result("quest.advance", True, "", obs(current_objective=tracker))
+    check("a start the server never confirms is retired",
+          777 in rearm._skipped and 777 in rearm._start_refused,
+          str((sorted(rearm._skipped), sorted(rearm._start_refused))))
     rearm._skipped.discard(777)
     wiped = 777 not in rearm._skipped
-    after = rearm.choose("do all the quests", obs(quests_active={"4242": 0}))
+    after = rearm.choose("do all the quests", obs(current_objective=tracker))
     check("the guard holds with the retirement set wiped, from the client memory alone",
           wiped and after is None and 777 in rearm._skipped,
           str((wiped, None if after is None else after.tool, sorted(rearm._skipped))))
+    check("and a fork carries that memory too, or the twin re-asks",
+          rearm.fork()._start_refused == {777}, sorted(rearm.fork()._start_refused))
+    accepted = stub_planner()
+    accepted._start_refused.add(777)
+    accepted._pending_start = 777
+    accepted.note_result("quest.advance", True, "", obs(quests_active={"777": 0}))
+    check("a start the server does accept clears it, so a reopened quest is startable",
+          777 not in accepted._start_refused, sorted(accepted._start_refused))
+
+    # A quest the client has never named is not a verdict about the quest. Measured live
+    # 2026-11-11: 88 of 104 retirements were ids from the downloaded cache (which stops at
+    # 2,546) that the live client, whose ids start at 3,841, will never offer. They burned
+    # the retirement budget that exists for real dead ends, and the run then read
+    # "104 retired, nothing plannable" with three live quests ready.
+    unseen = stub_planner()
+    unseen.choose("do all the quests", obs())
+    check("a quest the client never named is counted as unseen, not retired",
+          unseen._skipped == set() and 777 in unseen._unseen,
+          str((sorted(unseen._skipped), sorted(unseen._unseen))))
+    check("and the retirement report says so in one line, separately",
+          "in the catalogue the client never offered" in unseen.last_no_call
+          or "never offered" in unseen.last_no_call, unseen.last_no_call)
 
     inherited = unreported.fork()
     check("a fork inherits the confirmed set instead of starting clean",
@@ -3309,6 +3359,8 @@ def test_promise_shadow_names_a_bounced_crossing() -> None:
     ap._dead_windows = 2
     ap._step_total = 0
     ap._verdict_counts = {}
+    ap._world_changes = 0
+    ap._read_answers = 0
     ap._promise_counts = {}
     ap._source_counts = {}
     ap.steps = []
@@ -3955,51 +4007,215 @@ def test_consult_gate_is_fitted_and_live() -> None:
           str((gate["evidence"]["gated_accuracy_nested"], round(nested, 4))))
 
 
-def test_mutation_targets_have_witnesses() -> None:
-    """A mutation no test opens is reported as MISSED, which looks like a weak gate.
+def _mutation_sweep_lists() -> Tuple[Dict[str, int], List[str]]:
+    """(target file -> mutation count, the tests the sweep runs), read from its own source.
 
-    The sweep runs a fixed list of gate tests per mutation. Twice the verdict
-    "MISSED, 0 failing checks" meant nothing in that list reads the mutated file --
-    once for the knowledge index's stores, once for `combat/observation.py`, and a
-    third time on 2026-11-04 for the four currency mutations written against
-    `BootState.cs` and `agent/brain_daemon.py`, which were green on every arm and
-    still MISSED. This check turns the discovery into a ratchet instead of a
-    footnote: every file a mutation rewrites should be named by a test the sweep
-    runs, and the ones that are not may only ever shrink.
+    The target is the *path* the driver passes to `read_text`/`write_text`, reconstructed
+    from the assignment chain (`ROOT / "agent" / "planner.py"`) rather than guessed from
+    the basename: two files can share a name, and `tools/` exists on both sides of the
+    repository root. `ROOT` is `dofus-network/`, `ROOT.parent` is the repository.
     """
-    section("Every mutation target is a file a test in the sweep opens")
-    mut = (REPO_ROOT / "tools" / "mutate_cause_gate.py").read_text(
-        encoding="utf-8", errors="replace").lower()
-    gate = (REPO_ROOT / "agent" / "regression.py").read_text(
-        encoding="utf-8", errors="replace").lower()
-    consts = dict(re.findall(r"^([a-z][a-z0-9_]*)\s*=\s*([^\n]+)$", mut, re.M))
-    tuples = re.findall(r'\(\s*"([^"]+)",\s*([a-z][a-z0-9_]*)\s*,', mut)
-    check("the mutation list is parsed, not guessed", len(tuples) > 400, len(tuples))
-    snippet = set(re.findall(r"r\.(test_[a-z0-9_]+),", mut))
-    check("the sweep's own test list is parsed", len(snippet) > 60, len(snippet))
-    starts = [(m.start(), m.group(1)) for m in re.finditer(r"^def (test_[a-z0-9_]+)\(", gate, re.M)]
-    bodies = {}
-    for i, (pos, name) in enumerate(starts):
-        end = starts[i + 1][0] if i + 1 < len(starts) else len(gate)
-        bodies[name] = gate[pos:end]
+    import ast
 
-    def target_file(const: str) -> str:
-        quoted = re.findall(r'"([^"]+)"', consts.get(const, ""))
-        return quoted[-1] if quoted else ""
+    source = (REPO_ROOT / "tools" / "mutate_cause_gate.py").read_text(
+        encoding="utf-8", errors="replace")
 
-    unwatched: Dict[str, int] = {}
-    for _label, const in tuples:
-        name = target_file(const)
-        if not name or not name.endswith((".py", ".cs", ".js", ".go")):
+    def chain(node) -> List[Any]:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return chain(node.left) + chain(node.right)
+        if isinstance(node, ast.Constant):
+            return [node.value]
+        if isinstance(node, ast.Name):
+            return [("name", node.id)]
+        if isinstance(node, ast.Attribute):
+            return [("attr", node.attr)]
+        return []
+
+    bases = {"ROOT": REPO_ROOT, "REPO_ROOT": REPO_ROOT}
+    consts: Dict[str, Path] = {}
+    snippet = ""
+    for node in ast.parse(source).body:
+        if not (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)):
             continue
-        if not any(name in bodies.get(test, "") for test in snippet):
-            unwatched[name] = unwatched.get(name, 0) + 1
-    check("the currency probe's own files are witnessed by name",
-          "bootstate.cs" not in unwatched and "brain_daemon.py" not in unwatched,
-          str(sorted(k for k in unwatched if k in ("bootstate.cs", "brain_daemon.py"))))
-    check("the unwitnessed set has not grown since it was measured",
-          len(unwatched) <= _MUT_UNWITNESSED_BASELINE,          "%d targets, %d mutations: %s" % (len(unwatched), sum(unwatched.values()),
-                                           sorted(unwatched)))
+        target_name = node.targets[0].id
+        if target_name == "SNIPPET":
+            snippet = ast.literal_eval(node.value)
+            continue
+        parts = chain(node.value)
+        if not parts:
+            continue
+        head = parts[0]
+        base = None
+        if isinstance(head, tuple) and head[0] == "name":
+            base = bases.get(head[1])
+        elif isinstance(head, tuple) and head[0] == "attr" and head[1] == "parent":
+            base = ROOT                       # `ROOT.parent` -> the repository root
+        elif len(parts) > 1 and isinstance(parts[1], tuple) and parts[1][1] == "parent":
+            base = ROOT
+        if base is None or not all(isinstance(p, str) for p in parts[1:]):
+            continue
+        consts[target_name] = base.joinpath(*[p for p in parts[1:] if isinstance(p, str)])
+
+    targets: Dict[str, int] = {}
+    for const_name in re.findall(r'^\s+\("(?:[^"]*)",\s*([A-Z0-9_]+),', source, re.M):
+        path = consts.get(const_name)
+        if path is not None:
+            targets[str(path).replace("\\", "/")] = targets.get(
+                str(path).replace("\\", "/"), 0) + 1
+    # In the order the sweep runs them, not sorted: two of the tests it lists measure what
+    # the ones before them did (the duration budget, the delegation registry), so a caller
+    # that replays the list has to replay it in this order to see them pass.
+    order: List[str] = []
+    for name in re.findall(r"r\.(test_[a-z0-9_]+)", snippet):
+        if name not in order:
+            order.append(name)
+    return targets, order
+
+
+def test_mutation_targets_have_witnesses() -> None:
+    """A mutation no test touches is reported as MISSED, which looks like a weak gate.
+
+    The sweep runs a fixed list of gate tests per mutation. Three times the verdict
+    "MISSED, 0 failing checks" meant nothing in that list touches the mutated file --
+    the knowledge index's stores, `combat/observation.py`, and on 2026-11-04 the four
+    currency mutations written against `BootState.cs` and `agent/brain_daemon.py`, green
+    on every arm and still MISSED.
+
+    The first ratchet for this (2026-11-04) matched the *text* of each test body, and
+    measured 24 unwitnessed files out of 77. That number was a fact about prose: it
+    counted `planner.py` (66 mutations) as unwitnessed because its tests call the planner
+    without spelling its path, and it accepted a comment as a witness. On 2026-11-12 the
+    `castable_error` anchors proved the cost -- they reported MISSED, the suite that was
+    supposed to cover them went green on a docstring, and nothing could tell the two
+    apart. So the ratchet now asks `agent/witness.py`, which records what each test
+    *executes*, *opens* and *spawns*: the same 77 files measure **1 unwitnessed**, and
+    the one is named in `_MUT_UNWITNESSED_KNOWN` rather than described as a count. A file
+    no snippet test touches is a red gate that names the test which does touch it.
+    """
+    from agent import witness
+
+    section("Every mutation target is a file a test in the sweep actually touches")
+    targets, snippet = _mutation_sweep_lists()
+    check("the mutation list and the sweep's own test list are parsed",
+          len(targets) >= 70 and len(snippet) >= 100, (len(targets), len(snippet)))
+    check("the witness instrument ran for this gate",
+          witness.available(), witness.error())
+    if not witness.available():
+        return
+    recorded = set(witness.recorded())
+    check("it recorded the suites above, not an empty map", len(recorded) > 100, len(recorded))
+
+    # A ratchet that ran before the suites it asks about would report every target as
+    # unwitnessed, which reads like a missing test. Separate the two cases.
+    not_run = sorted(set(snippet) - recorded)
+    check("every test the sweep runs also ran before this check", not not_run, not_run[:6])
+
+    # A test that opens almost every target is reading the tree, not asserting on a file.
+    # Measured 2026-11-12: `test_every_mutation_anchor_still_points_at_code` opens 77 of
+    # 77 and `test_doc_facts_self_witness` 74 of 77 -- and the first deliberately *opts out
+    # of judging* inside a sweep, so counting it would restore exactly the false comfort
+    # this ratchet exists to remove. The threshold is a fraction of the target list rather
+    # than a magic number: at 90%, an ordinary suite that touches a dozen files is kept.
+    fan: Dict[str, int] = {}
+    for target in targets:
+        for name in witness.witnesses_of(target):
+            fan[name] = fan.get(name, 0) + 1
+    ceiling = 0.9 * len(targets)
+    scanners = sorted(name for name, count in fan.items() if count > ceiling)
+    unwitnessed: Dict[str, str] = {}
+    for target, count in sorted(targets.items()):
+        hits = witness.witnesses_of(target)
+        inside = {name: kinds for name, kinds in hits.items()
+                  if name in snippet and fan.get(name, 0) <= ceiling}
+        if inside:
+            continue
+        reason = ("only %s, which %s"
+                  % (", ".join(sorted(hits)),
+                     "the sweep does not run" if not any(n in snippet for n in hits)
+                     else "only scan the tree"))
+        unwitnessed[witness.normalise(target)] = "%d mutation(s): %s" % (count, reason)
+    check("the scan-only witnesses are named, not counted as coverage",
+          len(scanners) <= 2, scanners)
+    known = {witness.normalise(str(ROOT / entry)) for entry in _MUT_UNWITNESSED_KNOWN}
+    check("the unwitnessed set is exactly the one measured on 2026-11-12",
+          set(unwitnessed) == known,
+          {"new": sorted(set(unwitnessed) - known),
+           "fixed (drop it from _MUT_UNWITNESSED_KNOWN)": sorted(known - set(unwitnessed)),
+           "detail": {k: unwitnessed.get(k) for k in sorted(set(unwitnessed) - known)}})
+
+    # The measurement is only worth its cost if it can be read: name the witness for the
+    # files this session changed, so the next reader sees which suite owns which target.
+    for probe in ("agent/planner.py", "combat/battle_solver.py"):
+        hits = witness.witnesses_of(probe)
+        check("%s is witnessed by a suite the sweep runs" % probe,
+              any(name in snippet for name in hits), sorted(hits)[:4])
+
+
+def test_the_witness_instrument_sees_what_a_test_touches() -> None:
+    """The ratchet's instrument, witnessed by itself.
+
+    `test_mutation_targets_have_witnesses` now reports zero unwitnessed targets, and a
+    zero is only worth reading if the instrument that produced it can be shown to see
+    anything. Measured 2026-11-12 while writing this: an empty map and a fully covered
+    map look identical to a check that only counts entries.
+
+    Each channel is proved against a file this test creates, so the probe cannot pass on
+    something the instrument already knew about:
+
+    * `exec` -- a module compiled from a temp path must be recorded as *that* path, which
+      is the attribution the ratchet relies on.
+    * `read` -- the same file, opened, and a sibling that is only written must not count.
+    * `spawn` -- a child process whose argv carries the probe's path. This is the only
+      channel that sees a suite delegated to `node` or to `unittest`, which is how
+      `tools/test_fight_state_fields.js` is witnessed at all.
+    """
+    import importlib.util
+    import tempfile
+
+    from agent import witness
+
+    section("The witness instrument sees what a test touches")
+    check("the instrument installs on this interpreter",
+          witness.install() or witness.available(), witness.error())
+    if not witness.available():
+        return
+    me = "test_the_witness_instrument_sees_what_a_test_touches"
+    own = not witness.active()
+    tmp = Path(tempfile.mkdtemp())
+    probe = tmp / "witness_probe_module.py"
+    probe.write_text("def ping():\n    return 7\n", encoding="utf-8")
+    written_only = tmp / "witness_probe_written.txt"
+    if own:
+        witness.start(me)
+    try:
+        spec = importlib.util.spec_from_file_location("witness_probe_module", str(probe))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        written_only.write_text("x", encoding="utf-8")
+        executed = witness.files(me).get("exec", set())
+        check("a file's code is recorded as that file, by path",
+              module.ping() == 7
+              and any(p.endswith("/witness_probe_module.py") for p in executed),
+              sorted(p for p in executed if "witness_probe" in p))
+        check("opening it for reading is recorded too",
+              any(p.endswith("/witness_probe_module.py")
+                  for p in witness.files(me).get("read", set())),
+              sorted(p for p in witness.files(me).get("read", set()) if "witness_probe" in p))
+        check("a file this test only wrote is not a read",
+              not any(p.endswith("/witness_probe_written.txt")
+                      for p in witness.files(me).get("read", set())),
+              sorted(p for p in witness.files(me).get("read", set()) if "written" in p))
+        subprocess.run([sys.executable, str(probe)], capture_output=True, timeout=120)
+        check("a child process is recorded with the path in its argv",
+              any("witness_probe_module.py" in line
+                  for line in witness.files(me).get("spawn", set())),
+              sorted(witness.files(me).get("spawn", set()))[:2])
+    finally:
+        if own:
+            witness.stop()
+    check("the map is keyed by test name, so a ratchet can name its witness",
+          me in witness.recorded() and bool(witness.witnesses_of("agent/regression.py")),
+          len(witness.recorded()))
 
 
 def test_js_page_suites() -> None:
@@ -4043,6 +4259,7 @@ def test_js_page_suites() -> None:
                    "tools/test_inv_unequip.js",
                    "tools/test_nav_doorless_exit.js",
                    "tools/test_nav_edge_step_off.js",
+                   "tools/test_nav_walk_beside.js",
                    "tools/test_reply_text_fallback.js",
                    "tools/test_door_arrival.js",
                    "tools/test_fight_planner.js",
@@ -5048,7 +5265,22 @@ def test_failure_causes() -> None:
          "tap.interactive", "invalid_assumption"),
         ("no live fight board: the client is not in a fight", "fight.plan",
          "unavailable"),
+        # The client's own pathfinder refusing a cell. These used to land in the
+        # `stale_state` tail because nothing here matched them, so 44 live failures
+        # against one unreachable NPC were filed as "re-observe" and retried.
+        ("could not walk next to npc 3912: _movePlayerOnMap noPath:242:269",
+         "quest.advance", "wrong_target"),
+        ("no path to cell 269 on map 146277376", "nav.goto", "wrong_target"),
     )
+    # ...but the bridge's own wording must not be dragged into that bucket by the word
+    # "reachable": the loop treats "not reachable" as the client window being gone, which
+    # is a different answer from "this cell cannot be walked to".
+    check("a dead bridge is not filed as a wrong target",
+          Controller.cause_of(
+              "failed", "nav.goto", False,
+              "directive bridge at http://127.0.0.1:8893/directive not reachable "
+              "(unreachable: http://127.0.0.1:8893/directive (refused))",
+              {"map_id": 1}, {"map_id": 1}) != "wrong_target")
     for text, tool, want in live:
         got = Controller.cause_of("failed", tool, False, text, {"map_id": 1}, {"map_id": 1})
         check("live failure classifies: %s" % tool, got == want, "%s != %s | %s"
@@ -5156,9 +5388,11 @@ def test_failure_causes() -> None:
     check("both decision sites pass the game-level outcome",
           "ok=step_ok, error=step_error" in src and "ok=False, error=refusal" in src)
     check("the goal the policy cannot express is logged as a decision",
-          src.count("self._emit_decision(") == 3
+          src.count("self._emit_decision(") == 4
+          and src.count("self._emit_decision(") == src.count("self.controller.on_step(")
           and src.count('"policy returned no call"') == 3,
-          "one emit per decision path: %d" % src.count("self._emit_decision("))
+          "one emit per decision path: %d emits over %d controller calls"
+          % (src.count("self._emit_decision("), src.count("self.controller.on_step(")))
 
 
 def test_absent_client_recovery() -> None:
@@ -6119,12 +6353,15 @@ def test_battle_log_and_challenges() -> None:
     from combat.fight_estimate import CHALLENGE_BONUS, FightOutcomeLog
     import time as _time
 
-    def resolve(end: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def resolve(end: Optional[Dict[str, Any]], hp_before: float = 10,
+                hp_after: float = 10, alive: bool = True,
+                fight_id: int = 7) -> Dict[str, Any]:
         log = FightOutcomeLog(Path(tempfile.mkdtemp()) / "outcomes.jsonl")
-        log.start({}, {"in_fight": True, "fight_id": 7,
-                       "hp": {"life": 10, "max": 10}}, "s", started_by="fight.join")
-        observation = {"in_world": True, "in_fight": False, "alive": True,
-                       "hp": {"life": 10, "max": 10},
+        log.start({}, {"in_fight": True, "fight_id": fight_id,
+                       "hp": {"life": hp_before, "max": hp_before}}, "s",
+                  started_by="fight.join")
+        observation = {"in_world": True, "in_fight": False, "alive": alive,
+                       "hp": {"life": hp_after, "max": hp_after},
                        "last_fight_end": end}
         return log.resolve(observation, "s") or {}
 
@@ -6149,6 +6386,90 @@ def test_battle_log_and_challenges() -> None:
     check("a stale end message's challenges are not credited",
           stale.get("challenge_bonus") == 0.0,
           str(stale.get("challenge_bonus")))
+
+    # Measured on the recorded ledger (16 fight_outcome rows, 14 resolved): hp_loss
+    # was 0.0 on every one while five fights had actually lost 19, 20, 25, 11 and
+    # 43 HP, and `turns` was None on all 16. The character regenerates between the
+    # last hit and the observation, so an HP delta measures the regen, not the fight.
+    def action_row(kind: str, **fields: Any) -> Dict[str, Any]:
+        # Live shape: `_agentBattleRow` emits every one of these keys, and `fight_id`
+        # is null on action rows -- only the lifecycle messages carry it. A fixture
+        # that stamped the id on every row would pass while a reader that filtered
+        # on it deleted the whole signal.
+        row = {"type": kind, "at_action": 300, "source": -1, "target": -1,
+               "spell": None, "spell_level": None, "cell": None,
+               "destination_cell": None, "effect": None, "critical": None,
+               "delta": None, "value": None, "loss": None,
+               "permanent_damages": None, "shield_loss": None, "fight_id": None}
+        row.update(fields)
+        return row
+
+    hurt_log = [
+        action_row("GameFightNewRoundMessage"),
+        action_row("GameActionFightLifePointsLostMessage", target=4434148, loss=19),
+        action_row("GameActionFightLifePointsLostMessage", target=999, loss=133),
+        action_row("GameFightTurnStartMessage"),
+        action_row("GameFightTurnStartMessage"),
+        action_row("GameFightNewRoundMessage"),
+        action_row("GameActionFightLifePointsLostMessage", target=4434148, loss=1),
+        action_row("GameFightTurnStartMessage"),
+        action_row("GameFightTurnStartMessage"),
+    ]
+    hurt_end = dict(base_end, my_id=4434148, battle_log=hurt_log)
+    healed = resolve(hurt_end, hp_before=120, hp_after=125)
+    check("damage taken is read from the fight log, not from post-regen HP",
+          healed.get("hp_loss") == 20.0
+          and healed.get("hp_loss_source") == "battle_log",
+          "the log holds 20 HP of mine and 133 of the enemy's; got "
+          + str({k: healed.get(k) for k in ("hp_loss", "hp_loss_source")}))
+    check("turns counts rounds, the unit expected_turns is calibrated in",
+          healed.get("turns") == 2,
+          "2 rounds against 4 fighter turns in the same log; got "
+          + str(healed.get("turns")))
+    quiet = resolve(dict(base_end, my_id=4434148, battle_log=[
+        action_row("GameFightNewRoundMessage"),
+        action_row("GameActionFightLifePointsLostMessage", target=999, loss=84),
+    ]), hp_before=125, hp_after=125)
+    check("a log carrying damage rows, none of them mine, is a real zero",
+          quiet.get("hp_loss") == 0.0
+          and quiet.get("hp_loss_source") == "battle_log",
+          str({k: quiet.get(k) for k in ("hp_loss", "hp_loss_source")}))
+    blind = resolve(dict(base_end, my_id=4434148, battle_log=[
+        action_row("GameFightSynchronizeMessage")]), hp_before=120, hp_after=110)
+    check("a log with no damage row cannot tell zero damage from missing rows",
+          blind.get("hp_loss_source") == "hp_delta" and blind.get("hp_loss") == 10.0,
+          str({k: blind.get(k) for k in ("hp_loss", "hp_loss_source")}))
+    stale_log = resolve(dict(hurt_end, at=(_time.time() - 3600.0) * 1000.0),
+                        hp_before=120, hp_after=125)
+    check("a stale end message's log is not read as this fight's damage",
+          stale_log.get("hp_loss_source") == "hp_delta"
+          and stale_log.get("turns") is None,
+          str({k: stale_log.get(k) for k in ("hp_loss_source", "turns")}))
+    # A flee, a timeout and a victory all leave the character standing, so HP alone
+    # cannot decide a fight. Two of the 14 resolved rows were wins invented this
+    # way: one with no end message at all, one whose end belonged to fight 125.
+    no_verdict = resolve(None, hp_before=55, hp_after=60)
+    check("standing alive with no server verdict is not a win",
+          no_verdict.get("won") is None and no_verdict.get("reward") is None
+          and no_verdict.get("won_source") == "unknown",
+          str({k: no_verdict.get(k) for k in ("won", "reward", "won_source")}))
+    mismatched = resolve(dict(hurt_end, fight_id=125),
+                         hp_before=135, hp_after=135, fight_id=124)
+    check("another fight's end lends neither a verdict nor a log",
+          mismatched.get("won") is None
+          and mismatched.get("hp_loss_source") == "hp_delta"
+          and mismatched.get("turns") is None,
+          str({k: mismatched.get(k)
+               for k in ("won", "hp_loss_source", "turns")}))
+    dead = resolve(None, hp_before=10, hp_after=0, alive=False)
+    check("a death is a loss without needing a server verdict",
+          dead.get("won") is False and dead.get("won_source") == "death"
+          and dead.get("reward") == 0.0,
+          str({k: dead.get(k) for k in ("won", "won_source", "reward")}))
+    fled = resolve(dict(base_end, won=False), hp_before=10, hp_after=10)
+    check("the server's verdict outranks a character still standing at full HP",
+          fled.get("won") is False and fled.get("won_source") == "server_end",
+          str({k: fled.get(k) for k in ("won", "won_source")}))
 
 
 def test_keep_alive_instrument() -> None:
@@ -6569,17 +6890,30 @@ def test_index_route_travel() -> None:
 
     # A house: the client knows the map's four edges but reports no crossable
     # border, because the way out is a door. No map id can be walked from there.
-    house = {"map_id": 146276352, "cell": 312,
-             "map": {"map_id": 146276352, "exits": [],
-                     "neighbours": {"left": 146407936, "right": 146276864,
-                                    "top": 146276609, "bottom": 146276353}}}
+    # The id is synthetic on purpose -- the real house below is in the cache, and
+    # this check is about the ask, not about the geometry.
+    house = {"map_id": 190276352, "cell": 312,
+             "map": {"map_id": 190276352, "exits": [],
+                     "neighbours": {"left": 190407936, "right": 190276864,
+                                    "top": 190276609, "bottom": 190276353}}}
     inside = p3._travel_call({"type_id": 0}, 145489920, house, key=(4262, 13930))
-    check("an interior with no crossable border asks the server for a neighbour",
+    check("an interior the cache knows nothing about asks the server for a neighbour",
           inside["tool"] == "nav.goto"
-          and inside["args"].get("map_id") in (146407936, 146276864,
-                                               146276609, 146276353)
+          and inside["args"].get("map_id") in (190407936, 190276864,
+                                               190276609, 190276353)
           and inside["args"].get("direction") in ("left", "right", "top", "bottom"),
           inside)
+    # The same house by its real id. `data/maps/_index.json` now carries its geometry
+    # and every edge is wall (0 walkable cells on all four, measured 2026-11-12), so
+    # asking is exactly what G112 spent seven live steps on. The geometry stops it.
+    real_house = {"map_id": 146276352, "cell": 312,
+                  "map": {"map_id": 146276352, "exits": [],
+                          "neighbours": {"left": 146407936, "right": 146276864,
+                                         "top": 146276609, "bottom": 146276353}}}
+    stopped = p3._travel_call({"type_id": 0}, 145489920, real_house, key=(4262, 13931))
+    check("and the real house, whose cached ring is wall on every edge, is not asked",
+          (stopped or {}).get("tool") != "nav.goto",
+          "the ask cannot work, so a snapshot read is the honest answer: %s" % (stopped,))
     # The offline simulator's synthetic maps have an empty exit list and no
     # neighbour block; asking for the destination is the only thing it answers.
     synthetic = {"map_id": 160695296, "map": {"map_id": 160695296, "exits": []}}
@@ -7315,6 +7649,97 @@ def test_board_payload_round_trip() -> None:
           (result.testsRun, [str(t) for t in result.failures + result.errors][:2]))
 
 
+def test_live_fight_corpus_is_read_in_process() -> None:
+    """Run the live-corpus builder's own suite here, so the sweep can see the file.
+
+    `combat/live_data.py` had no mutation anchor at all, and its suite ran only in
+    `test_combat_suites`' subprocess -- which the snippet deliberately skips. That is
+    how the builder came to read `last_actions` (empty on all 333 recorded boards)
+    while the page filled `battle_log`, and to label 8 of 19 fights with another
+    fight's verdict: no check the sweep could see was reading either.
+
+    One check per suite rather than one umbrella, so a mutation is credited to the
+    rule it broke. The last check is what keeps the list honest when a suite is added.
+    """
+    section("The live fight corpus builder (the sweep's witness for live_data.py)")
+    import io
+    import unittest
+
+    from combat import test_live_data
+
+    named = [
+        ("a monster is keyed on the identity the board actually carries",
+         test_live_data.NameKeyedMonsterTests),
+        ("a cast is priced from the damage recorded beside it",
+         test_live_data.ObservedDamageTests),
+        ("the measured payload's two id spaces are not joined on action id",
+         test_live_data.MeasuredPayloadShapeTests),
+        ("the list the page fills is read in the keys it writes",
+         test_live_data.LiveLogShapeTests),
+        ("a fight's verdict is keyed on the fight, not the run",
+         test_live_data.OutcomeJoinTests),
+    ]
+    loader = unittest.TestLoader()
+    for label, case in named:
+        suite = loader.loadTestsFromTestCase(case)
+        found = suite.countTestCases()
+        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+        check(label, found > 0 and result.testsRun == found and result.wasSuccessful(),
+              {"tests": result.testsRun,
+               "failed": [str(t) for t, _ in result.failures + result.errors][:3]})
+    present = {v for v in vars(test_live_data).values()
+               if isinstance(v, type) and issubclass(v, unittest.TestCase)
+               and v is not unittest.TestCase}
+    check("every suite in the live-data module is witnessed here",
+          present == {case for _, case in named},
+          sorted(c.__name__ for c in present ^ {case for _, case in named}))
+    # The builder defaulted to the repo's `trajectories/` copy -- an untracked
+    # leftover with 8 boards against the live file's 333 -- so the documented
+    # command built from 2.4% of the corpus. The invariant is about the path, not
+    # its existence: a clean clone has no app corpus and must still pass.
+    from combat.live_data import DEFAULT_BOARDS, REPO_ROOT as _LD_ROOT
+
+    check("the builder defaults to the corpus the app writes, not a repo-local copy",
+          DEFAULT_BOARDS.name == "fight_boards.jsonl"
+          and _LD_ROOT not in DEFAULT_BOARDS.parents,
+          str(DEFAULT_BOARDS))
+
+
+def test_the_battle_solver_reads_what_the_page_writes() -> None:
+    """Run the solver's payload suite here, so the sweep can actually see `battle_solver.py`.
+
+    The BSOLVER anchors were caught only incidentally: `_castable` happens to be exercised
+    through the live-corpus runner, so its two anchors failed for the right reason, while a
+    rule added anywhere else in the parser or in `plan_turn`'s notes had no witness at all.
+    Measured 2026-11-12: the two anchors written for `castable_error` -- carried at parse
+    time, and named in the plan -- both reported `MISSED ... 0 failing check(s)` against a
+    suite that passes. `test_mutation_targets_have_witnesses` did not notice because it
+    matches the *file name* in a test body, and a comment naming `battle_solver.py` is
+    enough to satisfy it. This is the execution the ratchet was meant to be.
+    """
+    section("The battle solver's payload rules (the sweep's witness for battle_solver.py)")
+    import io
+    import unittest
+
+    from combat import test_battle_solver
+
+    loader = unittest.TestLoader()
+    for label, case in (
+            ("the board payload is parsed in the keys the page writes",
+             test_battle_solver.PayloadParsingTests),):
+        suite = loader.loadTestsFromTestCase(case)
+        found = suite.countTestCases()
+        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+        check(label, found > 0 and result.testsRun == found and result.wasSuccessful(),
+              {"tests": result.testsRun,
+               "failed": [str(t) for t, _ in result.failures + result.errors][:3]})
+    # The rule this runner exists for, named so a rename or a move is a red check rather
+    # than a quietly empty sweep.
+    check("the class still carries the unchecked-spell rule",
+          hasattr(test_battle_solver.PayloadParsingTests,
+                  "test_an_unchecked_spell_keeps_the_reason_it_was_unchecked"), "")
+
+
 # A fingerprint of one forward pass through the shipped head. The argmaxes and the value are exact;
 # the three logit sums carry a 0.02 tolerance because the two backends genuinely differ in the fourth
 # decimal (measured 2026-11-04: sum(target) 1305.2408 under jax/3.14 against 1305.2396 under
@@ -7640,6 +8065,40 @@ def test_encounter_input_tables() -> None:
           == float(tables["spell_damage"][0, 0].max()),
           (float(armed_tables["spell_damage"][0, 0].max()),
            float(tables["spell_damage"][0, 0].max())))
+
+
+def test_the_unread_field_audit_can_find_an_unread_field() -> None:
+    """The instrument that found G113's discarded geometry needs an arm of its own.
+
+    `tools/unread_fields.py` answers "what do we record and never read", and a probe that
+    called everything unread would be exactly as useless as one that called nothing unread.
+    So the fixture carries one field `flatten` really reads (`position.map_id`) and one it
+    does not (`map.terrain`, the 140 hex characters every live snapshot carried and the
+    agent threw away), and both answers are pinned, with the row count.
+    """
+    section("The unread-field audit names a discarded field and spares a read one")
+    import contextlib
+    import io
+    import json
+    import tempfile
+
+    from tools import unread_fields as uf
+
+    tmp = Path(tempfile.mkdtemp()) / "corpus.jsonl"
+    row = {"observation": {"position": {"map_id": 146277376, "cell": 242},
+                           "map": {"map_id": 146277376, "terrain": "ab" * 70}}}
+    tmp.write_text("\n".join(json.dumps(row) for _ in range(3)) + "\n", encoding="utf-8")
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = uf.report([str(tmp)], 0, ["flatten"], 1, 50)
+    out = buf.getvalue()
+    check("the audit runs over a fixture corpus", rc == 0, out[-200:])
+    check("a field no consumer reads is reported", "map.terrain" in out, out[-300:])
+    check("and a field the consumer really found is not",
+          "position.map_id" not in out, out[-300:])
+    check("the report carries the number of rows that carry it",
+          " 3  map.terrain" in out, out[-300:])
 
 
 def test_doc_facts_self_witness() -> None:
@@ -8805,75 +9264,6 @@ def test_the_mutation_pass_stays_affordable() -> None:
           not over, (over, {k: timed[k] for k in sorted(timed)}))
 
 
-def test_the_snippet_can_see_its_own_mutation_targets() -> None:
-    """A mutation in a file no snippet test reads can never be caught -- and still reads CAUGHT-capable.
-
-    Measured 2026-11-01: the sweep reported MISSED for a mutation of
-    `tools/freeze_planner_replay.py` not because the checks were weak -- three of them fail
-    -- but because `test_planner_replay` was never in the driver's SNIPPET list, so the sweep
-    ran nothing that looked at that file. The corpus replay, the collector and 539 mutations
-    all sat on that seam. So the harness now checks its own wiring: every file a mutation
-    targets must be read by at least one snippet test, directly or through a suite it runs.
-    """
-    import ast
-    import inspect
-    import re
-
-    section("The mutation snippet can see the files it mutates")
-    driver = REPO_ROOT / "tools" / "mutate_cause_gate.py"
-    check("the mutation driver is readable", driver.is_file(), str(driver))
-    source = driver.read_text(encoding="utf-8", errors="replace")
-    consts: Dict[str, str] = {}
-    for node in ast.parse(source).body:
-        if not (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)):
-            continue
-        quoted = re.findall(r"Constant\(value='([^']+)'", ast.dump(node.value))
-        names = re.findall(r"Name\(id='([A-Z_][A-Z0-9_]*)'", ast.dump(node.value))
-        if quoted:
-            consts[node.targets[0].id] = Path(quoted[-1]).name
-        elif len(names) == 1 and names[0] in consts:
-            # An alias (`CSPA = CSPANEL`): resolving it is what keeps the needle honest --
-            # the driver has already been bitten by a shadowed constant name (G71).
-            consts[node.targets[0].id] = consts[names[0]]
-    snippet = ""
-    for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "SNIPPET":
-            snippet = ast.literal_eval(node.value)
-    snip_tests = set(re.findall(r"r\.(test_[a-z0-9_]+)", snippet))
-    targets: Dict[str, int] = {}
-    for const in re.findall(r'^\s+\("(?:[^"]*)",\s*([A-Z0-9_]+),', source, re.M):
-        name = consts.get(const, const)
-        targets[name] = targets.get(name, 0) + 1
-    check("the driver's own wiring was parsed",
-          len(snip_tests) >= 80 and len(targets) >= 40,
-          (len(snip_tests), len(targets)))
-
-    sources: Dict[str, str] = {}
-    for name, fn in sorted(globals().items()):
-        if not name.startswith("test_") or not callable(fn):
-            continue
-        try:
-            sources[name] = inspect.getsource(fn)
-        except (TypeError, OSError):
-            sources[name] = ""
-    # A target reached through a suite counts: `ai/train_move_head.py` is imported by
-    # `ai/test_move_gate.py`, which `test_move_gate` runs inside the snippet.
-    suite_files = {"train_move_head.py": "ai/test_move_gate.py"}
-    orphans = []
-    for target, mutations in sorted(targets.items()):
-        stem = re.sub(r"\.[a-z]+$", "", target)
-        direct = [n for n, text in sources.items() if stem in n or stem in text]
-        via_suite = bool(suite_files.get(target)) and any(
-            re.sub(r"\.[a-z]+$", "", Path(suite_files[target]).name) in text
-            for n, text in sources.items() if n in snip_tests)
-        if not any(n in snip_tests for n in direct) and not via_suite:
-            orphans.append("%s (%d mutation(s))" % (target, mutations))
-    check("every mutation target is read by a test the snippet runs",
-          not orphans, orphans)
-    check("the indirect allowances stay few and named",
-          len(suite_files) <= 3, sorted(suite_files))
-
-
 def test_damage_calibration_sees_the_recorded_fights() -> None:
     """The damage read-out must be pointed at the ledgers that actually hold the fights.
 
@@ -9291,7 +9681,7 @@ def test_stall_retirement_is_bounded() -> None:
             return 1_700_000_000.0 + self.t
 
     def drive(progresses: bool, can_skip: bool = True, tutorial: bool = False,
-              stop_after: int = 60):
+              stop_after: int = 60, max_steps: int = 0):
         tmp = Path(tempfile.mkdtemp())
         clock = _Clock()
 
@@ -9358,10 +9748,13 @@ def test_stall_retirement_is_bounded() -> None:
                 return None
 
         rt = _RT()
+        # `steps_per_goal` tracks `max_steps` because that is what the daemon now does
+        # when the host names only a total; leaving the 8-step default here would end
+        # the goal before the no-op streak the test is about could fire.
         ap = Autopilot(runtime=rt, goals=["do all the quests"],
                        log_path=tmp / "ap.jsonl", stop_file=tmp / "STOP",
-                       max_steps=0, dry_run=False, preflight=False,
-                       minutes=0, interval=0.0)
+                       max_steps=max_steps, dry_run=False, preflight=False,
+                       minutes=0, interval=0.0, steps_per_goal=max_steps or 8)
         if not can_skip:
             rt.policy.skip = None      # a policy with no skip cannot name a quest to retire
         ap.controller.state_dir = tmp
@@ -9398,6 +9791,16 @@ def test_stall_retirement_is_bounded() -> None:
           "no quest to retire" in out3 and len(steps3) <= 80,
           [len(steps3), out3.splitlines()[-2:]])
 
+    # A bounded run is the only kind the host starts (`aipanel.cs` sends `"steps":N`),
+    # and the retirement used to be gated on `max_steps <= 0` -- so every real run
+    # abandoned the goal on the third identical no-op instead of taking the next quest.
+    # Measured live 2026-11-12 (session 9e886397): 12 steps, "goals exhausted", three
+    # objectives still ready.
+    policy5, steps5, out5 = drive(progresses=False, max_steps=40)
+    check("a run with a step budget retires the stuck quest instead of abandoning the goal",
+          len(policy5.skipped) >= 1 and "abandoning" not in out5,
+          "%r skipped, tail %r" % (policy5.skipped, out5.splitlines()[-2:]))
+
     real_patience = _gm.TUTORIAL_PATIENCE_S
     _gm.TUTORIAL_PATIENCE_S = 120       # the replay clock only moves when the loop sleeps
     try:
@@ -9412,9 +9815,17 @@ def test_stall_retirement_is_bounded() -> None:
 
 
 def _longest_read_run(tools: List[str]) -> int:
+    """The longest run of read steps, over the set the bound actually counts.
+
+    This measured `state.snapshot` alone, which is the one read the loop holds as a
+    wait -- so the ruler could not see the runs that dispatch every pass. The live
+    spin was 139 `quest.list` steps (session e84012a0) and this returned 0 for it.
+    """
+    from agent.verifier import READ_ONLY_TOOLS
+
     best = run = 0
     for tool in tools:
-        run = run + 1 if tool == "state.snapshot" else 0
+        run = run + 1 if tool in READ_ONLY_TOOLS else 0
         best = max(best, run)
     return best
 
@@ -9430,8 +9841,9 @@ def test_read_streak_is_bounded() -> None:
     """
     import contextlib
     import io
+    import collections
     import agent.autopilot as _gm
-    from agent.autopilot import Autopilot, READ_STREAK_LIMIT
+    from agent.autopilot import Autopilot, READ_STREAK_LIMIT, READ_ESCALATION_LIMIT
     from agent.runtime import ToolCall
 
     section("A streak of reads is bounded and escalated")
@@ -9444,6 +9856,8 @@ def test_read_streak_is_bounded() -> None:
 
         def __init__(self, proposal) -> None:
             self._read_streak = 0
+            self._read_escalations = 0
+            self._read_stop_reason = ""
             self._consecutive_waits = 7
             self._forced_call = None
             self._forced_reason = ""
@@ -9476,9 +9890,48 @@ def test_read_streak_is_bounded() -> None:
     quiet = _Shim(None)
     answers = [Autopilot._note_read_streak(quiet, read, "do all the quests", {})
                for _ in range(READ_STREAK_LIMIT)]
-    check("with nothing to propose the streak becomes a wait, not more reads",
+    check("with nothing to propose the first escalation waits and reads again",
           answers[-1] == "keep" and quiet.waits == 1 and quiet._forced_call is None,
           [answers, quiet.waits])
+    # That "keep" is the whole defect: the streak was zeroed, so the next six reads
+    # escalated again, for ever. Live session e84012a0 dispatched 139 `quest.list`
+    # steps with one wait per escalation and ended on the operator's stop file.
+    check("an escalation that found nothing is counted, not forgotten",
+          quiet._read_escalations == 1, quiet._read_escalations)
+    last = answers[-1]
+    for _ in range(READ_STREAK_LIMIT * (READ_ESCALATION_LIMIT - 1)):
+        last = Autopilot._note_read_streak(quiet, read, "do all the quests", {})
+    check("repeated empty escalations end the goal instead of reading for ever",
+          last == "break" and quiet._read_escalations == READ_ESCALATION_LIMIT,
+          [last, quiet._read_escalations])
+    check("and the reason names the reads, not a wait",
+          "reads in a row" in quiet._read_stop_reason
+          and "no action" in quiet._read_stop_reason, quiet._read_stop_reason)
+    check("the bound is the product of the two limits, not one of them",
+          quiet.waits == READ_ESCALATION_LIMIT - 1,
+          [quiet.waits, READ_ESCALATION_LIMIT])
+
+    rescued = _Shim(None)
+    for _ in range(READ_STREAK_LIMIT * (READ_ESCALATION_LIMIT - 1)):
+        Autopilot._note_read_streak(rescued, read, "do all the quests", {})
+    # The escalation zeroed the streak, so the next one is a full limit away.
+    for _ in range(READ_STREAK_LIMIT - 1):
+        Autopilot._note_read_streak(rescued, read, "do all the quests", {})
+    rescued.proposal = act
+    answer = Autopilot._note_read_streak(rescued, read, "do all the quests", {})
+    check("an escalation that does find an action clears the empty count",
+          answer == "act" and rescued._read_escalations == 0,
+          [answer, rescued._read_escalations])
+    rescued.proposal = None
+    for _ in range(READ_STREAK_LIMIT * (READ_ESCALATION_LIMIT - 1)):
+        Autopilot._note_read_streak(rescued, read, "do all the quests", {})
+    check("so a plan that recovers gets the whole budget again",
+          rescued._read_escalations == READ_ESCALATION_LIMIT - 1,
+          rescued._read_escalations)
+    Autopilot._note_read_streak(rescued, act, "do all the quests", {})
+    check("a dispatched action clears the empty count too",
+          rescued._read_escalations == 0 and rescued._read_streak == 0,
+          [rescued._read_escalations, rescued._read_streak])
 
     class _Clock:
         def __init__(self) -> None:
@@ -9576,7 +10029,10 @@ def test_read_streak_is_bounded() -> None:
     rows = [json.loads(line) for line in
             (tmp / "ap.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     shutil.rmtree(tmp, ignore_errors=True)
-    steps = [r.get("tool") for r in rows if r.get("tool")]
+    # A `decision` row carries the same `tool` as the step it answers, so counting
+    # every row with a tool doubles each read run and measures the log, not the loop.
+    steps = [r.get("tool") for r in rows
+             if r.get("tool") and r.get("kind") in (None, "step")]
 
     check("the driven loop reaches the bound and says so",
           "reads in a row" in out, out.splitlines()[-4:])
@@ -9587,6 +10043,323 @@ def test_read_streak_is_bounded() -> None:
     # again, and escalates a second time. What must never happen is an unbounded run.
     check("no run of reads is longer than twice the limit inside a full loop",
           _longest_read_run(steps) <= 2 * READ_STREAK_LIMIT, steps[:16])
+
+    # The shim and the drive above both hand the escalation an action it can queue,
+    # which is why neither could see the defect: `_next_real_action` returning None
+    # zeroed the streak and answered "keep". Drive the real loop with nothing to
+    # propose and with `quest.list` -- the tool the live spin used, and not
+    # `state.snapshot`, so the wait-hold branch never intercepts it and every pass
+    # dispatches a step. `_emit` then zeroes the wait counter each time, which is
+    # what kept the dead-window ladder from ever seeing the run.
+    tmp2 = Path(tempfile.mkdtemp())
+    clock2 = _Clock()
+
+    class _ReadOnly:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def choose(self, goal, obs, tools):    # noqa: ARG002
+            self.calls += 1
+            if self.calls > 200:
+                # A runaway guard, not the bound under test: without it a mutation
+                # that removes the bound would hang the sweep instead of failing it.
+                (tmp2 / "STOP").write_text("stop", encoding="utf-8")
+            return ToolCall("quest.list", {}, goal)
+
+        def note_result(self, *a, **k) -> None:
+            return None
+
+    class _Nothing:
+        def propose(self, goal, obs, recent, hint):     # noqa: ARG002
+            return None
+
+    class _Progress(_RT):
+        """Objectives keep completing, so the stall bound cannot end this run.
+
+        With flat progress the stall detector retires its way to a reason after
+        three windows and ends the second goal at 7 reads -- a different bound,
+        and a legitimate one. Advancing the counter removes it as a confound so
+        the read bound is the only thing left that can stop the loop.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.completed = 20
+
+        def execute(self, tool, args, **kw):
+            self.completed += 1
+            self.obs["objectives_completed"] = self.completed
+            return super().execute(tool, args, **kw)
+
+    rt2 = _Progress()
+    rt2.policy = _ReadOnly()
+    ap2 = Autopilot(runtime=rt2, goals=["do all the quests", "sell all"],
+                    log_path=tmp2 / "ap.jsonl", stop_file=tmp2 / "STOP",
+                    max_steps=0, dry_run=False, preflight=False,
+                    minutes=0, interval=0.0)
+    ap2.controller.state_dir = tmp2
+    ap2.thinking = _Nothing()
+    real_time, _gm.time = _gm.time, clock2
+    buf2 = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf2):
+            ap2._run()
+    finally:
+        _gm.time = real_time
+    out2 = buf2.getvalue()
+    rows2 = [json.loads(line) for line in
+             (tmp2 / "ap.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    hit_guard = (tmp2 / "STOP").exists()
+    shutil.rmtree(tmp2, ignore_errors=True)
+    steps2 = [r.get("tool") for r in rows2
+              if r.get("tool") and r.get("kind") in (None, "step")]
+    ends2 = [r for r in rows2 if r.get("kind") == "session_end"]
+
+    budget = READ_STREAK_LIMIT * READ_ESCALATION_LIMIT
+    per_goal = collections.Counter(r.get("goal") for r in rows2
+                                   if r.get("tool") and r.get("kind") in (None, "step"))
+    check("a read the escalation cannot replace is still bounded in the real loop",
+          0 < _longest_read_run(steps2) <= budget * 2,
+          [_longest_read_run(steps2), budget, steps2[:24]])
+    check("each goal gets the whole budget, not the previous goal's leftovers",
+          sorted(per_goal.values()) == [budget, budget], dict(per_goal))
+    check("the bound is what stopped it, not the runaway guard",
+          not hit_guard and "ending the goal instead of reading again" in out2,
+          [hit_guard, out2.splitlines()[-3:]])
+    check("the end reason names the reads rather than a wait",
+          bool(ends2) and "reads in a row" in str(ends2[-1].get("reason")),
+          [r.get("reason") for r in ends2])
+
+
+def test_reads_are_not_world_progress() -> None:
+    """An answered query is a successful call, not a changed world.
+
+    Two places counted them as the same event. The no-progress detector cleared its
+    repeat streak on any `advanced` verdict, so one read between two identical no-ops
+    reset the count; and the run report published a single `advanced` tally, which on
+    the recorded baseline was mostly looking (4,023 steps in `default.jsonl`, 2,929 of
+    them ok reads).
+
+    The detector half is a correctness guard rather than a throughput fix: a settle
+    tool's streak lives in `_action_noops`, which a read never touches, and over 5,849
+    recorded steps 0 reads split a repeating *non-settle* pair. The fixture therefore
+    drives `chat.say`, which is not a settle tool, so `_recent` is the only bound that
+    can fire.
+    """
+    import contextlib
+    import io
+    import agent.autopilot as _gm
+    from agent.autopilot import Autopilot
+    from agent.runtime import ToolCall
+
+    section("Reads are answered queries, not world progress")
+
+    goal = "do all the quests"
+    say = ("chat.say", {"text": "hi"})
+    read = ("quest.list", {})
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.t = 0.0
+
+        def monotonic(self) -> float:
+            return self.t
+
+        def perf_counter(self) -> float:
+            return self.t
+
+        def sleep(self, seconds: float) -> None:
+            self.t += max(float(seconds), 0.0)
+
+        def time(self) -> float:
+            return 1_700_000_000.0 + self.t
+
+    def drive(script, change_on=(), limit=14):
+        """Run the real loop over a scripted policy.
+
+        `change_on` are 1-based execute indices whose snapshot moves the character,
+        so the verifier scores those calls `advanced` on a real observation change.
+        Everything else is frozen, so an action scores `noop` and a read `advanced`.
+        """
+        tmp = Path(tempfile.mkdtemp())
+        clock = _Clock()
+
+        class _Pol:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def choose(self, goal_arg, obs, tools):    # noqa: ARG002
+                self.calls += 1
+                if self.calls > limit:
+                    (tmp / "STOP").write_text("stop", encoding="utf-8")
+                tool, args = script[(self.calls - 1) % len(script)]
+                return ToolCall(tool, dict(args), goal_arg)
+
+            def note_result(self, *a, **k) -> None:
+                return None
+
+        class _Res:
+            def __init__(self, data) -> None:
+                self.ok = True
+                self.error = None
+                self.data = data
+
+            def as_dict(self):
+                return {"data": self.data}
+
+        class _RT:
+            def __init__(self) -> None:
+                self.obs = {"in_world": True, "map_id": 147062786, "cell": 263,
+                            "objectives_completed": 20, "in_dialog": False,
+                            "tutorial": {"active": False}}
+                self.policy = _Pol()
+                self.instance = "unit"
+                self.executor = self
+                self.executed = 0
+
+            def execute(self, tool, args, **kw):    # noqa: ARG002
+                self.executed += 1
+                if self.executed in change_on:
+                    self.obs["cell"] = 263 + self.executed
+                return _Res({"response": {"result": {"ok": True}},
+                             "snapshot": dict(self.obs)})
+
+            def current_observation(self):
+                return dict(self.obs), 5.0, "cache"
+
+            def observe(self, obs, source="live"):      # noqa: ARG002
+                return None
+
+            def note_observation(self, obs):
+                return None
+
+        class _Think:
+            def propose(self, goal_arg, obs, recent, hint):     # noqa: ARG002
+                tool, args = script[0]
+                return ToolCall(tool, dict(args), goal_arg)
+
+        rt = _RT()
+        ap = Autopilot(runtime=rt, goals=[goal], log_path=tmp / "ap.jsonl",
+                       stop_file=tmp / "STOP", max_steps=0, dry_run=False,
+                       preflight=False, minutes=0, interval=0.0)
+        ap.controller.state_dir = tmp
+        ap.thinking = _Think()
+        real_time, _gm.time = _gm.time, clock
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                ap._run()
+            with contextlib.redirect_stdout(io.StringIO()):
+                report = ap.summary("gate")
+        finally:
+            _gm.time = real_time
+        out = buf.getvalue()
+        counts = dict(ap._verdict_counts)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return out, counts, report
+
+    out, counts, report = drive([say, read])
+    check("a read between two identical no-ops does not reset the repeat bound",
+          "no progress: chat.say repeated 3x" in out, out.splitlines()[-4:])
+    check("the bound is reached on the third no-op, not the twelfth",
+          counts.get("noop") == 3, counts)
+    check("an answered query is not counted as a world change",
+          report.get("world_changes") == 0 and report.get("read_answers") == 1,
+          {k: report.get(k) for k in ("verdicts", "world_changes", "read_answers")})
+
+    # The positive control. Without it "never clear the streak" passes every check
+    # above, and a legitimate action sequence would be diagnosed as a dead end.
+    out2, counts2, report2 = drive([say], change_on=(2,), limit=4)
+    check("a call that changed the observation restarts the streak",
+          counts2.get("noop") == 4, counts2)
+    check("a call that changed the observation is a world change",
+          report2.get("world_changes") == 1 and report2.get("read_answers") == 0,
+          {k: report2.get(k) for k in ("verdicts", "world_changes", "read_answers")})
+    check("advanced is exactly world changes plus read answers, in both runs",
+          counts.get("advanced", 0) == (report.get("world_changes", -1)
+                                        + report.get("read_answers", -1))
+          and counts2.get("advanced", 0) == (report2.get("world_changes", -1)
+                                             + report2.get("read_answers", -1)),
+          [counts, report.get("world_changes"), report.get("read_answers"),
+           counts2, report2.get("world_changes"), report2.get("read_answers")])
+    check("the split is published in the run report, not only counted internally",
+          "world_changes" in report and "read_answers" in report
+          and "0 world change(s), 1 read answer(s)" in out,
+          sorted(k for k in report if "change" in k or "read" in k))
+
+
+def test_critic_gate_opens_before_the_solver_returns() -> None:
+    """The trained critic must see the contract's `value_ready`, not the constructor's False.
+
+    `decide()` set `_value_ready` *after* the solver-first branch, and that branch
+    returns. Solver-first is the default, so on every live turn `_value_choice` read
+    the `__init__` False and returned None: the value head never ranked a plan.
+
+    Measured on the 298 unique recorded live boards after the move: the critic is
+    asked on 7 and fires on 7, 5 whole plans change, and exactly 1 emitted action
+    changes (board 252, spell 3 -> 19). Two of the other four hide behind a walk and
+    two change only the plan's second cast, which the one-action-per-call client
+    never reaches. The binding limit is observation completeness -- 15 of 124
+    actionable boards are value-ready at all -- not this line.
+    """
+    section("The critic's gate is read before the solver-first return")
+    from types import SimpleNamespace
+    import combat.live_policy as lp
+    from combat.live_policy import LivePolicy
+
+    seen: List[Any] = []
+
+    class _Shim:
+        """Only what `decide()` touches on the solver-first path."""
+
+        checkpoint = "gate"
+
+        def __init__(self) -> None:
+            self._value_ready = False
+
+        def _bind_slots(self, board):       # noqa: ARG002
+            return [], []
+
+        def _bind_targets(self, board):     # noqa: ARG002
+            return []
+
+        def _solver_first(self) -> bool:
+            return True
+
+        def _solver_turn(self, board):      # noqa: ARG002
+            seen.append(self._value_ready)
+            return ({"type": "pass"}, False, "solver")
+
+        def _position_report(self, board):  # noqa: ARG002
+            return None
+
+    class _Board:
+        @staticmethod
+        def from_fight_state(payload):      # noqa: ARG002
+            return SimpleNamespace(me=SimpleNamespace(alive=True))
+
+    real_board, real_view = lp.Board, lp.live_view
+    shim = _Shim()
+    try:
+        lp.Board = _Board
+        lp.live_view = lambda board: ({}, {"actionable": True, "value_ready": True})
+        first = LivePolicy.decide(shim, {})
+        lp.live_view = lambda board: ({}, {"actionable": True, "value_ready": False})
+        second = LivePolicy.decide(shim, {})
+        lp.live_view = lambda board: ({}, {"actionable": True, "value_ready": True})
+        third = LivePolicy.decide(shim, {})
+    finally:
+        lp.Board, lp.live_view = real_board, real_view
+
+    check("the solver branch sees the contract's value_ready, not the constructor's False",
+          seen[:1] == [True], seen)
+    check("a contract that is not value-ready closes the gate again",
+          seen[1:2] == [False], seen)
+    check("the gate is re-read every turn, not latched on the first one",
+          seen == [True, False, True], seen)
+    check("all three turns took the solver-first path that used to skip the assignment",
+          [r.get("reason") for r in (first, second, third)] == ["solver"] * 3,
+          [r.get("reason") for r in (first, second, third)])
 
 
 def test_session_report_play_quality() -> None:
@@ -11284,6 +12057,25 @@ def test_reads_are_not_actions() -> None:
               quiet[5].executor.calls == [] and quiet[5].policy.calls >= 1,
               "%s / %d choose() calls" % (quiet[5].executor.calls, quiet[5].policy.calls))
 
+        # Two goals, two silences. Live 2026-11-12 (dofus-01, session a0d4c924): four
+        # unplannable passes each retired one objective and all four rows carried index
+        # 17, because this branch emits a row and then loops without advancing the
+        # counter every other branch advances -- so the log read as one step recorded
+        # four times, and the index stopped matching the row count.
+        twice = drive(2, no_call=silence)
+        twice_rows = [r for r in twice[2] if "kind" not in r]
+        idx = [r.get("index") for r in twice_rows]
+        check("a goal the policy cannot express is recorded at its own index",
+              len(twice_rows) == 2 and len(set(idx)) == len(idx),
+              "%s over %d row(s)" % (idx, len(twice_rows)))
+        # And the run must not claim the objectives ran out when the policy is what
+        # gave up: the live session ended "goals exhausted" with three ready
+        # objectives and sixteen retired, which is the opposite of what happened.
+        check("and it does not report 'goals exhausted' for a policy that gave up",
+              "goals exhausted" not in str(twice[1].get("reason") or "")
+              and "could not express" in str(twice[1].get("reason") or ""),
+              repr(twice[1].get("reason")))
+
         # Pacing: the same cadence the loop had when the wait was a directive.
         sleeps: List[float] = []
         real_sleep = _am.time.sleep
@@ -11427,6 +12219,252 @@ def test_reads_are_not_actions() -> None:
         check("the limit is above every legitimate wait in the baseline",
               MAX_CONSECUTIVE_WAITS > 6 and WAIT_POLL_S > 0.05,
               "limit %d, poll %.2f" % (MAX_CONSECUTIVE_WAITS, WAIT_POLL_S))
+    finally:
+        for d in dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_memory_vetoes_what_the_context_refuted() -> None:
+    section("Memory veto (criterion 2: a record of failure has to stop the call)")
+    import inspect
+    from agent.autopilot import (Autopilot, MEM_VETO_CONTEXT_TRIES,
+                                 MEM_VETO_MIN_FAILURES, MEM_VETO_TRIES, ToolCall)
+    from agent import autopilot as _am
+    from agent.action_memory import context_signature
+
+    # The store was written on every step and read in exactly one place -- the replay
+    # filter -- so a call the *policy* chose went out even when the store held ten
+    # failures of it in this exact context. Measured live 2026-11-11 (dofus-01): 280
+    # consecutive `nav.goto {"direction": "left"}`, every one a noop, while
+    # `describe_failures` printed that same edge to the policy on every pass.
+    class _Policy:
+        def __init__(self, tool: str = "quest.advance",
+                     args: Optional[Dict[str, Any]] = None,
+                     rotation: Optional[List[Dict[str, Any]]] = None) -> None:
+            self.tool = tool
+            self.args = dict(args if args is not None
+                             else {"quest_id": 4262, "npc_id": 3888})
+            # `rotation` is how a planner walks a list of dead ends, which is what the
+            # live session did: one situation, five refuted calls, six refusals in
+            # eight steps. Each entry is {"tool": ..., "args": {...}}.
+            self.rotation = list(rotation or [])
+            self.calls = 0
+            self.reports: List[Any] = []
+            self.last_no_call = ""
+
+        def choose(self, goal, obs, tools):     # noqa: ARG002 - shape, not behaviour
+            self.calls += 1
+            if self.rotation:
+                item = self.rotation[(self.calls - 1) % len(self.rotation)]
+                return ToolCall(item["tool"], dict(item.get("args") or {}), goal)
+            return ToolCall(self.tool, dict(self.args), goal)
+
+        def note_result(self, *args):
+            self.reports.append(args[:2])
+
+    class _Result:
+        def __init__(self, data: Dict[str, Any]) -> None:
+            self.ok = True
+            self.error = None
+            self.data = data
+
+    class _Executor:
+        def __init__(self, obs: Dict[str, Any]) -> None:
+            self.obs = obs
+            self.calls: List[str] = []
+
+        def execute(self, tool, args, **kw):      # noqa: ARG002 - the shape is enough
+            self.calls.append(tool)
+            return _Result({"response": {"result": {"ok": True}},
+                            "snapshot": dict(self.obs)})
+
+    OBS = {"in_world": True, "map_id": 10340, "cell": 300,
+           "current_objective": {"id": 4262, "type_id": 6}}
+    CTX = context_signature(OBS["current_objective"], OBS)
+
+    class _Runtime:
+        def __init__(self, obs: Dict[str, Any], policy: "_Policy") -> None:
+            self.policy = policy
+            self.instance = "dofus-00"
+            self.obs = obs
+            self.executor = _Executor(obs)
+
+        def current_observation(self):
+            return dict(self.obs), 5.0, "cache"
+
+        def observe(self, obs, source="live"):    # noqa: ARG002 - no trajectory writer
+            return None
+
+        def note_observation(self, obs):
+            return None
+
+    dirs: List[Path] = []
+
+    def drive(seed: Sequence[Tuple[str, str, int]], steps: int = 3,
+              policy: Optional["_Policy"] = None, obs: Optional[Dict[str, Any]] = None):
+        """Run the real loop against a store pre-seeded with `seed` outcomes.
+
+        `seed` is (tool, verdict, count): the failures a previous session would have
+        left behind, so the veto is exercised without the loop having to fail first.
+        """
+        tmp = Path(tempfile.mkdtemp())
+        dirs.append(tmp)
+        body = dict(obs if obs is not None else OBS)
+        pol = policy or _Policy()
+        rt = _Runtime(body, pol)
+        # `settle_s=0` on purpose: the settle loop is a wall-clock wait that re-reads
+        # the client, so with `time.sleep` stubbed out it spins at CPU speed for its
+        # whole 6 s window (measured: 433,618 `state.snapshot` calls for two steps).
+        # That is an artefact of stubbing the clock, not a defect -- but it makes this
+        # test about settling instead of about the veto.
+        # The per-goal budget only applies when `max_steps > 0` (`budget = None`
+        # otherwise, so "unlimited" really is unlimited), and it is the budget the live
+        # run died on. Forty is high enough that the run-wide ceiling never binds here,
+        # which leaves `steps_per_goal` as the only thing that can end the goal.
+        ap = Autopilot(runtime=rt, goals=["work the goal"], log_path=tmp / "autopilot.jsonl",
+                       stop_file=tmp / "STOP", max_steps=40, dry_run=False,
+                       preflight=False, minutes=0, interval=0.0, steps_per_goal=steps,
+                       settle_s=0.0, memory_path=tmp / "memory.json", memory_replay=False)
+        ap.controller.state_dir = tmp
+        # No thinking layer: the test is about whether the call is dispatched, and a
+        # proposal would replace the very call under test.
+        ap.thinking.propose = lambda *a, **k: None
+        for item in seed:
+            # (tool, verdict, times) uses the policy's own args; the 4-tuple names
+            # them, which is what a rotation of distinct dead ends needs.
+            tool, verdict, times = item[0], item[-2], item[-1]
+            args = dict(item[1]) if len(item) == 4 else dict(pol.args)
+            for _ in range(times):
+                ap._memory.observe(CTX, tool, args, verdict)
+        real_sleep = _am.time.sleep
+        _am.time.sleep = lambda seconds: None
+        try:
+            summary = ap._run()
+        finally:
+            _am.time.sleep = real_sleep
+        rows = [json.loads(line) for line in
+                (tmp / "autopilot.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+        return ap, summary, rows, rt
+
+    try:
+        ap, summary, rows, rt = drive([("quest.advance", "noop", MEM_VETO_MIN_FAILURES)])
+        steps = [r for r in rows if "kind" not in r]
+        blocked = [r for r in steps if r.get("source") == "memory"]
+        check("a call this context refuted twice is not sent a third time",
+              len(blocked) == MEM_VETO_TRIES
+              and rt.executor.calls[:1] == ["quest.advance"],
+              "%d blocked, first dispatch %r" % (len(blocked), rt.executor.calls[:2]))
+        check("the refusal names the call and how often it failed here",
+              bool(blocked) and "npc_id=3888" in blocked[0].get("error", "")
+              and "x%d" % MEM_VETO_MIN_FAILURES in blocked[0].get("error", ""),
+              str(blocked[0].get("error") if blocked else None)[:200])
+        check("and it says how much of the veto it has spent, both per call and per "
+              "situation, so a reader can see both bounds",
+              bool(blocked) and "1/%d" % MEM_VETO_TRIES in blocked[0].get("error", "")
+              and "%d/%d" % (MEM_VETO_TRIES, MEM_VETO_TRIES) in blocked[-1].get("error", "")
+              and "1/%d in this situation" % MEM_VETO_CONTEXT_TRIES
+              in blocked[0].get("error", ""),
+              str([b.get("error") for b in blocked])[:240])
+        decisions = [r for r in rows if r.get("kind") == "decision"]
+        check("the controller is told the premise is false, not that something broke",
+              bool(decisions) and all(d.get("cause") == "invalid_assumption"
+                                      for d in decisions[:len(blocked)]),
+              str([d.get("cause") for d in decisions])[:160])
+        # Measured live on the first run with this veto (dofus-01, 30d77686): the
+        # refusals consumed 6 of an 8-directive budget, so the goal ended "goals
+        # exhausted" in five seconds with three objectives still ready. A refusal is
+        # a hint the goal never asked for, so it must not spend a directive.
+        check("a refusal does not spend one of the goal's directives",
+              len(blocked) == MEM_VETO_TRIES
+              and summary["steps"] == MEM_VETO_TRIES + 3
+              and len(rt.executor.calls) == 3,
+              "%r steps, %d refusals, %d dispatched"
+              % (summary.get("steps"), len(blocked), len(rt.executor.calls)))
+        # The bound is the whole reason this is safe: a stale row (KNOWN_GAPS G99.3
+        # was a uid that no longer existed) must cost two passes, not a session.
+        check("the world gets the last word once the veto is spent",
+              rt.executor.calls[:1] == ["quest.advance"]
+              and ap._mem_veto and list(ap._mem_veto.values()) == [MEM_VETO_TRIES],
+              "%r %r" % (rt.executor.calls[:2], ap._mem_veto))
+        # A harness refusal filed through `note_result` would land in the planner's
+        # start-failure count and retire a healthy quest (`_start_refused`).
+        check("the refusal is not reported to the planner as a server answer",
+              len(rt.policy.reports) == len(rt.executor.calls)
+              and all(rep[0] == "quest.advance" for rep in rt.policy.reports)
+              and all(bool(rep[1]) for rep in rt.policy.reports),
+              "%d report(s) for %d dispatch(es): %s"
+              % (len(rt.policy.reports), len(rt.executor.calls), str(rt.policy.reports)[:120]))
+
+        # The per-call bound is not a bound on the run. Five dead edges in one
+        # situation is exactly what the live store held, and the planner walked the
+        # list: each call spent its own two refusals and the goal ran out of steps.
+        # The situation budget is what turns the veto back into a hint.
+        dead = [{"tool": "nav.goto", "args": {"map_id": 146276000 + i, "direction": "left"}}
+                for i in range(5)]
+        walker = _Policy(rotation=dead)
+        walked = drive([(d["tool"], d["args"], "noop", MEM_VETO_MIN_FAILURES) for d in dead],
+                       steps=2, policy=walker)
+        refused = [r for r in walked[2] if r.get("source") == "memory"]
+        check("one situation may only spend its own budget of refusals",
+              len(refused) == MEM_VETO_CONTEXT_TRIES
+              and len(walked[3].executor.calls) == 2,
+              "%d refusals, %d dispatched (budget %d)"
+              % (len(refused), len(walked[3].executor.calls), MEM_VETO_CONTEXT_TRIES))
+        check("and past that the next call goes out instead of being refused again",
+              walked[3].executor.calls[:1] == ["nav.goto"],
+              "%r" % (walked[3].executor.calls[:2],))
+
+        # One failure is bad luck: a snapshot taken mid-transition, an NPC still
+        # animating. The store cannot tell those apart, so the floor is two.
+        # The question is whether the *first* attempt is refused: once the run's own
+        # failures land in the store, vetoing is the behaviour under test above.
+        def first_step(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+            return ([r for r in rows if "kind" not in r] or [{}])[0]
+
+        one = drive([("quest.advance", "noop", MEM_VETO_MIN_FAILURES - 1)])
+        check("one failure in this context is not a wall",
+              first_step(one[2]).get("source") != "memory"
+              and one[3].executor.calls[:1] == ["quest.advance"],
+              "%r" % (first_step(one[2]).get("source"),))
+        # A different context is a different question: the same call on another map
+        # must not inherit this map's dead end.
+        other = drive([("quest.advance", "noop", MEM_VETO_MIN_FAILURES)],
+                      obs=dict(OBS, map_id=10341))
+        check("a dead end on one map does not mask the call on the next",
+              first_step(other[2]).get("source") != "memory"
+              and other[3].executor.calls[:1] == ["quest.advance"],
+              "%r" % (first_step(other[2]).get("source"),))
+
+        # A read is not an action. Vetoing `state.snapshot` would turn "look again"
+        # into "do nothing", which is the spin the wait machinery exists to stop.
+        reading = _Policy(tool="state.snapshot", args={})
+        snap = drive([("state.snapshot", "noop", 4)], steps=2, policy=reading)
+        check("a read is never vetoed, whatever the store says about it",
+              not [r for r in snap[2] if r.get("source") == "memory"]
+              and snap[1]["waits"] > 0,
+              "%r waits %r" % ([r.get("tool") for r in snap[2] if "kind" not in r],
+                               snap[1].get("waits")))
+
+        # And the veto must never fire on a call that worked here: `observe` deletes
+        # the dead row on success, so a solved context cannot be walled off by its
+        # own earlier failures.
+        solved = drive([("quest.advance", "noop", MEM_VETO_MIN_FAILURES),
+                        ("quest.advance", "advanced", 1)])
+        check("a call that has since worked here is not vetoed",
+              first_step(solved[2]).get("source") != "memory"
+              and solved[3].executor.calls[:1] == ["quest.advance"],
+              "%r" % (first_step(solved[2]).get("source"),))
+
+        src = inspect.getsource(Autopilot._run)
+        check("the veto is consulted before the world, and the schema keeps its own "
+              "refusal",
+              src.index("veto = self._memory_veto(call, before)")
+              < src.index("refusal = self.guard(call)")
+              and "validate_call" in inspect.getsource(Autopilot._memory_veto))
+        check("the counter the file declared is finally read",
+              "_mem_veto" in inspect.getsource(Autopilot._memory_veto)
+              and MEM_VETO_TRIES > 0 and MEM_VETO_MIN_FAILURES > 1)
     finally:
         for d in dirs:
             shutil.rmtree(d, ignore_errors=True)
@@ -13289,6 +14327,8 @@ def test_brain_autostart() -> None:
             self.log_path = Path("gate.jsonl")
             self._step_total = 0
             self._verdict_counts: Dict[str, int] = {}
+            self._world_changes = 0
+            self._read_answers = 0
             self._promise_counts: Dict[str, int] = {}
             self._source_counts: Dict[str, int] = {}
             self.replan_requested = 0
@@ -14215,9 +15255,17 @@ def test_a_silent_house_map_is_left_by_the_crossings_it_knows() -> None:
           len({d for _, d in tools if d in known}) >= 3, "%s / known %s" % (tools, sorted(known)))
     check("and every one of them pays the same border budget",
           bool(asked) and max(asked.values()) <= CROSSING_ASK_LIMIT + 1, str(dict(asked)))
+    # "Stops asking" is a statement about the tail, not about how many reads follow:
+    # the count used to be `>= 3` because each ask was charged twice and the borders
+    # were spent after one, so the loop reached its reads on the fifth pass. The
+    # budget is two per border, so five borders cost ten asks and only the last two
+    # of twelve passes can be reads. What matters is that once a read appears no
+    # crossing follows it -- that is the difference between stopping and bouncing.
+    kinds = [t[0] for t in tools]
+    first_read = kinds.index("state.snapshot") if "state.snapshot" in kinds else len(kinds)
     check("once they are all spent it stops asking rather than walking them again",
-          tools[-1][0] == "state.snapshot" and [t[0] for t in tools].count("state.snapshot") >= 3,
-          str(tools[-4:]))
+          kinds[-1] == "state.snapshot" and "nav.goto" not in kinds[first_read:],
+          "%s (first read at %d of %d)" % (str(tools[-4:]), first_read, len(tools)))
 
     # The client that DOES publish its exits keeps authority: no crossing it withheld.
     noisy = {"cell": 300, "level": 12, "quests_active": {"4262": 0},
@@ -14235,6 +15283,212 @@ def test_a_silent_house_map_is_left_by_the_crossings_it_knows() -> None:
             asked_edges.append(args.get("map_id") or args.get("direction"))
     check("a map that lists its crossable exits is not sent through one it hid",
           set(asked_edges) <= {145490946, 145489920, "left"}, str(asked_edges))
+
+def test_the_page_s_word_for_a_wall_is_read() -> None:
+    """A map whose every border is a wall says so on `last_nav`, and nothing heard it.
+
+    Measured live 2026-11-12 (dofus-01, session a0d4c924) on map 190277376, a building
+    interior: `debug.inspect` read every border cell as `{l: 66}` -- bit 0 clear, so not
+    walkable -- while its interior cells read `{l: 67}`. The wall ring is the geometry,
+    so no cell carries an exit flag, `exits` and `doors` are empty, `interactives` is
+    empty, and `nav.goto` answered by asking the server directly and recording
+
+        {"stage": "change_requested_no_cell", "from_map": 190277376,
+         "to_map": 190277633, "direction": "top"}
+
+    The server refused. Over one goal the planner asked that same top neighbour three
+    times under two different objectives, and left, right and bottom once each: six
+    `noop` steps on one wall. `last_nav` reached the observation (`snap.last_nav`), was
+    read by `plan_stack` and `thinking`, and its `stage` -- the one field that says the
+    crossing is impossible -- was read by nothing.
+
+    The fix is one reader and one memory: a wall is a fact about the *map*, so it is
+    recorded per map and filtered out of every rotation, and `last_nav`'s single slot is
+    accumulated because a run walks four borders.
+    """
+    from agent.planner import NAV_WALL_STAGES, QuestPlanner
+
+    section("A refused border is remembered per map, not per objective")
+    HERE = 190277376
+    NEAR = {"left": 190276864, "right": 190277888,
+            "top": 190277633, "bottom": 190277377}
+    obj = {"quest_id": 4278, "objective_id": 14010, "id": 14010, "type_id": 0,
+           "type": "QuestObjectiveFreeForm", "map_id": 190277376,
+           "text": "Take the boat to Kanojedo Island.", "params": {}}
+
+    def scene(nav, neighbours=None, exits=()):
+        block = {"map_id": HERE, "cell": 242, "exits": list(exits), "doors": [],
+                 "npcs": [], "groups": []}
+        if neighbours is not False:
+            block["neighbours"] = NEAR if neighbours is None else neighbours
+        obs = {"cell": 242, "in_world": True, "position": {"map_id": HERE, "cell": 242},
+               "map": block}
+        if nav is not None:
+            obs["last_nav"] = nav
+        return obs
+
+    wall_top = {"stage": "change_requested_no_cell", "from_map": HERE,
+                "to_map": NEAR["top"], "direction": "top"}
+    planner = QuestPlanner()
+    check("the two stages that mean the border did not work are the measured ones",
+          NAV_WALL_STAGES == frozenset({"change_requested_no_cell",
+                                        "change_requested_at_edge"}),
+          str(sorted(NAV_WALL_STAGES)))
+    check("the page's own word for a wall is read as one border, named",
+          planner._refused_borders(scene(wall_top), HERE) == {("top", NEAR["top"])},
+          str(planner._refused_borders(scene(wall_top), HERE)))
+    check("a request that is still in flight is not a wall",
+          planner._refused_borders(scene({"stage": "change_requested", "from_map": HERE,
+                                          "to_map": NEAR["top"], "direction": "top"}),
+                                   HERE) == {("top", NEAR["top"])}
+          and QuestPlanner()._refused_borders(
+              scene({"stage": "change_requested", "from_map": HERE,
+                     "to_map": NEAR["top"], "direction": "top"}), HERE) == set(),
+          "the first planner already remembered top; a fresh one has heard nothing")
+    check("a walk that stopped short is a path problem, not a wall",
+          QuestPlanner()._refused_borders(
+              scene({"stage": "walk_stopped_short", "from_map": HERE,
+                     "to_map": NEAR["top"], "direction": "top"}), HERE) == set())
+    check("and a wall on another map is not this map's wall",
+          QuestPlanner()._refused_borders(
+              scene({"stage": "change_requested_no_cell", "from_map": NEAR["top"],
+                     "to_map": HERE, "direction": "bottom"}), HERE) == set(),
+          "from_map is the map that refused, not the one that was asked for")
+
+    def ask(p, obs, key=("q", 1), target=190277645):
+        return p._indexed_crossing_ask(obj, obs, HERE, key, target)
+
+    fresh = QuestPlanner()
+    call = ask(fresh, scene(wall_top))
+    check("the rotation skips the border the page refused",
+          isinstance(call, dict) and (call.get("args") or {}).get("direction") != "top"
+          and (call.get("args") or {}).get("map_id") in NEAR.values(),
+          str(call))
+    check("and it asks for a border this map really publishes",
+          isinstance(call, dict)
+          and NEAR[(call.get("args") or {}).get("direction")]
+              == (call.get("args") or {}).get("map_id"),
+          str(call))
+    other_obj = ask(fresh, scene(wall_top), key=("q", 2))
+    check("a second objective does not restart the wall the first one spent",
+          isinstance(other_obj, dict)
+          and (other_obj.get("args") or {}).get("direction") != "top",
+          "same planner, different objective key: %s" % str(other_obj))
+    check("while a map nobody refused still gets the hint it asks for",
+          isinstance(ask(QuestPlanner(), scene(None)), dict)
+          and ask(QuestPlanner(), scene(None)).get("args", {}).get("direction") == "left",
+          str(ask(QuestPlanner(), scene(None))))
+
+    # The live sequence, replayed: each ask is answered with its own refusal, which is
+    # exactly what the page does -- one `last_nav` slot, overwritten every time.
+    walker = QuestPlanner()
+    asked = []
+    nav = None
+    for _ in range(6):
+        step = ask(walker, scene(nav))
+        if not isinstance(step, dict):
+            break
+        args = step.get("args") or {}
+        asked.append(args.get("direction"))
+        # The page overwrites its one `last_nav` slot with the refusal for the border
+        # just asked; the planner's own `_refused_borders` call is what accumulates it.
+        nav = {"stage": "change_requested_no_cell", "from_map": HERE,
+               "to_map": NEAR[args["direction"]], "direction": args["direction"]}
+    check("four borders, four asks, then it stops asking",
+          asked == ["left", "right", "top", "bottom"], str(asked))
+    check("and a sealed map is not asked a fifth time",
+          ask(walker, scene({"stage": "change_requested_no_cell", "from_map": HERE,
+                             "to_map": NEAR["top"], "direction": "top"})) is None,
+          "every published border is spent, so the objective is retired instead")
+
+    # The other half of the same fact: `data/maps/_index.json` carries `walk`, one
+    # character per cell, for 2,696 maps, and `map_graph()` reads only `neighbours` --
+    # so the geometry that says "there is no cell on that edge to stand on" was cached
+    # and never consulted. The live run paid seven steps to learn it from the server.
+    section("The cached geometry answers what the run was paying to ask")
+    import agent.planner as _planner_mod
+    from agent.features import MAP_WIDTH, map_walk, walkable_border_cells
+
+    full = "1" * (MAP_WIDTH * 40)
+    wall_ring = "".join(
+        "1" if (i // MAP_WIDTH not in (0, 1, 38, 39)
+                and i % MAP_WIDTH not in (0, MAP_WIDTH - 1)) else "0"
+        for i in range(MAP_WIDTH * 40))
+    check("the geometry helper puts the border where the page's border test puts it",
+          len(walkable_border_cells(full, "left")) == 40
+          and len(walkable_border_cells(full, "right")) == 40
+          and len(walkable_border_cells(wall_ring, "left")) == 0
+          and len(walkable_border_cells(wall_ring, "top")) == 0,
+          "left %d right %d / wall ring %d"
+          % (len(walkable_border_cells(full, "left")),
+             len(walkable_border_cells(full, "right")),
+             len(walkable_border_cells(wall_ring, "bottom"))))
+    check("and a walk with no walkable cell has no edge to cross from at all",
+          all(walkable_border_cells("0" * (MAP_WIDTH * 40), d) == []
+              for d in ("left", "right", "top", "bottom")),
+          "the helper reads bits; the shape guard belongs to its caller, below")
+
+    real_walk = map_walk
+    real_planner_walk = _planner_mod.map_walk
+    try:
+        sealed = QuestPlanner()
+        _planner_mod.map_walk = lambda mid: wall_ring
+        check("a cached wall ring seals the map without asking the server",
+              sealed._sealed_borders(HERE, NEAR)
+              == {("left", NEAR["left"]), ("right", NEAR["right"]),
+                  ("top", NEAR["top"]), ("bottom", NEAR["bottom"])},
+              str(sealed._sealed_borders(HERE, NEAR)))
+        check("so the ask is not made at all",
+              ask(sealed, scene(None)) is None and HERE in sealed._wall_said,
+              "with geometry saying every edge is wall there is nothing to ask for")
+        check("and a second objective on the same map is answered the same way, silently",
+              ask(sealed, scene(None), key=("q", 2)) is None, "")
+
+        _planner_mod.map_walk = lambda mid: full
+        check("an open map is not sealed by the same rule",
+              QuestPlanner()._sealed_borders(HERE, NEAR) == set()
+              and isinstance(ask(QuestPlanner(), scene(None)), dict), "")
+        _planner_mod.map_walk = lambda mid: "101"
+        check("a cache entry of the wrong length is not allowed to refuse a border",
+              QuestPlanner()._sealed_borders(HERE, NEAR) == set(), "")
+        _planner_mod.map_walk = lambda mid: None
+        check("and a map the cache does not hold is unknown, not walled",
+              QuestPlanner()._sealed_borders(HERE, NEAR) == set()
+              and isinstance(ask(QuestPlanner(), scene(None)), dict), "")
+    finally:
+        _planner_mod.map_walk = real_planner_walk
+
+    # The map the live run was standing on, measured 2026-11-12: every border cell
+    # `{l: 66}`, every interior cell `{l: 67}`. Its terrain was in the trajectory the
+    # whole time, as 140 hex characters, and was never turned into cache geometry.
+    live_sealed = real_walk(146277376)
+    check("the map the run was standing on now has geometry in the cache",
+          isinstance(live_sealed, str) and len(live_sealed) == MAP_WIDTH * 40,
+          "map_walk(146277376) is %r" % (live_sealed[:16] if live_sealed else live_sealed,))
+    check("and that geometry says its whole border is wall, as the page did",
+          live_sealed is not None
+          and all(walkable_border_cells(live_sealed, d) == []
+                  for d in ("left", "right", "top", "bottom")),
+          "the page read every border cell as {l: 66}: not walkable")
+
+    import inspect as _inspect
+    src = _inspect.getsource(__import__("agent.planner", fromlist=["x"]))
+    check("the refusal is read before the rotation is built, not after",
+          src.index("refused = self._refused_borders(")
+          < src.index("usable = [d for d in order"), "")
+    check("and the walls are keyed on the map alone",
+          "self._walls: Dict[int, set]" in src, "")
+    # The live defect was two implementations of one rule: `_travel_ask` kept its own
+    # copy of the rotation, with the same sentence and neither the budget nor the
+    # refusals, and that is the one the run used. One producer, or the bounded one is
+    # decoration.
+    check("one sentence, one implementation of the crossing ask",
+          src.count("publishes no crossable border; ask the") == 1
+          and src.count("refused = self._refused_borders(") == 1,
+          "producers: %d, readers: %d"
+          % (src.count("publishes no crossable border; ask the"),
+             src.count("refused = self._refused_borders(")))
+
 
 def test_a_crossing_in_flight_is_waited_out() -> None:
     """`nav.goto` is a walk the client performs, not a command it answers.
@@ -14442,6 +15696,77 @@ def test_the_active_quest_survives_one_unplannable_pass() -> None:
           str(dict(r._plan_none)))
     check("a fork carries the count so a counterfactual cannot invent a retirement",
           set(r.fork()._plan_none) == set(r._plan_none), str(dict(r.fork()._plan_none)))
+
+    # The count alone is not a finding. Live 2026-11-11 read "nothing plannable --
+    # 3 ready objective(s), 3 active quest(s), 104 retired" and the log could not say
+    # whether the knowledge base was missing those quests, the objectives had no tool,
+    # or the server never honoured a start. Three different repairs, one number.
+    check("a retirement records why it happened",
+          p._skip_reasons.get(4262) == "no plan for the ready objective",
+          p._skip_reasons.get(4262))
+    why = p.retirement_report()
+    check("and the reason is readable in one line",
+          "no plan for the ready objective x1" in why, why)
+    q = QuestPlanner()
+    q._skip(1, "not in the quest knowledge base")
+    q._skip(2, "not in the quest knowledge base")
+    q._skip(3, "the server never showed it active")
+    check("the report groups by reason, most frequent first",
+          q.retirement_report() == ("not in the quest knowledge base x2, "
+                                    "the server never showed it active x1"),
+          q.retirement_report())
+    check("a fork carries the reasons too",
+          q.fork()._skip_reasons == q._skip_reasons, q.fork()._skip_reasons)
+
+    # The downloaded cache and the live game are different id spaces -- the cache stops
+    # at 2,546, the live quests start at 3,841 -- so every quest the character actually
+    # holds used to be absent from the table and was retired as unplannable. The page's
+    # own captured graph is the only description of a live quest; absorbing it is what
+    # makes `_plannable` answer about the quest the character is standing in.
+    live = QuestPlanner()
+    live_catalog = {"id": 4278, "name": "Slay Dungeons for Glory!",
+                    "steps": [{"id": 4960, "objectives": [
+                        {"id": 13986, "type_id": 1, "type": "QuestObjectiveGoToNpc",
+                         "map_id": 148374535, "params": {"parameter0": 811},
+                         "step_id": 4960}]}]}
+    check("a live quest is not plannable before the page describes it",
+          live._plannable(4278) is False)
+    check("absorbing the page's catalogue adds it",
+          live._absorb_catalog({"quests_catalog": [live_catalog]}) == 1)
+    check("and the quest becomes plannable from its own objectives",
+          live._plannable(4278) is True)
+    stale = QuestPlanner()
+    stale._skip(4278, "not in the quest knowledge base")
+    stale._absorb_catalog({"quests_catalog": [live_catalog]})
+    check("a retirement that only said 'not in the table' is undone by the table",
+          4278 not in stale._skipped and 4278 not in stale._skip_reasons,
+          stale._skip_reasons.get(4278))
+    other = QuestPlanner()
+    other._skip(4278, "the client has never shown this quest")
+    other._absorb_catalog({"quests_catalog": [live_catalog]})
+    check("a retirement with a different reason survives the catalogue",
+          4278 in other._skipped, other._skip_reasons.get(4278))
+
+    # ...and the merge must not write into the process-wide table. `_ensure_quests` hands
+    # that table out by reference and it is documented read-only; the first version of
+    # `_absorb_catalog` wrote into it, so one character's quest graph leaked into every
+    # other planner in the process. It did not show as a flaky test: it showed in the
+    # mutation snippet, where this suite ran *after* one that had populated the table, and
+    # four of its checks went red while the suite passed on its own.
+    from agent.planner import shared_quest_table
+    shared = shared_quest_table()
+    leaked = 9001
+    check("the shared quest table does not already hold the probe id",
+          leaked not in shared, leaked)
+    isolated = QuestPlanner()
+    isolated._ensure_quests()
+    isolated._absorb_catalog({"quests_catalog": [{
+        "id": leaked, "name": "leak", "steps": [
+            {"id": 1, "objectives": [{"id": 2, "type_id": 1}]}]}]})
+    check("an absorbed catalogue reaches this planner",
+          leaked in isolated.quests, len(isolated.quests))
+    check("and is not written into the shared table",
+          leaked not in shared_quest_table(), "the merge leaked into the process cache")
 
 def test_the_session_end_row_names_the_reason() -> None:
     """Every run writes why it stopped, on the log, once.
@@ -15274,9 +16599,12 @@ def test_ready_objective_scan() -> None:
           and far[-1][2] == ((4274, 13926), "state.snapshot")
           and max(nav_borders.values()) <= CROSSING_ASK_LIMIT,
           [str(far[-1]), dict(nav_borders)])
+    kinds = [row[0] for row in far]
+    first_read = kinds.index("state.snapshot") if "state.snapshot" in kinds else len(kinds)
     check("and it spends the other crossings it knows before giving up, which is how "
           "a house door gets found",
-          len(nav_borders) >= 3 and len(reads) >= 3,
+          len(nav_borders) >= 3 and len(reads) >= 1
+          and "nav.goto" not in kinds[first_read:],
           [dict(nav_borders), len(reads)])
 
     retired = steps(None, [craft, talk], 145490435, 3)
@@ -15560,6 +16888,7 @@ def test_group_refusal_routing() -> None:
     shim = SimpleNamespace(
         controller=SimpleNamespace(save=lambda force=False: None, stats=lambda: {}),
         session=1, _step_total=0, _verdict_counts={}, _promise_counts={}, _source_counts={}, replan_requested=0,
+        _world_changes=0, _read_answers=0,
         _intervention_total=0, _recoveries=0, _recoveries_ok=0, _recovery_wait_s=0.0,
         _waits=0, _dialogs=0, _dialog_stalls=0, _brain={}, _listing_total=0,
         _fight_summary=lambda: {},
@@ -16644,9 +17973,12 @@ def test_no_suite_stops_answering() -> None:
     # while it runs; comparing it against the previous run would accuse itself of going silent.
     mine = "test_no_suite_stops_answering"
     silent = sorted(name for name, count in previous.items()
-                    if count and name != mine and not CHECK_COUNTS.get(name))
+                    if count and name != mine and name not in _RETIRED_SUITES
+                    and not CHECK_COUNTS.get(name))
     check("no suite that answered in the previous run went silent in this one",
           not silent, silent[:8])
+    check("the retired set stays small and named", len(_RETIRED_SUITES) <= 4,
+          sorted(_RETIRED_SUITES))
     added = sorted(name for name in CHECK_COUNTS if name not in previous)
     if added:
         print("   new since the previous run: %s" % ", ".join(added))
@@ -16654,6 +17986,20 @@ def test_no_suite_stops_answering() -> None:
     check("the per-suite counts account for every check this run registered",
           sum(CHECK_COUNTS.values()) + own == _CHECKS,
           (sum(CHECK_COUNTS.values()), own, _CHECKS))
+    # A suite that exists and is never called is not "silent", it was never asked:
+    # the previous-run comparison above cannot see it, because it has no count in
+    # either run. Measured 2026-11-12: three suites -- G112's wall suite, the
+    # unread-field audit's arm, and the battle solver's payload runner -- were all
+    # defined, all passed when named on the command line, and none of them was in
+    # `run()`. The gate stayed green and 30 checks it was supposed to run never ran.
+    import inspect as _inspect
+    called = set(re.findall(r"_run_test\((test_[a-z0-9_]+)\)",
+                            _inspect.getsource(run)))
+    defined = {name for name, value in globals().items()
+               if name.startswith("test_") and callable(value)
+               and getattr(value, "__module__", "") == __name__}
+    check("every suite defined in this module is called by the gate runner",
+          defined <= called, sorted(defined - called)[:8])
 
 
 def _run_test(fn) -> None:
@@ -16681,12 +18027,17 @@ def _run_test(fn) -> None:
     """
     import time
 
+    from agent import witness
+
     started = time.perf_counter()
     before = _CHECKS
+    name = getattr(fn, "__name__", str(fn))
+    # What the test executes, reads and spawns, recorded for the mutation ratchet. Off
+    # unless `run()` installed the instrument, so `scratch/one_test.py` stays untouched.
+    witness.start(name)
     try:
         fn()
     except Exception as exc:  # noqa: BLE001 - the gate must survive its own tests
-        name = getattr(fn, "__name__", str(fn))
         absent = None
         if isinstance(exc, ModuleNotFoundError):
             absent = (exc.name or "").split(".")[0]
@@ -16703,7 +18054,8 @@ def _run_test(fn) -> None:
             traceback.print_exc()
             check("test %s ran to completion" % name,
                   False, "%s: %s" % (type(exc).__name__, exc))
-    name = getattr(fn, "__name__", str(fn))
+    finally:
+        witness.stop()
     CHECK_COUNTS[name] = _CHECKS - before
     DURATIONS[name] = round(time.perf_counter() - started, 2)
 
@@ -16719,7 +18071,7 @@ def test_durable_memory() -> None:
     """
     import tempfile
 
-    from agent.action_memory import ActionMemory, context_signature
+    from agent.action_memory import ActionMemory, context_signature, label_call
     from agent.autopilot import Autopilot
     from agent.persistent_memory import PersistentMemory
     from agent.tool_dataset import _observation_text
@@ -16808,6 +18160,49 @@ def test_durable_memory() -> None:
     check("a remembered navigation move is never replayed over the policy",
           ap5._remembered_call(nav_obs, "go") is None)
 
+    # The dead-end line has to name the edge, not just the tool. Measured live
+    # 2026-11-11 on dofus-01: 280 consecutive `nav.goto {"direction": "left"}` noops on
+    # one map while the memory rendered four distinct dead edges as "nav.goto" four
+    # times. A policy told only "the tool failed" has no way to pick a different one.
+    dead = ActionMemory()
+    dead.observe(nav_ctx, "nav.goto", {"direction": "left"}, "noop")
+    dead.observe(nav_ctx, "nav.goto", {"direction": "right"}, "noop")
+    dead.observe(nav_ctx, "nav.goto", {"direction": "left"}, "noop")
+    line = dead.describe(nav_ctx) or ""
+    check("a dead direction is named in the line the model reads",
+          "direction=left" in line and "direction=right" in line, line)
+    check("and two dead directions are two entries, not one",
+          line.count("nav.goto(") == 2, line)
+    check("the repeat count still rides on the right entry",
+          "direction=left) x2" in line, line)
+
+    # The same line, from the durable store. This is the copy that was still blind: the
+    # episodic renderer named the edge and the cross-session one did not, so on the live
+    # run every step of the policy's prompt carried
+    # `already failed here: nav.goto x10; nav.goto x8; nav.goto x3` -- ten dead edges on
+    # one map rendered as the same word ten times, with the one fix applied to the other
+    # store. One formatter, so a second patch cannot leave this half-fixed again.
+    durable = PersistentMemory(tmp / "dead.json")
+    for direction in ("left", "right", "left"):
+        durable.observe(nav_ctx, "nav.goto", {"direction": direction}, "noop")
+    durable.observe(nav_ctx, "quest.advance", {"npc_id": 3912}, "failed")
+    dline = durable.describe_failures(nav_ctx) or ""
+    check("the durable dead-end line names the edge too",
+          "direction=left" in dline and "direction=right" in dline, dline)
+    check("two dead directions stay two entries across sessions",
+          dline.count("nav.goto(") == 2, dline)
+    check("with the count on the one that repeated", "direction=left) x2" in dline, dline)
+    check("and a dead npc is named by id, not by tool", "npc_id=3912" in dline, dline)
+    # A call whose arguments are all unnamed must still be told apart from another one.
+    durable.observe(nav_ctx, "fight.join", {"elem_id": 77}, "noop")
+    durable.observe(nav_ctx, "fight.join", {"elem_id": 78}, "noop")
+    dline2 = durable.describe_failures(nav_ctx, limit=8) or ""
+    check("an unnamed argument renders as a digest, not as the bare tool",
+          dline2.count("fight.join(") == 2 and "elem_id" in dline2, dline2)
+    check("and the episode and durable renderers agree on the same call",
+          label_call("nav.goto", {"direction": "left"}, 2) in line
+          and label_call("nav.goto", {"direction": "left"}, 2) in dline)
+
     # Without a path the loop keeps the old episodic behaviour, so a test or an
     # evaluation run cannot inherit what a previous run learned.
     ap4 = pilot(None)
@@ -16840,8 +18235,49 @@ def test_durable_memory() -> None:
           text2 is not None and "already failed here" in text2, text2)
 
 
+def test_quest_area_rejects_the_prompt_echo() -> None:
+    """A name slot filled with the observation text is refused, not served empty.
+
+    Measured: the learned tool policy answers `quest.list` with a slice of its own
+    prompt -- `area="urrent state: where: map 146538496 cell 176"` -- in 168 rows of
+    the 2026-11-08 trajectory and 20 more in the 2026-11-11 live run. Served as an
+    empty list it reads as a successful read, so the policy repeats it; refused, it is
+    an outcome the memory can record.
+    """
+    section("quest.list refuses an area that is the observation text")
+    from agent.executor import ToolExecutor, _is_prompt_echo
+
+    check("the live string is an echo",
+          _is_prompt_echo("urrent state: where: map 146538496 cell 176"))
+    check("so is the full prompt line",
+          _is_prompt_echo("where: map 146538496 cell 176 in_world true"))
+    for name in ("astrub", "3 kolk", "champs de glace", "la foret des abraknydes",
+                 "amakna"):
+        check("%r is a place name, not an echo" % name, not _is_prompt_echo(name))
+
+    class _Knowledge:
+        def entries(self, kind):        # noqa: ARG002 - only truthiness is read
+            return [1]
+
+    executor = object.__new__(ToolExecutor)
+    executor.knowledge = _Knowledge()
+    refused = executor._quest_list(
+        {"area": "urrent state: where: map 146538496 cell 176"}, "test")
+    check("the handler refuses it", refused.ok is False, refused.ok)
+    check("and says what was wrong with the argument",
+          "observation text" in str(refused.error), refused.error)
+
+
 def run() -> Tuple[int, List[str]]:
+    # The witness instrument records what every test below executes and opens, so the
+    # mutation ratchet near the end can ask about coverage instead of about prose (G114).
+    # Measured 2026-11-12 over the sweep's 123-test snippet: 59.4 s plain, 60.3 s
+    # instrumented. If the host cannot install it, the ratchet says so rather than
+    # passing on an empty map.
+    from agent import witness
+    witness.install()
     _run_test(test_durable_memory)
+    _run_test(test_quest_area_rejects_the_prompt_echo)
     _run_test(test_verdict_vocabulary)
     _run_test(test_verifier_rules)
     _run_test(test_verifier_model_contract)
@@ -16854,7 +18290,6 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_brain_lifecycle)
     _run_test(test_brain_reports_stale_code)
     _run_test(test_consult_gate_is_fitted_and_live)
-    _run_test(test_mutation_targets_have_witnesses)
     _run_test(test_adjacent_crossing_is_bounded_tighter)
     _run_test(test_promise_shadow_names_a_bounced_crossing)
     _run_test(test_online_learn_gate_needs_transfer_it_did_not_copy)
@@ -16908,7 +18343,10 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_text_io_declares_encoding)
     _run_test(test_docs_live_readout_commands_run)
     _run_test(test_tools_scripts_find_the_repo_root)
-    _run_test(test_the_snippet_can_see_its_own_mutation_targets)
+    # The instrument the coverage ratchet at the end reads. It replaces
+    # `test_the_snippet_can_see_its_own_mutation_targets`, which matched test *text* and
+    # reported 24 unwitnessed files out of 77 while accepting a comment as a witness (G114).
+    _run_test(test_the_witness_instrument_sees_what_a_test_touches)
     _run_test(test_live_evidence_lands_in_the_repository)
     _run_test(test_docs_command_blocks_state_their_directory)
     _run_test(test_damage_calibration_sees_the_recorded_fights)
@@ -16918,6 +18356,8 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_npc_map_fact_is_routed)
     _run_test(test_map_graph_live_wins)
     _run_test(test_read_streak_is_bounded)
+    _run_test(test_reads_are_not_world_progress)
+    _run_test(test_critic_gate_opens_before_the_solver_returns)
     _run_test(test_kaggle_toolkit_sync)
     _run_test(test_sync_kaggle_toolkit_rules)
     _run_test(test_quest_chain_replay)
@@ -16951,6 +18391,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_counterfactual_factory_alive)
     _run_test(test_repair_credit)
     _run_test(test_reads_are_not_actions)
+    _run_test(test_the_memory_vetoes_what_the_context_refuted)
     _run_test(test_dialog_labels)
     _run_test(test_objective_ledger_suite)
     _run_test(test_stress_hardening_suite)
@@ -16993,6 +18434,10 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_a_return_to_the_objective_map_is_granted_once)
     _run_test(test_a_crossing_does_not_reopen_a_retired_quest)
     _run_test(test_a_silent_house_map_is_left_by_the_crossings_it_knows)
+    # G112's own suite. It was written on 2026-11-12 and never added here, so it ran
+    # only when someone named it on the command line -- and the sweep ran it while the
+    # gate did not. `test_no_suite_stops_answering` now fails on exactly that.
+    _run_test(test_the_page_s_word_for_a_wall_is_read)
     _run_test(test_no_call_is_explained)
     _run_test(test_ready_set_ranking)
     _run_test(test_login_cooldown_guard)
@@ -17042,11 +18487,14 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_exploration_policy)
     _run_test(test_explore_report)
     _run_test(test_board_payload_round_trip)
+    _run_test(test_live_fight_corpus_is_read_in_process)
+    _run_test(test_the_battle_solver_reads_what_the_page_writes)
     _run_test(test_slim_live_observation)
     _run_test(test_encounter_input_tables)
     _run_test(test_combat_decision_log)
     _run_test(test_encounter_model_and_checkpoint)
     _run_test(test_doc_facts_self_witness)
+    _run_test(test_the_unread_field_audit_can_find_an_unread_field)
     _run_test(test_live_action_realization)
     _run_test(test_duel_harness_statistics)
     _run_test(test_knowledge_index_storage)
@@ -17065,6 +18513,11 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_every_mutation_anchor_still_points_at_code)
     # Last, because it reads the durations every test above recorded.
     _run_test(test_the_mutation_pass_stays_affordable)
+    # After every suite above -- including the two that only measure the run itself --
+    # because it reads what they executed: a target with no witness in the map is either a
+    # missing test or a ratchet that ran too early, and the detail names which. Measured
+    # 2026-11-12: placed one call earlier, it failed on the very suite below it.
+    _run_test(test_mutation_targets_have_witnesses)
     # Last, because it audits the counts every other test registered.
     _run_test(test_no_suite_stops_answering)
     return _CHECKS, _FAILURES

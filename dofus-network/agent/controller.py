@@ -345,6 +345,12 @@ class Controller:
                 # `shop.buy` without the window open is a missing precondition,
                 # not a missing control: the plan opens the shop first.
                 or "shop window is not open" in err
+                # A call the durable memory has already refuted here twice is a
+                # premise that is false, not a target that moved: the plan has to
+                # choose something else. Live 2026-11-11, dofus-01: 280 consecutive
+                # noops on one edge that the memory was already printing to the
+                # policy on every pass -- there was no reader to make it count.
+                or "the memory refuted" in err
                 or "invalid fact" in err):
             return "invalid_assumption"
         # A price cache with no listing is a measurement that has gone stale, not
@@ -370,6 +376,19 @@ class Controller:
                                   "on the current map",
                                   "no visible group contains",
                                   "not adjacent",
+                                  # The client's own pathfinder refused a cell we asked
+                                  # for. Live 2026-11-11, map 145752833: an NPC two cells
+                                  # away answered `_movePlayerOnMap noPath:176:147`, 44
+                                  # times in one run. Every one fell through to the
+                                  # `stale_state` tail below -- "the observation cannot say
+                                  # what the action did" -- so the controller answered
+                                  # "re-observe" and the strategy table learned that a wall
+                                  # is fixed by looking at it. A cell that cannot be walked
+                                  # to is the `wrong_target` bucket. Deliberately not
+                                  # "not reachable"/"unreachable": the bridge's own
+                                  # "directive bridge not reachable" is structural and has
+                                  # to stay `unavailable`.
+                                  "nopath", "no path to", "could not walk", "cannot walk",
                                   "not in inventory",
                                   "no visible interactive element",
                                   # A UI press whose control is not on screen (or is

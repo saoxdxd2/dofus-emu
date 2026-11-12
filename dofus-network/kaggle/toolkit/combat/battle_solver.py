@@ -537,6 +537,12 @@ class LiveSpell:
     is_weapon: bool = False
     zone_size: Optional[int] = None
     zone_shape: Optional[str] = None
+    # Why the client could not answer "can this be cast". The page writes it only
+    # when `canCastThisSpell` threw, and `castable` is then `None` in the payload --
+    # which `_castable` reads as available, because the executor re-checks before
+    # sending. Without this field the *reason* was dropped at parse time, so a live
+    # session that hit a broken client API looked exactly like a healthy board.
+    castable_error: Optional[str] = None
 
     # The solver asks these thousands of times per plan; recomputing the filter
     # from the effect tuple each time was measurable. The spell is immutable, so
@@ -805,10 +811,20 @@ class Board:
             # Our own fighter's AP/MP arrive null: the client publishes them on the
             # *active* fighter, and fills our row in only for the fields it has.
             # Measured 2026-11-10: 106 of 160 boards captured on our own turn read
-            # `ap: 0`, and the grid dataset builder drops those as `no_positive_ap`
-            # (198 of 333 boards) -- which is why the whole live corpus yielded three
-            # actionable rows. The numbers are in `my_stats`, so they are recoverable
-            # rather than absent.
+            # `ap: 0`. Re-measured 2026-11-12 over the 333 boards in
+            # `%LOCALAPPDATA%/DofusFarm/fight_boards.jsonl`: the same 106 of 160, and
+            # this derivation recovers **152** of them -- only 8 boards still read no
+            # positive AP, which is what `data/combat_grid/manifest.json` records as
+            # `no_positive_ap: 8` and `actionable: 7`. Those 8 are not a gap: every one
+            # is fight 3977 with `action_points: 6` and `spell_cast_counts {3: 2}` at a
+            # 3-AP spell, so the character really had spent its turn.
+            #
+            # The older sentence here said the builder dropped 198 of 333 boards and
+            # that the corpus "yielded three actionable rows". Both numbers were true
+            # before this fallback existed and neither survived it: a comment that
+            # tells the next reader the live corpus is dead is how a working dataset
+            # goes unbuilt. If this is touched again, re-run the measurement rather
+            # than copying the figure.
             #
             # AP is derived, not assumed: the stat is the turn's budget and
             # `spell_cast_counts` resets each round (verified across five rounds of
@@ -905,13 +921,15 @@ class Board:
             max_cast_per_target=_limit(raw.get("max_cast_per_target")),
             min_cast_interval=_int(raw.get("min_cast_interval"), 0),
             casts_this_turn=_int(raw.get("casts_this_turn"), 0),
-            castable=bool(raw.get("castable", True)),
+            castable=_castable(raw.get("castable")),
             critical_hit_probability=_float(raw.get("critical_hit_probability")),
             effects=_effects(raw.get("effects")),
             critical_effects=_effects(raw.get("critical_effects")),
             is_weapon=bool(raw.get("is_weapon")),
             zone_size=_int(raw.get("zone_size")) if raw.get("zone_size") is not None else None,
             zone_shape=raw.get("zone_shape") or None,
+            castable_error=(str(raw.get("castable_error"))[:120]
+                            if raw.get("castable_error") else None),
         )
 
     @property
@@ -963,6 +981,11 @@ class Board:
                 "critical_effects": [effect_row(e) for e in spell.critical_effects],
                 "is_weapon": spell.is_weapon,
                 "zone_size": spell.zone_size, "zone_shape": spell.zone_shape,
+                # Round-trip the reason as well as the answer: a board rebuilt from
+                # this payload is what every offline measurement reads, and dropping
+                # it here made an unchecked spell indistinguishable from a checked
+                # one on the way back.
+                "castable_error": spell.castable_error,
             }
 
         def fighter_row(fighter: "Fighter") -> Dict[str, Any]:
@@ -1060,6 +1083,19 @@ def _float(value: Any) -> Optional[float]:
 def _limit(value: Any) -> Optional[int]:
     parsed = _int(value)
     return None if parsed is None or parsed <= 0 else parsed
+
+
+def _castable(value: Any) -> bool:
+    """Unknown is not refused.
+
+    The page writes ``false`` only when the client answered, and ``null`` when
+    ``canCastThisSpell`` threw. Reading both as a veto drops the spell from every
+    candidate set, so the AI never considers it -- and the executor re-checks with
+    its own gate before sending, so an optimistic read cannot spend the turn on a
+    refused cast. Absent stays available: all 1,341 spell rows in the recorded
+    corpus predate the field.
+    """
+    return True if value is None else bool(value)
 
 
 def _roll(raw: Dict[str, Any]) -> Optional[Tuple[int, int]]:
@@ -1465,6 +1501,16 @@ class BattleSolver:
         blocked = sorted({s.name or str(s.id) for s in board.spells if not s.castable})
         if blocked:
             notes.append("client marks as not castable: " + ", ".join(blocked))
+        # A spell the client could not check is treated as available (`_castable`), and
+        # the executor re-checks before sending. That is the right call, but it made the
+        # reason invisible: the page records `castable_error` when `canCastThisSpell`
+        # throws, and nothing said so in the plan. Now the decision row carries it, so a
+        # live session that hits a broken client API reads as that instead of as a turn
+        # the solver chose to spend.
+        unchecked = sorted({"%s: %s" % (s.name or s.id, s.castable_error)
+                            for s in board.spells if s.castable_error})
+        if unchecked:
+            notes.append("client could not check these spells: " + "; ".join(unchecked))
 
         occupied = frozenset(f.cell for f in board.fighters if f.alive and f.id != me.id)
         template_cache: Dict[int, List[_CastTemplate]] = {}

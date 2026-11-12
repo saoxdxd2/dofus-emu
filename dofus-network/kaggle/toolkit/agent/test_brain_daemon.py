@@ -186,6 +186,31 @@ class BrainLifecycleTests(unittest.TestCase):
         second = daemon._make_pilot("dofus-real-2", {"steps": 0, "dry_run": True})
         self.assertIsInstance(second, Autopilot)
 
+    def test_the_step_budget_the_host_asks_for_is_the_budget_a_goal_gets(self):
+        """`/brain/start {"steps": 40}` used to run 8.
+
+        The host names a total and never a per-goal slice (`aipanel.cs` writes
+        `"steps":N` only), so the factory's `or 8` quartered every request: measured
+        live 2026-11-12 (session 75e47da4) a 40-step start produced 12 step rows -- 4
+        memory refusals and 8 directives -- and ended "goals exhausted" with three
+        objectives still ready. From outside that is indistinguishable from the agent
+        stopping on its own.
+        """
+        daemon = BrainDaemon(log_dir=self.root, recorder_dir=self.root)
+        asked = daemon._make_pilot("budget-a", {"steps": 40, "dry_run": True})
+        self.assertEqual(asked.max_steps, 40)
+        self.assertEqual(asked.steps_per_goal, 40,
+                         "one goal must be allowed the whole budget the host named")
+        explicit = daemon._make_pilot("budget-b", {"steps": 40, "steps_per_goal": 5,
+                                                   "dry_run": True})
+        self.assertEqual(explicit.steps_per_goal, 5, "an explicit slice still wins")
+        legacy = daemon._make_pilot("budget-c", {"dry_run": True})
+        self.assertEqual(legacy.steps_per_goal, 8,
+                         "a request that names nothing keeps the old default")
+        unlimited = daemon._make_pilot("budget-d", {"steps": 0, "dry_run": True})
+        self.assertEqual(unlimited.max_steps, 0)
+        self.assertEqual(unlimited.steps_per_goal, 8)
+
     def test_stop_returns_before_workers_finish(self):
         self.start("one", "two")
         returned = threading.Event()

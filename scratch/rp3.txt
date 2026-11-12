@@ -1,0 +1,36 @@
+=== interleaved ===
+[autopilot] 1 goal(s), unlimited
+[autopilot]   1 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] agent2 directs: chat.say {'text': 'hi'}
+[autopilot]   2 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] agent2 directs: state.snapshot {}
+[autopilot] wait x1: recovering from incomplete via state.snapshot
+[autopilot]   3 quest.list     ok   advanced      0ms  -> {ok}
+[autopilot]   4 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] REPLAN (plan_wrong): chat.say failed 3 times in a row
+[autopilot] THINK (plan_wrong): None -> chat.say {'text': 'hi'}
+[autopilot] no progress: chat.say repeated 3x with no change
+[autopilot] abandoning 'do all the quests'
+[autopilot] done: no progress: chat.say repeated 3x and no quest could be retired for it | {'noop': 3, 'advanced': 1} | 0 world change(s), 1 read answer(s) | 0 open listing(s)
+[autopilot] fights: 13/13 decided fights won = 100.0% (95% CI 77.2-100.0%), 0 drawn, 2 open
+
+counters ({'noop': 3, 'advanced': 1}, 0, 1)
+=== one real change in the middle ===
+[autopilot] 1 goal(s), unlimited
+[autopilot]   1 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] agent2 directs: chat.say {'text': 'hi'}
+[autopilot]   2 chat.say       ok   advanced      0ms  -> {ok}
+[autopilot]   3 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] agent2 directs: chat.say {'text': 'hi'}
+[autopilot]   4 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] agent2 directs: state.snapshot {}
+[autopilot] wait x1: recovering from incomplete via state.snapshot
+[autopilot]   5 chat.say       ok   noop          0ms  -> {ok}
+[autopilot] REPLAN (plan_wrong): chat.say failed 3 times in a row
+[autopilot] THINK (plan_wrong): None -> chat.say {'text': 'hi'}
+[autopilot] no progress: chat.say repeated 3x with no change
+[autopilot] abandoning 'do all the quests'
+[autopilot] done: no progress: chat.say repeated 3x and no quest could be retired for it | {'noop': 4, 'advanced': 1} | 1 world change(s), 0 read answer(s) | 0 open listing(s)
+[autopilot] fights: 13/13 decided fights won = 100.0% (95% CI 77.2-100.0%), 0 drawn, 2 open
+
+counters ({'noop': 4, 'advanced': 1}, 1, 0)

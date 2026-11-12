@@ -83,6 +83,13 @@ if (body) {
         // transition, which is what this suite is about. The step-off walk itself is
         // `test_nav_edge_step_off.js`.
         global._agentStepOffCell = function () { return null; };
+        // The full door list, also page state. Empty unless the suite says otherwise:
+        // the direction branch asks for one only when the map publishes no exit cell.
+        global._agentDoorList = function () { return opts.doors || []; };
+        // Walking onto a free cell beside a target. Never reached here -- every test
+        // below passes a cell or a direction, and the stub engine always finds a path
+        // -- but the handler names it on the stop-adjacent path, so it must exist.
+        global._agentWalkBeside = function () { return null; };
         // Which border cell this map tried last, per "<map>:<direction>". Page
         // state, so the suite decides it, exactly like the door memory above.
         global._agentEdgeTry = {};

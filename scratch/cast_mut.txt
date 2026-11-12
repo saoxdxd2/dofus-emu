@@ -1,0 +1,17 @@
+6 of 706 mutations selected (0 already caught in 0 resume log(s))
+clean tree runs the snippet: 0 failing checks, exit 0
+CAUGHT  castable: a check that threw is a refusal again      1 failing check(s)
+      tools/test_fight_state_fields.js passes: :null,"critical_failure_probabili
+CAUGHT  castable: the reason it could not be answered is dropped 1 failing check(s)
+      tools/test_fight_state_fields.js passes: bability":null,"critical_failure_
+CAUGHT  castable: the reason is kept but never reaches the payload 1 failing check(s)
+      tools/test_fight_state_fields.js passes: bability":null,"critical_failure_
+CAUGHT  castable: the client's own answer is discarded       1 failing check(s)
+      tools/test_fight_state_fields.js passes: bability":null,"critical_failure_
+CAUGHT  castable: unknown is read as a veto again            1 failing check(s)
+      the serialization suite ran and nothing in it failed: (10, ['(<combat.test
+CAUGHT  castable: a spell the client refused is offered anyway 1 failing check(s)
+      the serialization suite ran and nothing in it failed: (10, ['(<combat.test
+
+restored: 0 failing checks, exit 0 (must be 0/0)
+mutations that no check noticed: none

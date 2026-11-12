@@ -38,7 +38,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.action_memory import (
-    FAIL_VERDICTS, ActionMemory, call_signature, context_signature,
+    FAIL_VERDICTS, SOLUTION_ARG_KEYS, ActionMemory, call_signature, context_signature,
+    label_call,
 )
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "learned_memory.json"
@@ -174,11 +175,23 @@ class PersistentMemory(ActionMemory):
 
     # -- querying ----------------------------------------------------------
 
+    def failure_count(self, context: Optional[Tuple], tool: str,
+                      args: Optional[Dict[str, Any]]) -> int:
+        """How many times this exact call has failed here, across every session.
+
+        The count, not the boolean, is what a pre-dispatch veto needs: one failure
+        can be a race, two in the same context is a wall. `known_failure` is the same
+        question asked coarsely, kept because the replay filter only wants "is this
+        row still dead".
+        """
+        key = context_key(context)
+        row = (self._dead.get(key) or {}).get(call_signature(tool, args)) or {}
+        return int(row.get("count", 0) or 0)
+
     def known_failure(self, context: Optional[Tuple], tool: str,
                       args: Optional[Dict[str, Any]]) -> bool:
         """Has this exact call already failed here, in any session?"""
-        key = context_key(context)
-        return call_signature(tool, args) in (self._dead.get(key) or {})
+        return self.failure_count(context, tool, args) > 0
 
     def solutions(self, context: Optional[Tuple],
                   limit: int = 8) -> List[Dict[str, Any]]:
@@ -207,24 +220,23 @@ class PersistentMemory(ActionMemory):
         solution = self.best_solution(context)
         if not solution:
             return None
-        bits = []
-        for k in ("map_id", "direction", "npc_id", "quest_id", "item", "gid",
-                  "x", "y", "cell", "elem_id", "slot"):
-            if solution["args"].get(k) is not None:
-                bits.append("%s=%s" % (k, solution["args"][k]))
-        label = solution["tool"]
-        if bits:
-            label += "(" + ",".join(bits) + ")"
-        return "worked here before: %s x%d" % (label, solution["wins"])
+        label = label_call(solution["tool"], solution["args"], solution["wins"],
+                           keys=SOLUTION_ARG_KEYS)
+        return "worked here before: %s" % label
 
     def describe_failures(self, context: Optional[Tuple], limit: int = 5) -> Optional[str]:
-        """The `ActionMemory` line, drawn from the durable store instead of the episode."""
+        """The `ActionMemory` line, drawn from the durable store instead of the episode.
+
+        Same renderer as the episode store, deliberately: this line is what the policy
+        reads across sessions, and while it rendered the bare tool name the live output
+        was ``already failed here: nav.goto x10; nav.goto x8; nav.goto x3; nav.goto x3``
+        -- ten dead ends on one map, indistinguishable. See `label_call`.
+        """
         dead = self.dead_ends(context, limit)
         if not dead:
             return None
         return "already failed here: " + "; ".join(
-            "%s%s" % (row.get("tool"),
-                      " x%d" % row["count"] if int(row.get("count", 0)) > 1 else "")
+            label_call(row.get("tool"), row.get("args"), row.get("count", 1))
             for row in dead)
 
     def describe(self, context: Optional[Tuple], limit: int = 5) -> Optional[str]:
@@ -261,8 +273,14 @@ def self_check() -> None:
         assert mem.best_solution(ctx) is None
         mem.observe(ctx, "nav.goto", {"map_id": 145752833}, "failed")
         assert mem.known_failure(ctx, "nav.goto", {"map_id": 145752833})
+        # The count is what a pre-dispatch veto reads: one failure is bad luck, two
+        # in the same context is a wall. A boolean cannot tell them apart.
+        assert mem.failure_count(ctx, "nav.goto", {"map_id": 145752833}) == 1
+        mem.observe(ctx, "nav.goto", {"map_id": 145752833}, "noop")
+        assert mem.failure_count(ctx, "nav.goto", {"map_id": 145752833}) == 2
         # a different call is not vetoed
         assert not mem.known_failure(ctx, "nav.goto", {"map_id": 999})
+        assert mem.failure_count(ctx, "nav.goto", {"map_id": 999}) == 0
         # a success is remembered as a solution and clears the dead end
         mem.observe(ctx, "quest.advance", {"npc_id": 3888}, "advanced")
         assert not mem.known_failure(ctx, "quest.advance", {"npc_id": 3888})
@@ -279,6 +297,10 @@ def self_check() -> None:
         # and the durable memory reports both in one line
         line = again.describe(ctx)
         assert line and "worked here" in line and "already failed" in line, line
+        # The dead end must name its argument: the live failure of 2026-11-11 was ten
+        # dead edges on one map rendered as `nav.goto` ten times, which told the policy
+        # the tool was dead but not which edge.
+        assert "map_id=145752833" in line, line
         # repeated successes rank higher than single ones
         again.observe(ctx, "quest.advance", {"npc_id": 3888}, "advanced")
         assert again.best_solution(ctx)["wins"] == 2

@@ -66,7 +66,7 @@ from agent.controller import Controller, Decision
 from agent.verifier import (LISTING_TOOLS, READ_ONLY_TOOLS, Verdict, Verifier, changed_keys,
                             promise_state)
 from agent.gate import RuleGate
-from agent.action_memory import (ActionMemory, context_signature,
+from agent.action_memory import (ActionMemory, context_signature, label_call,
                                 call_signature as _mem_sig)
 try:  # durable memory is an upgrade, not a dependency: the loop must start without it
     from agent.persistent_memory import DEFAULT_PATH as MEMORY_PATH, PersistentMemory
@@ -277,6 +277,36 @@ MEMORY_SAVE_EVERY = int(os.environ.get("AUTOPILOT_MEMORY_SAVE_EVERY", "40"))
 # fights the policy's own movement is worse than the silence it replaced.
 MEMORY_REPLAY_EXCLUDE = frozenset({"nav", "ui"})
 
+# How many failures in one context make a call a wall rather than bad luck, and how
+# many times one run may refuse it before the world gets the last word.
+#
+# The store was written on every step and read in exactly one place -- the replay
+# filter in `_remembered_call` -- so a call the *policy* chose was dispatched even
+# when the store held ten failures of it in this exact context. The memory could
+# stop a replay and nothing else, and `self._mem_veto` was declared, cleared once
+# per goal, and never read. Measured live 2026-11-11 (dofus-01): 280 consecutive
+# `nav.goto {"direction": "left"}` on one map, every one a noop, while
+# `describe_failures` printed that same edge to the policy on every single pass.
+#
+# Two is the floor because one failure can be a race -- a snapshot taken
+# mid-transition, an NPC still animating -- and the store cannot tell those apart.
+# The refusal count is what keeps a *stale* row from blinding the agent: KNOWN_GAPS
+# G99.3 was a persisted uid that no longer existed, and a veto that cannot be spent
+# would have turned that into a permanent dead end instead of two wasted passes.
+MEM_VETO_MIN_FAILURES = int(os.environ.get("AUTOPILOT_MEM_VETO_MIN_FAILURES", "2"))
+MEM_VETO_TRIES = int(os.environ.get("AUTOPILOT_MEM_VETO_TRIES", "2"))
+
+# How many calls one situation may lose to the veto before it stands down.
+#
+# The per-call bound above is not a bound on the *run*, and the first live session
+# with this veto showed the difference (dofus-01, 30d77686, 2026-11-12 01:18): the
+# store held five dead edges for one objective, the planner walked the list, each call
+# spent its own two refusals, and 6 of the 8 steps the goal was allowed were refusals
+# -- so the run ended "goals exhausted" in five seconds with three objectives ready.
+# Four is what keeps the veto a hint instead of a gate: after it, the next call goes
+# out, the world answers, and the no-op machinery owns what happens next.
+MEM_VETO_CONTEXT_TRIES = int(os.environ.get("AUTOPILOT_MEM_VETO_CONTEXT_TRIES", "4"))
+
 
 # How many candidates the wait escalation is allowed to skip while looking for one
 # that is an action. Measured, not guessed: the thinking layer's fallback candidate is
@@ -308,6 +338,20 @@ TUTORIAL_PATIENCE_S = 3 * TUTORIAL_HOLD_S
 # session, two of which ended in `safe.stop`. Six is well past the one or two a
 # legitimate plan needs (arrive, look, act).
 READ_STREAK_LIMIT = int(os.environ.get("AUTOPILOT_READ_STREAK_LIMIT", "6"))
+
+# How many times that escalation may come back empty before the goal ends. The
+# streak alone did not bound anything: `_note_read_streak` zeroed its own counter
+# and returned "keep" when `_next_real_action` had nothing, so the same read was
+# dispatched again six steps later, for ever. Measured on the current build
+# (LOCALAPPDATA/DofusFarm/autopilot.dofus-01.jsonl, session e84012a0): 139
+# consecutive `quest.list` steps, all ok/advanced, with exactly 23 wait rows
+# between them -- one per escalation -- and `consecutive` never above 1, because
+# `_emit` zeroes the wait counter on every dispatched step, so the dead-window
+# ladder that does end goals never saw it. The run ended on the operator's stop
+# file. Only `state.snapshot` is held as a wait, so every other read tool took
+# this path. Three empty escalations is 18 reads with the board searched three
+# times and nothing to show for it; it ends the goal, not the run.
+READ_ESCALATION_LIMIT = int(os.environ.get("AUTOPILOT_READ_ESCALATION_LIMIT", "3"))
 
 # How many times a talk may open no dialog before the loop stops treating it as a
 # try-again. One is noise (the client can be mid-animation); two identical sends with
@@ -405,7 +449,7 @@ class Step:
     # from the log (#99). It rides the record, never the directive.
     why: str = ""
     session: str = ""
-    source: str = "rule"          # which agent produced the label: rule | model | human
+    source: str = "rule"          # rule | model | human | guard | memory (who refused or chose it)
     at: float = field(default_factory=time.time)
     # The claim and its settlement. A fight step without these cannot be used
     # for calibration: the estimate that authorised it would be lost.
@@ -603,6 +647,8 @@ class Autopilot:
         self._tutorial_since = 0.0
         self._tutorial_expired = False
         self._read_streak = 0
+        self._read_escalations = 0
+        self._read_stop_reason = ""
         # A talk whose packet left and whose dialog never arrived, counted. Measured
         # live 2026-10-27: NpcGenericActionRequestMessage{npcId:-1,npcActionId:3}
         # matches the client's own menu handler field for field, and the server never
@@ -647,6 +693,13 @@ class Autopilot:
         self.step_history = 256
         self._step_total = 0
         self._verdict_counts: Dict[str, int] = {}
+        # `advanced` covers two different events: a query answered, and a call the
+        # verifier saw change the observation. Only the second is progress toward a
+        # goal, so they are counted apart. advanced == world_changes + read_answers
+        # is the cross-check. This is the verifier's label, not an independent delta
+        # measurement -- the corpus-wide `actions_moved` in data_janitor is that.
+        self._world_changes = 0
+        self._read_answers = 0
         # Shadow accounting of `Step.promise` -- see `verifier.promise_state`.
         self._promise_counts: Dict[str, int] = {}
         self._source_counts: Dict[str, int] = {}
@@ -811,6 +864,12 @@ class Autopilot:
         self.memory_arm = ("record+replay" if self.memory_replay else "record-only") \
             if self.memory_path is not None else "off"
         self._mem_veto: Dict[str, int] = {}
+        # The per-situation budget: which context the refusals below belong to, how
+        # many it has spent, and whether the stand-down has already been said. See
+        # MEM_VETO_CONTEXT_TRIES -- without this the veto is a gate, not a hint.
+        self._mem_veto_ctx: Optional[Tuple] = None
+        self._mem_veto_context_spent = 0
+        self._mem_veto_stood_down = False
         # The context the current step is being judged in, so the no-call branch can
         # ask the same store the perception line came from.
         self._mem_ctx: Optional[Tuple] = None
@@ -925,6 +984,11 @@ class Autopilot:
         self._step_total += 1
         self._verdict_counts[step.verdict] = (
             self._verdict_counts.get(step.verdict, 0) + 1)
+        if step.verdict == "advanced":
+            if step.tool in READ_ONLY_TOOLS:
+                self._read_answers += 1
+            else:
+                self._world_changes += 1
         if step.promise:
             self._promise_counts[step.promise] = (
                 self._promise_counts.get(step.promise, 0) + 1)
@@ -1847,12 +1911,21 @@ class Autopilot:
             self._forced_call = None
             self._forced_reason = ""
             self._consecutive_waits = 0
+            # The read bound is a per-goal budget for the same reason the wait bound
+            # is: these counters used to survive into the next goal, so a goal that
+            # inherited a streak could be ended for reads it never issued.
+            self._read_streak = 0
+            self._read_escalations = 0
+            self._read_stop_reason = ""
             self._farm_wait = False
             self._farm_wait_since = None
             self._action_noops.clear()
             self._gate.clear()
             self._memory.reset()
             self._mem_veto.clear()
+            self._mem_veto_ctx = None
+            self._mem_veto_context_spent = 0
+            self._mem_veto_stood_down = False
             self._idle_windows = 0
             # Shadow only: the model's parse is written beside the rule, and the
             # rule below still owns every decision.
@@ -2024,6 +2097,12 @@ class Autopilot:
                                     source="rule",
                                     note="nothing in the policy matched this goal; had %s | %s"
                                          % (had, why)))
+                    # A row that was written takes its own index. Measured live
+                    # 2026-11-12 (session a0d4c924): four unplannable passes each
+                    # retired one objective and every one of the four rows carried
+                    # index 17, so the log read as a single step recorded four times
+                    # and the index no longer matched the row count.
+                    self._index += 1
                     # Agent 2 must see this too. A goal the policy cannot express is
                     # an invalid assumption, and skipping the controller here meant
                     # the most common failure of all was invisible to it.
@@ -2053,6 +2132,14 @@ class Autopilot:
                                   "retiring it for this run and taking the next "
                                   "objective" % qid)
                             continue
+                    # Say why the run is ending. Left unset, the caller's default
+                    # reports "goals exhausted" for a goal the policy could not
+                    # express at all -- the opposite claim, since nothing was
+                    # exhausted and objectives are still ready. Measured live
+                    # 2026-11-12 (session a0d4c924): that run ended "goals
+                    # exhausted" with three ready objectives and sixteen retired.
+                    ended_because = ("the policy could not express %r: %s"
+                                     % (goal, why))[:300]
                     print(f"[autopilot] no action for goal {goal!r}; moving on")
                     if not self._hinted:
                         self._hinted = True
@@ -2084,6 +2171,48 @@ class Autopilot:
                         ended_because = "stopped while waiting"
                         break
                     taken -= 1  # waiting is not one of the goal's directives
+                    continue
+
+                # The memory is asked before the world is: a call this context has
+                # already refuted twice does not get a third round trip. This is the
+                # one reader the store never had -- `_remembered_call` could veto a
+                # *replay*, so a policy that chose the dead call itself was never
+                # stopped by the record of its own failures.
+                #
+                # The refusal is not reported through `note_result`. That path is the
+                # planner's account of what the *server* said, and it owns the
+                # start-failure counting that retires a quest (see `_start_refused`);
+                # a harness refusal filed there would retire a healthy quest because
+                # our own memory said no. The planner still learns -- the line is on
+                # every observation as `already_failed` -- and the controller gets the
+                # row, which is the layer that changes the plan.
+                veto = self._memory_veto(call, before)
+                if veto:
+                    self._emit(Step(index=self._index, goal=goal, tool=call.tool,
+                                    args=dict(call.args), ok=False, error=veto,
+                                    latency_ms=0.0, verdict="blocked", note=veto,
+                                    session=self.session, source="memory"))
+                    self._index += 1
+                    print("[autopilot] %s" % veto)
+                    decision = self.controller.on_step(
+                        Verdict("blocked", 0.9, None, False, "memory"),
+                        call.tool, False, veto, before, None)
+                    self.controller.save()
+                    self._emit_decision(decision, call, None, before, ok=False,
+                                        error=veto)
+                    if decision.action == "replan":
+                        self._apply_decision(decision, goal, call)
+                    # A veto is a hint the goal never asked for, so it does not spend
+                    # one of the goal's directives -- the same rule the wait above
+                    # follows, and the reason it matters is measured: on the first
+                    # live run of this veto the refusals ate 6 of an 8-directive
+                    # budget and the goal ended with three objectives still ready
+                    # (dofus-01, 30d77686). The guard refusal below deliberately does
+                    # not give the budget back, because that one means the plan is
+                    # wrong; this one means only that the memory has an opinion.
+                    taken -= 1
+                    if self.interval:
+                        time.sleep(self.interval)
                     continue
 
                 refusal = self.guard(call)
@@ -2505,20 +2634,32 @@ class Autopilot:
                 # nothing must not reset a navigation/quest no-op streak.
                 track_action = call.tool in SETTLE_TOOLS
                 if verdict == "advanced":
-                    self._recent.clear()
-                    self._hold_key = None
-                    self._hold_world = None
-                    self._last_client_error = None
-                    if track_action:
-                        self._action_noops.pop(key, None)
-                    # A real crossing (by any tool: a walk, a dialog teleport, a
-                    # scripted step) restarts the decline count: the next dead map
-                    # deserves its own budget.
-                    _prev_map = flatten(before or {}).get("map_id")
-                    _new_map = flatten(after or {}).get("map_id")
-                    if (_prev_map is not None and _new_map is not None
-                            and _prev_map != _new_map):
-                        self._crossing_declines = 0
+                    # A query that answered is a successful call, not a changed
+                    # world, so it must not clear the no-progress streak. The read
+                    # is not appended to `_recent` either -- it is not one of the
+                    # calls the repeat bound is about.
+                    #
+                    # This binds only on non-settle actions: a settle tool's streak
+                    # lives in `_action_noops`, which a read never touches because
+                    # `track_action` is False for it. Over 5,849 recorded steps and
+                    # 3,146 ok reads, 0 reads split a repeating non-settle pair --
+                    # every repeat seen in practice was a settle tool. So this is a
+                    # correctness guard, not a measured throughput fix.
+                    if call.tool not in READ_ONLY_TOOLS:
+                        self._recent.clear()
+                        self._hold_key = None
+                        self._hold_world = None
+                        self._last_client_error = None
+                        if track_action:
+                            self._action_noops.pop(key, None)
+                        # A real crossing (by any tool: a walk, a dialog teleport, a
+                        # scripted step) restarts the decline count: the next dead map
+                        # deserves its own budget.
+                        _prev_map = flatten(before or {}).get("map_id")
+                        _new_map = flatten(after or {}).get("map_id")
+                        if (_prev_map is not None and _new_map is not None
+                                and _prev_map != _new_map):
+                            self._crossing_declines = 0
                 else:
                     self._note_client_error(after)
                     if track_action:
@@ -2598,26 +2739,34 @@ class Autopilot:
                             self._report_hold(call)
                             self._hold_wait(goal, before)
                             continue
-                        if self.max_steps <= 0:
-                            # Retire the quest and take another, instead of ending the
-                            # session. An objective that never moves is usually one
-                            # this build cannot do at all (an area, a craft, an NPC
-                            # that is elsewhere); the next quest may be fine.
-                            qid, reason = self._retire_with_budget(call, before)
-                            if reason:
-                                print("[autopilot] %s; ending the goal instead of looping"
-                                      % reason)
-                                ended_because = reason
-                                break
-                            if qid is not None:
-                                self._recent.clear()
-                                self._action_noops.clear()
-                                continue
+                        # Retire the quest and take another, instead of ending the
+                        # session. An objective that never moves is usually one this
+                        # build cannot do at all (an area, a craft, an NPC that is
+                        # elsewhere); the next quest may be fine. `_retire_with_budget`
+                        # bounds itself (RETIRE_REPEAT_LIMIT, `_stall_unretired`), so
+                        # this is safe on a bounded run too -- and a bounded run is the
+                        # only kind the host starts. Gating it on `max_steps <= 0` meant
+                        # every run with a step budget abandoned the goal on the third
+                        # identical no-op and reported "goals exhausted" (measured live
+                        # 2026-11-12, session 9e886397: 12 steps, three objectives still
+                        # ready, four of those steps memory refusals).
+                        qid, reason = self._retire_with_budget(call, before)
+                        if reason:
+                            print("[autopilot] %s; ending the goal instead of looping"
+                                  % reason)
+                            ended_because = reason
+                            break
+                        if qid is not None:
+                            self._recent.clear()
+                            self._action_noops.clear()
+                            continue
                         print(f"[autopilot] abandoning {goal!r}")
+                        ended_because = ("no progress: %s repeated 3x and no quest "
+                                         "could be retired for it" % call.tool)
                         break
 
                 if self._note_read_streak(call, goal, after) == "break":
-                    ended_because = "stopped while waiting"
+                    ended_because = self._read_stop_reason or "stopped while waiting"
                     break
 
                 # A goal that produced a real world change is done; repeating it
@@ -3326,9 +3475,14 @@ class Autopilot:
         loop or the counter overflowed. Either way a run of them is the loop looking
         without acting: live 2026-10-29, four runs of 8, 9, 11 and 12 identical
         `state.snapshot` steps in one 239-step session. Action resets the count.
+
+        The escalation is bounded separately, because an escalation that finds
+        nothing used to restart the streak and answer "keep" -- a metronome, not a
+        bound. See READ_ESCALATION_LIMIT for the run that measured it.
         """
         if str(getattr(call, "tool", "") or "") not in READ_ONLY_TOOLS:
             self._read_streak = 0
+            self._read_escalations = 0
             return "keep"
         self._read_streak += 1
         if self._read_streak < READ_STREAK_LIMIT:
@@ -3338,7 +3492,20 @@ class Autopilot:
               " looking for something to do" % READ_STREAK_LIMIT)
         forced = self._next_real_action(goal, obs)
         if forced is None:
-            return "keep" if self._hold_wait(goal, obs) else "break"
+            self._read_escalations += 1
+            if self._read_escalations >= READ_ESCALATION_LIMIT:
+                self._read_stop_reason = (
+                    "no progress: %d reads in a row and %d searches of the board "
+                    "found no action for %r" % (READ_STREAK_LIMIT,
+                                                self._read_escalations, goal))[:300]
+                print("[autopilot] %s; ending the goal instead of reading again"
+                      % self._read_stop_reason)
+                return "break"
+            if not self._hold_wait(goal, obs):
+                self._read_stop_reason = "stopped while waiting"
+                return "break"
+            return "keep"
+        self._read_escalations = 0
         self._consecutive_waits = 0
         self._forced_call = ToolCall(tool=forced.tool, args=dict(forced.args),
                                      goal=goal)
@@ -3972,6 +4139,10 @@ class Autopilot:
             "session": self.session,
             "steps": self._step_total,
             "verdicts": dict(self._verdict_counts),
+            # The split of `advanced`. A run whose progress is mostly answered
+            # queries has not moved, and the verdict tally alone cannot say so.
+            "world_changes": self._world_changes,
+            "read_answers": self._read_answers,
             "promises": dict(self._promise_counts),
             "label_sources": dict(self._source_counts),
             "replan_requested": self.replan_requested,
@@ -4031,6 +4202,7 @@ class Autopilot:
                           if self._step_total > 1 else 0.0),
         }
         print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
+              f"{self._world_changes} world change(s), {self._read_answers} read answer(s) | "
               f"{self._listing_total} open listing(s)")
         fights = data.get("fights") or {}
         if fights.get("games") or fights.get("unresolved"):
@@ -4058,6 +4230,74 @@ class Autopilot:
             return log.line() if log is not None else "no fight log"
         except Exception:  # noqa: BLE001
             return "unreadable"
+
+    def _memory_veto(self, call: Optional["ToolCall"], before: Any) -> Optional[str]:
+        """The sentence that stops a call this context already refuted, or None.
+
+        The question is not "has this ever failed" but "has it failed *here* twice".
+        The store is keyed by (objective, type, step, map), so a dead end on one map
+        says nothing about the next one, and a call that worked clears its own row --
+        a solution is never vetoed, because `observe` deletes the dead entry.
+
+        Three things are deliberately not vetoed:
+
+        * `state.snapshot` -- a read is not an action, and the wait machinery owns it.
+          Vetoing one would turn "look again" into "do nothing", which is the spin
+          this loop spent two hundred lines learning to avoid.
+        * a call the schema rejects -- that refusal already exists, and its sentence
+          names the argument, which is more useful than "the memory says no".
+        * the same call past `MEM_VETO_TRIES` -- the live world always gets the last
+          word, so a stale row costs two passes instead of a session.
+
+        The per-call bound is not enough on its own, and the first live run of this
+        veto proved it (dofus-01, session 30d77686, 2026-11-12 01:18): the store held
+        five dead edges for one situation, so the planner walked the list and each
+        call spent its own two refusals -- **6 of 8 steps were refusals**, and the
+        goal's directive budget ran out on them. A run that only refuses is a run that
+        ends. `MEM_VETO_CONTEXT_TRIES` is therefore the real bound: one situation may
+        spend that many refusals in total, then the veto stands down for that context
+        and the loop starts acting again (the world's answer is then recorded and the
+        no-op machinery owns it).
+        """
+        if call is None or not isinstance(before, dict):
+            return None
+        if call.tool == "state.snapshot":
+            return None
+        context = getattr(self, "_mem_ctx", None)
+        count = getattr(self._memory, "failure_count", None)
+        if context is None or count is None:
+            return None
+        if context != getattr(self, "_mem_veto_ctx", None):
+            # A new situation gets its own budget: "here" is the store's own key, and
+            # refusals spent on the last objective cannot say anything about this one.
+            self._mem_veto_ctx = context
+            self._mem_veto_context_spent = 0
+        spent_here = int(getattr(self, "_mem_veto_context_spent", 0) or 0)
+        if spent_here >= MEM_VETO_CONTEXT_TRIES:
+            if not getattr(self, "_mem_veto_stood_down", False):
+                self._mem_veto_stood_down = True
+                print("[autopilot] %d calls were refused in this situation; the memory "
+                      "has said all it can here, so the next call goes out and the "
+                      "world answers it" % spent_here)
+            return None
+        ok, checked = validate_call(call.tool, dict(call.args or {}))
+        if not ok:
+            return None
+        failures = int(count(context, call.tool, checked) or 0)
+        if failures < MEM_VETO_MIN_FAILURES:
+            return None
+        key = "%s|%s" % (call.tool, _mem_sig(call.tool, checked))
+        spent = int(self._mem_veto.get(key, 0))
+        if spent >= MEM_VETO_TRIES:
+            print("[autopilot] the memory refuted %s %s, but it has been refused "
+                  "%d time(s); letting it through" % (call.tool, checked, spent))
+            return None
+        self._mem_veto[key] = spent + 1
+        self._mem_veto_context_spent = spent_here + 1
+        return ("the memory refuted this call here: %s in this context; not sending "
+                "it again (%d/%d refusals spent, %d/%d in this situation)"
+                % (label_call(call.tool, checked, failures), spent + 1, MEM_VETO_TRIES,
+                   self._mem_veto_context_spent, MEM_VETO_CONTEXT_TRIES))
 
     def _remembered_call(self, before: Any, goal: str) -> Optional["ToolCall"]:
         """The call that advanced this exact situation before, if replaying it is safe.

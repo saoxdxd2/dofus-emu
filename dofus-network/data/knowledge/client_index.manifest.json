@@ -1,5 +1,5 @@
 {
- "checked_at": "2026-11-11T21:03:06",
+ "checked_at": "2026-11-12T13:39:34",
  "logs": [
   {
    "name": "dofus-01.20261108-205337-063447.jsonl",
@@ -8,8 +8,8 @@
   },
   {
    "name": "dofus-01.jsonl",
-   "size": 20667863,
-   "mtime": 1794326341
+   "size": 43904466,
+   "mtime": 1794444946
   },
   {
    "name": "dofus-02.20261029-022349-419629.jsonl",
@@ -18,18 +18,18 @@
   },
   {
    "name": "dofus-02.jsonl",
-   "size": 4337125,
-   "mtime": 1793966328
+   "size": 4446759,
+   "mtime": 1794432562
   },
   {
    "name": "dofus-03.jsonl",
-   "size": 23285420,
-   "mtime": 1793966372
+   "size": 25420810,
+   "mtime": 1794432738
   },
   {
    "name": "dofus-04.jsonl",
-   "size": 11523818,
-   "mtime": 1794029336
+   "size": 28186590,
+   "mtime": 1794432734
   },
   {
    "name": "dofus-05.20261029-170756-782023.jsonl",
@@ -52,7 +52,7 @@
    "mtime": 1794325804
   }
  ],
- "rows": 73,
+ "rows": 95,
  "quests": [
   3841,
   4260,
@@ -63,48 +63,49 @@
   4276,
   4278,
   4280,
+  4282,
   4604,
   4644
  ],
  "fields": {
   "type_id": {
-   "present": 69,
-   "total": 73,
-   "pct": 94.5
+   "present": 91,
+   "total": 95,
+   "pct": 95.8
   },
   "map_id": {
-   "present": 39,
-   "total": 73,
-   "pct": 53.4
+   "present": 61,
+   "total": 95,
+   "pct": 64.2
   },
   "params": {
-   "present": 69,
-   "total": 73,
-   "pct": 94.5
+   "present": 91,
+   "total": 95,
+   "pct": 95.8
   },
   "text": {
-   "present": 55,
-   "total": 73,
-   "pct": 75.3
+   "present": 64,
+   "total": 95,
+   "pct": 67.4
   },
   "step_id": {
-   "present": 69,
-   "total": 73,
-   "pct": 94.5
+   "present": 91,
+   "total": 95,
+   "pct": 95.8
   },
   "quest_name": {
-   "present": 69,
-   "total": 73,
-   "pct": 94.5
+   "present": 91,
+   "total": 95,
+   "pct": 95.8
   }
  },
  "conflicts": {},
  "unbound_step_objectives_seen": 217,
  "sources": {
-  "catalog": 69,
-  "ready": 58,
-  "current": 38,
-  "step": 44
+  "catalog": 91,
+  "ready": 67,
+  "current": 45,
+  "step": 52
  },
- "index_sha256": "bc5c4963fe7f14afc2d635c290ee02cd7ec45c7cf7282e92331eb5b7fa1d64c3"
+ "index_sha256": "1e23d3ef1719bc4bd83988b16e644dbf11a2d3dd04e34aba5a58b1672f0fc3a1"
 }

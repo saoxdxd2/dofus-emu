@@ -1,0 +1,18 @@
+test_a_cast_id_that_does_not_match_the_loss_id_prices_nothing (combat.test_live_data.MeasuredPayloadShapeTests.test_a_cast_id_that_does_not_match_the_loss_id_prices_nothing) ... ok
+test_the_damage_that_could_not_be_attributed_is_counted (combat.test_live_data.MeasuredPayloadShapeTests.test_the_damage_that_could_not_be_attributed_is_counted) ... ok
+test_a_monster_with_neither_id_nor_name_is_skipped (combat.test_live_data.NameKeyedMonsterTests.test_a_monster_with_neither_id_nor_name_is_skipped) ... ok
+test_a_monster_without_a_species_id_is_keyed_by_name (combat.test_live_data.NameKeyedMonsterTests.test_a_monster_without_a_species_id_is_keyed_by_name) ... ok
+test_a_numeric_id_still_wins_when_the_client_sends_one (combat.test_live_data.NameKeyedMonsterTests.test_a_numeric_id_still_wins_when_the_client_sends_one) ... ok
+test_the_name_key_cannot_be_mistaken_for_a_numeric_id (combat.test_live_data.NameKeyedMonsterTests.test_the_name_key_cannot_be_mistaken_for_a_numeric_id) ... ok
+test_a_board_without_actions_learns_nothing (combat.test_live_data.ObservedDamageTests.test_a_board_without_actions_learns_nothing) ... ok
+test_a_cast_with_no_recorded_loss_is_not_priced (combat.test_live_data.ObservedDamageTests.test_a_cast_with_no_recorded_loss_is_not_priced) ... ok
+test_a_missing_file_returns_empty_datasets (combat.test_live_data.ObservedDamageTests.test_a_missing_file_returns_empty_datasets) ... ok
+test_a_monster_cast_is_priced_from_the_damage_it_dealt (combat.test_live_data.ObservedDamageTests.test_a_monster_cast_is_priced_from_the_damage_it_dealt) ... ok
+test_a_repolled_action_is_not_counted_twice (combat.test_live_data.ObservedDamageTests.test_a_repolled_action_is_not_counted_twice) ... ok
+test_our_own_cast_is_not_a_monster_spell (combat.test_live_data.ObservedDamageTests.test_our_own_cast_is_not_a_monster_spell) ... ok
+test_several_hits_are_averaged_and_the_spread_kept (combat.test_live_data.ObservedDamageTests.test_several_hits_are_averaged_and_the_spread_kept) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.020s
+
+OK

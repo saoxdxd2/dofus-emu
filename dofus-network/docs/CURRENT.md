@@ -304,7 +304,7 @@ passes a finite forward check. The first Kaggle run (synthetic solver distillati
 `models/combat_grid/model.pkl`; it is **not** a live combat policy. It is wired as an
 opt-in read-only ranker (`fight.plan ranker=grid`), default is still `solver`, and
 it refuses when the board has no positive AP or the artifact is absent. The live
-gate is one actionable fight on the current page build (`2026-11-10a`; `2026-10-29bf` is still the
+gate is one actionable fight on the current page build (`2026-11-11a`; `2026-10-29bf` is still the
 newest one actually recorded), then a side-swapped win. Note that fights are now won live
 (§6 above) — what has not been seen is a board with positive AP reaching the grid ranker, so
 the model is still validated only on synthetic distillation (`data/combat_grid_synth_v2`:

@@ -393,6 +393,28 @@
     "tool": "nav.goto"
    }
   },
+  "3841\u001f0\u001f4970\u001f145489920": {
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4262
+    },
+    "count": 2,
+    "last": 1794432649.156,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490944": {
+   "quest.advance|{\"npc_id\": 3924, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3924,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794432621.485,
+    "tool": "quest.advance"
+   }
+  },
   "3841\u001f0\u001f4970\u001f146276352": {
    "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146276353}": {
     "args": {
@@ -1697,6 +1719,63 @@
     "tool": "quest.advance"
    }
   },
+  "4276\u001f0\u001f4958\u001f146277376": {
+   "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146277377}": {
+    "args": {
+     "direction": "bottom",
+     "map_id": 146277377
+    },
+    "count": 1,
+    "last": 1794433145.301,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146276864
+    },
+    "count": 2,
+    "last": 1794433172.065,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146277888}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146277888
+    },
+    "count": 2,
+    "last": 1794433178.855,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146277633}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146277633
+    },
+    "count": 3,
+    "last": 1794433185.619,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145489923}": {
+    "args": {
+     "map_id": 145489923
+    },
+    "count": 1,
+    "last": 1794433116.873,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Take a pint of mead.\"}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Take a pint of mead."
+    },
+    "count": 1,
+    "last": 1794433216.425,
+    "tool": "quest.advance"
+   }
+  },
   "4276\u001f45\u001f4958\u001f145752833": {
    "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4280}": {
     "args": {
@@ -1831,9 +1910,76 @@
     "last": 1794324404.566,
     "tool": "quest.advance"
    }
+  },
+  "4278\u001f5\u001f4960\u001f146277376": {
+   "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146277377}": {
+    "args": {
+     "direction": "bottom",
+     "map_id": 146277377
+    },
+    "count": 9,
+    "last": 1794444923.801,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146276864
+    },
+    "count": 16,
+    "last": 1794444550.532,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146277888}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146277888
+    },
+    "count": 13,
+    "last": 1794444904.121,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146277633}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146277633
+    },
+    "count": 14,
+    "last": 1794444916.974,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4278}": {
+    "args": {
+     "close": true,
+     "quest_id": 4278
+    },
+    "count": 1,
+    "last": 1794443589.88,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4278, \"reply\": 0, \"reply_text\": \"Take a pint of mead.\"}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4278,
+     "reply": 0,
+     "reply_text": "Take a pint of mead."
+    },
+    "count": 1,
+    "last": 1794444563.674,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4278}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4278
+    },
+    "count": 2,
+    "last": 1794433722.895,
+    "tool": "quest.advance"
+   }
   }
  },
- "saved_at": 1794324406.961,
+ "saved_at": 1794444942.119,
  "solutions": {
   "\u001f\u001f\u001f145490944": {
    "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
@@ -2148,6 +2294,173 @@
      "reply_text": "Wish him good luck."
     },
     "last": 1794324406.029,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145489920": {
+   "nav.goto|{\"map_id\": 145489921}": {
+    "args": {
+     "map_id": 145489921
+    },
+    "last": 1794432665.632,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794432655.989,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 3841
+    },
+    "last": 1794432636.293,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 4262
+    },
+    "last": 1794432662.435,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145489921": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794432685.375,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794432714.591,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794432678.939,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145489922}": {
+    "args": {
+     "map_id": 145489922
+    },
+    "last": 1794432709.796,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145489922": {
+   "nav.goto|{\"map_id\": 145489921}": {
+    "args": {
+     "map_id": 145489921
+    },
+    "last": 1794432703.348,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3956, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3956,
+     "quest_id": 3841
+    },
+    "last": 1794432694.972,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490432": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794432629.891,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490433": {
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794432734.178,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3952, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3952,
+     "quest_id": 3841
+    },
+    "last": 1794432721.003,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490944": {
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794432624.217,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490945": {
+   "nav.goto|{\"map_id\": 145490944}": {
+    "args": {
+     "map_id": 145490944
+    },
+    "last": 1794432621.065,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3936, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3936,
+     "quest_id": 3841
+    },
+    "last": 1794432608.687,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f145490946": {
+   "nav.goto|{\"map_id\": 145490945}": {
+    "args": {
+     "map_id": 145490945
+    },
+    "last": 1794432602.27,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 3841
+    },
+    "last": 1794432597.9,
     "tool": "quest.advance",
     "wins": 1
    }
@@ -4389,7 +4702,85 @@
     "wins": 1
    }
   },
+  "4276\u001f0\u001f4958\u001f145489922": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794432939.78,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794432944.565,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489923}": {
+    "args": {
+     "map_id": 145489923
+    },
+    "last": 1794432969.992,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4276\u001f0\u001f4958\u001f145489923": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794432926.476,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794433003.884,
+    "tool": "nav.goto",
+    "wins": 5
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794432932.916,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3932, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3932,
+     "quest_id": 4276
+    },
+    "last": 1794433010.331,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "tap.interactive|{\"element_id\": 513195}": {
+    "args": {
+     "element_id": 513195,
+     "skill_uid": 136239565
+    },
+    "last": 1794433010.729,
+    "tool": "tap.interactive",
+    "wins": 2
+   }
+  },
   "4276\u001f0\u001f4958\u001f145490434": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794432967.635,
+    "tool": "nav.goto",
+    "wins": 3
+   },
    "nav.goto|{\"map_id\": 145490435}": {
     "args": {
      "map_id": 145490435
@@ -4400,6 +4791,14 @@
    }
   },
   "4276\u001f0\u001f4958\u001f145490435": {
+   "nav.goto|{\"map_id\": 145489923}": {
+    "args": {
+     "map_id": 145489923
+    },
+    "last": 1794432899.173,
+    "tool": "nav.goto",
+    "wins": 1
+   },
    "nav.goto|{\"map_id\": 145490947}": {
     "args": {
      "map_id": 145490947
@@ -4565,6 +4964,168 @@
     "last": 1794324404.484,
     "tool": "quest.advance",
     "wins": 1
+   }
+  },
+  "4276\u001f0\u001f4958\u001f146277376": {
+   "quest.advance|{\"close\": true, \"quest_id\": 4276}": {
+    "args": {
+     "close": true,
+     "quest_id": 4276
+    },
+    "last": 1794433206.289,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Say thank you and bid him goodbye.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Say thank you and bid him goodbye."
+    },
+    "last": 1794433230.802,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 1, \"reply_text\": \"Give Ayin a grateful hug. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 1,
+     "reply_text": "Give Ayin a grateful hug. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794433229.938,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276
+    },
+    "last": 1794433228.067,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Turn down the invitation.\"}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Turn down the invitation."
+    },
+    "last": 1794433225.781,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4276
+    },
+    "last": 1794433224.291,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Clink glasses with Ek Spyr.\"}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Clink glasses with Ek Spyr."
+    },
+    "last": 1794433191.716,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Roll your eyes.\"}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Roll your eyes."
+    },
+    "last": 1794433193.385,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 4276
+    },
+    "last": 1794433205.11,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3906, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Smile and move back slowly.\"}": {
+    "args": {
+     "npc_id": 3906,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Smile and move back slowly."
+    },
+    "last": 1794433221.98,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3906, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3906,
+     "quest_id": 4276
+    },
+    "last": 1794433219.542,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Clink glasses with your fake adopted father.\"}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Clink glasses with your fake adopted father."
+    },
+    "last": 1794433214.182,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Take a pint of mead.\"}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Take a pint of mead."
+    },
+    "last": 1794433216.026,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4276
+    },
+    "last": 1794433154.355,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3922, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3922,
+     "quest_id": 4276
+    },
+    "last": 1794433203.269,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3942, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3942,
+     "quest_id": 4276
+    },
+    "last": 1794433212.719,
+    "tool": "quest.advance",
+    "wins": 2
    }
   },
   "4276\u001f1\u001f4958\u001f145752576": {
@@ -4822,6 +5383,64 @@
     "last": 1794324404.569,
     "tool": "quest.advance",
     "wins": 2
+   }
+  },
+  "4278\u001f5\u001f4960\u001f146277376": {
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146276864
+    },
+    "last": 1794433237.217,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4278}": {
+    "args": {
+     "close": true,
+     "quest_id": 4278
+    },
+    "last": 1794443153.911,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4278, \"reply\": 0, \"reply_text\": \"Take a pint of mead.\"}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4278,
+     "reply": 0,
+     "reply_text": "Take a pint of mead."
+    },
+    "last": 1794443583.098,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "quest.advance|{\"npc_id\": 3912, \"quest_id\": 4278}": {
+    "args": {
+     "npc_id": 3912,
+     "quest_id": 4278
+    },
+    "last": 1794433698.164,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3922, \"quest_id\": 4278}": {
+    "args": {
+     "npc_id": 3922,
+     "quest_id": 4278
+    },
+    "last": 1794444935.29,
+    "tool": "quest.advance",
+    "wins": 13
+   },
+   "quest.advance|{\"npc_id\": 3942, \"quest_id\": 4278}": {
+    "args": {
+     "npc_id": 3942,
+     "quest_id": 4278
+    },
+    "last": 1794444941.688,
+    "tool": "quest.advance",
+    "wins": 13
    }
   }
  },

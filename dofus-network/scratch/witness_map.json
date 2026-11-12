@@ -1,0 +1,3239 @@
+{
+ "C:/Users/sao/Documents/dofus-emu/desktop/BootState.cs": {
+  "test_brain_reports_stale_code": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/desktop/agentbridge.cs": {
+  "test_multi_instance_targeting": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/desktop/aipanel.cs": {
+  "test_verifier_head_gate": [
+   "read"
+  ],
+  "test_multi_instance_targeting": [
+   "read"
+  ],
+  "test_per_instance_ai": [
+   "read"
+  ],
+  "test_brain_reports_stale_code": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/desktop/clientbundle.cs": {
+  "test_bundle_updater": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/desktop/mainform.cs": {
+  "test_per_instance_ai": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/desktop/program.cs": {
+  "test_per_instance_ai": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/artifacts.py": {
+  "test_move_gate": [
+   "exec",
+   "read"
+  ],
+  "test_artifact_rollback": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/autopilot.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_absent_client_recovery": [
+   "exec"
+  ],
+  "test_identity_binding": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_keep_alive_instrument": [
+   "exec",
+   "read"
+  ],
+  "test_tutorial_hold": [
+   "exec",
+   "read"
+  ],
+  "test_repair_credit": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_dialog_labels": [
+   "exec"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_promise_shadow_names_a_bounced_crossing": [
+   "exec",
+   "read"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec",
+   "read"
+  ],
+  "test_session_close_hook": [
+   "exec"
+  ],
+  "test_knowledge_identity": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_settle_waits_for_promised_effect": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "exec",
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/brain_daemon.py": {
+  "test_brain_reports_stale_code": [
+   "exec",
+   "read"
+  ],
+  "test_session_close_hook": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec",
+   "read"
+  ],
+  "test_mutation_targets_have_witnesses": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/bridge.py": {
+  "test_failure_causes": [
+   "exec"
+  ],
+  "test_absent_client_recovery": [
+   "exec"
+  ],
+  "test_auto_live_guards": [
+   "exec"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_brain_reports_stale_code": [
+   "exec"
+  ],
+  "test_combat_decision_log": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/command_onnx.py": {
+  "test_command_onnx_decode": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/command_shadow.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_command_shadow_report": [
+   "exec"
+  ],
+  "test_command_replay": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/commands.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_command_parser": [
+   "exec"
+  ],
+  "test_command_dataset": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_command_shadow_report": [
+   "exec"
+  ],
+  "test_command_replay": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/consult_gate.py": {
+  "test_consult_gate_is_fitted_and_live": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/controller.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_repair_credit": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec",
+   "read"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/executor.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_tutorial_hold": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "read"
+  ],
+  "test_knowledge_index_storage": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_map_graph_live_wins": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/features.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_live_transitions": [
+   "exec"
+  ],
+  "test_dialog_repeat_guard": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_consult_gate_is_fitted_and_live": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_the_page_s_word_for_a_wall_is_read": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_tool_vocabulary": [
+   "exec"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/foresight.py": {
+  "test_foresight_net": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/jsonio.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_absent_client_recovery": [
+   "exec"
+  ],
+  "test_identity_binding": [
+   "exec"
+  ],
+  "test_live_witnesses": [
+   "exec"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_dialog_labels": [
+   "exec"
+  ],
+  "test_observed_quest_ingest": [
+   "exec"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_group_scan_reader": [
+   "exec"
+  ],
+  "test_promise_shadow_names_a_bounced_crossing": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_session_report": [
+   "exec"
+  ],
+  "test_session_close": [
+   "exec"
+  ],
+  "test_the_close_fits_the_timeout_that_kills_it": [
+   "exec"
+  ],
+  "test_knowledge_index_storage": [
+   "exec"
+  ],
+  "test_combat_decision_log": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "exec",
+   "read"
+  ],
+  "test_quest_advance_shapes": [
+   "exec"
+  ],
+  "test_session_report_census": [
+   "exec"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_map_graph_live_wins": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_report_instrument": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "exec"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_live_evidence_lands_in_the_repository": [
+   "exec"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/knowledge_context.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_observed_quest_ingest": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_knowledge_identity": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/observe.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_keep_alive_instrument": [
+   "exec"
+  ],
+  "test_tutorial_hold": [
+   "exec"
+  ],
+  "test_live_transitions": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/plan_stack.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "read"
+  ],
+  "test_dialog_repeat_guard": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_the_page_s_word_for_a_wall_is_read": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/planner.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_command_parser": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_command_shadow_report": [
+   "exec"
+  ],
+  "test_command_replay": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "read"
+  ],
+  "test_dialog_repeat_guard": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_the_page_s_word_for_a_wall_is_read": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_quest_advance_shapes": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/planner_nn.py": {
+  "test_consult_gate_is_fitted_and_live": [
+   "exec",
+   "read"
+  ],
+  "test_objective_parameter_table": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/regression.py": {
+  "test_failure_causes": [
+   "exec"
+  ],
+  "test_absent_client_recovery": [
+   "exec"
+  ],
+  "test_identity_binding": [
+   "exec"
+  ],
+  "test_live_witnesses": [
+   "exec"
+  ],
+  "test_verifier_head_gate": [
+   "exec"
+  ],
+  "test_observation_text": [
+   "exec"
+  ],
+  "test_sync_kaggle_toolkit_rules": [
+   "exec"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_live_ready": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_command_parser": [
+   "exec"
+  ],
+  "test_command_dataset": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_command_shadow_report": [
+   "exec"
+  ],
+  "test_command_replay": [
+   "exec"
+  ],
+  "test_live_evidence": [
+   "exec"
+  ],
+  "test_command_onnx_decode": [
+   "exec"
+  ],
+  "test_egress_preflight": [
+   "exec"
+  ],
+  "test_host_launch_guard": [
+   "exec"
+  ],
+  "test_auto_live_guards": [
+   "exec"
+  ],
+  "test_auto_live_summarise": [
+   "exec"
+  ],
+  "test_bundle_resilience": [
+   "exec"
+  ],
+  "test_bundle_updater": [
+   "exec"
+  ],
+  "test_multi_instance_targeting": [
+   "exec"
+  ],
+  "test_per_instance_ai": [
+   "exec"
+  ],
+  "test_keep_alive_instrument": [
+   "exec"
+  ],
+  "test_tutorial_hold": [
+   "exec"
+  ],
+  "test_live_transitions": [
+   "exec"
+  ],
+  "test_claim_calibration": [
+   "exec"
+  ],
+  "test_worker_headroom_layer": [
+   "exec"
+  ],
+  "test_foresight_net": [
+   "exec"
+  ],
+  "test_counterfactual_factory_alive": [
+   "exec"
+  ],
+  "test_repair_credit": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_dialog_labels": [
+   "exec"
+  ],
+  "test_dialog_repeat_guard": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_observed_quest_ingest": [
+   "exec"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_brain_readiness": [
+   "exec"
+  ],
+  "test_boot_state": [
+   "exec"
+  ],
+  "test_brain_reports_stale_code": [
+   "exec"
+  ],
+  "test_measured_sizes_say_their_unit": [
+   "exec"
+  ],
+  "test_patch_rules_are_idempotent": [
+   "exec"
+  ],
+  "test_consult_gate_is_fitted_and_live": [
+   "exec"
+  ],
+  "test_js_page_suites": [
+   "exec"
+  ],
+  "test_board_replay": [
+   "exec"
+  ],
+  "test_group_scan_reader": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_promise_shadow_names_a_bounced_crossing": [
+   "exec"
+  ],
+  "test_online_learn_gate_needs_transfer_it_did_not_copy": [
+   "exec"
+  ],
+  "test_duel_simulator_keeps_its_own_contract": [
+   "exec"
+  ],
+  "test_env_scatter_and_mask_are_witnessed": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_lexical_seam_fills_only_what_the_sentence_states": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_session_report": [
+   "exec"
+  ],
+  "test_data_janitor": [
+   "exec"
+  ],
+  "test_session_close": [
+   "exec"
+  ],
+  "test_session_close_hook": [
+   "exec"
+  ],
+  "test_the_close_fits_the_timeout_that_kills_it": [
+   "exec",
+   "read"
+  ],
+  "test_side_swap": [
+   "exec"
+  ],
+  "test_move_gate": [
+   "exec"
+  ],
+  "test_progress_report": [
+   "exec"
+  ],
+  "test_artifact_rollback": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_the_page_s_word_for_a_wall_is_read": [
+   "exec"
+  ],
+  "test_objective_buckets": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_knowledge_identity": [
+   "exec"
+  ],
+  "test_knowledge_index_storage": [
+   "exec"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_slim_live_observation": [
+   "exec"
+  ],
+  "test_encounter_input_tables": [
+   "exec"
+  ],
+  "test_combat_decision_log": [
+   "exec"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "exec",
+   "read"
+  ],
+  "test_live_action_realization": [
+   "exec"
+  ],
+  "test_duel_harness_statistics": [
+   "exec"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_quest_advance_shapes": [
+   "exec"
+  ],
+  "test_session_report_census": [
+   "exec"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_veto_alternative_priced": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_session_report_play_quality": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_map_graph_live_wins": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_critic_gate_opens_before_the_solver_returns": [
+   "exec"
+  ],
+  "test_report_instrument": [
+   "exec"
+  ],
+  "test_settle_waits_for_promised_effect": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "exec",
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "exec",
+   "read"
+  ],
+  "test_damage_calibration_sees_the_recorded_fights": [
+   "exec"
+  ],
+  "test_check_helper_survives_a_tuple_detail": [
+   "exec"
+  ],
+  "test_delegated_suites_report_themselves": [
+   "exec"
+  ],
+  "test_one_log_record_per_line": [
+   "exec",
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "exec"
+  ],
+  "test_the_witness_instrument_sees_what_a_test_touches": [
+   "exec"
+  ],
+  "test_the_mutation_pass_stays_affordable": [
+   "exec"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "exec",
+   "read"
+  ],
+  "test_live_evidence_lands_in_the_repository": [
+   "exec"
+  ],
+  "test_battle_log_and_challenges": [
+   "exec"
+  ],
+  "test_live_fight_corpus_is_read_in_process": [
+   "exec"
+  ],
+  "test_the_battle_solver_reads_what_the_page_writes": [
+   "exec"
+  ],
+  "test_tool_vocabulary": [
+   "exec"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ],
+  "test_mutation_targets_have_witnesses": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/schema.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_tool_vocabulary": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/test_brain_daemon.py": {
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec",
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/tool_dataset.py": {
+  "test_observation_text": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/verifier.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_live_transitions": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec",
+   "read"
+  ],
+  "test_promise_shadow_names_a_bounced_crossing": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_settle_waits_for_promised_effect": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/agent/witness.py": {
+  "test_failure_causes": [
+   "exec"
+  ],
+  "test_absent_client_recovery": [
+   "exec"
+  ],
+  "test_identity_binding": [
+   "exec"
+  ],
+  "test_live_witnesses": [
+   "exec"
+  ],
+  "test_verifier_head_gate": [
+   "exec"
+  ],
+  "test_observation_text": [
+   "exec"
+  ],
+  "test_sync_kaggle_toolkit_rules": [
+   "exec"
+  ],
+  "test_quest_chain_replay": [
+   "exec"
+  ],
+  "test_planner_replay": [
+   "exec"
+  ],
+  "test_live_ready": [
+   "exec"
+  ],
+  "test_sim_planner_runs": [
+   "exec"
+  ],
+  "test_command_parser": [
+   "exec"
+  ],
+  "test_command_dataset": [
+   "exec"
+  ],
+  "test_command_shadow": [
+   "exec"
+  ],
+  "test_command_shadow_report": [
+   "exec"
+  ],
+  "test_command_replay": [
+   "exec"
+  ],
+  "test_live_evidence": [
+   "exec"
+  ],
+  "test_command_onnx_decode": [
+   "exec"
+  ],
+  "test_egress_preflight": [
+   "exec"
+  ],
+  "test_host_launch_guard": [
+   "exec"
+  ],
+  "test_auto_live_guards": [
+   "exec"
+  ],
+  "test_auto_live_summarise": [
+   "exec"
+  ],
+  "test_bundle_resilience": [
+   "exec"
+  ],
+  "test_bundle_updater": [
+   "exec"
+  ],
+  "test_multi_instance_targeting": [
+   "exec"
+  ],
+  "test_per_instance_ai": [
+   "exec"
+  ],
+  "test_keep_alive_instrument": [
+   "exec"
+  ],
+  "test_tutorial_hold": [
+   "exec"
+  ],
+  "test_live_transitions": [
+   "exec"
+  ],
+  "test_claim_calibration": [
+   "exec"
+  ],
+  "test_worker_headroom_layer": [
+   "exec"
+  ],
+  "test_foresight_net": [
+   "exec"
+  ],
+  "test_counterfactual_factory_alive": [
+   "exec"
+  ],
+  "test_repair_credit": [
+   "exec"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_dialog_labels": [
+   "exec"
+  ],
+  "test_dialog_repeat_guard": [
+   "exec"
+  ],
+  "test_quest_accept_planner": [
+   "exec"
+  ],
+  "test_observed_quest_catalog": [
+   "exec"
+  ],
+  "test_observed_quest_ingest": [
+   "exec"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_brain_readiness": [
+   "exec"
+  ],
+  "test_boot_state": [
+   "exec"
+  ],
+  "test_brain_reports_stale_code": [
+   "exec"
+  ],
+  "test_measured_sizes_say_their_unit": [
+   "exec"
+  ],
+  "test_patch_rules_are_idempotent": [
+   "exec"
+  ],
+  "test_consult_gate_is_fitted_and_live": [
+   "exec"
+  ],
+  "test_js_page_suites": [
+   "exec"
+  ],
+  "test_board_replay": [
+   "exec"
+  ],
+  "test_group_scan_reader": [
+   "exec"
+  ],
+  "test_npc_start_rotation_bound": [
+   "exec"
+  ],
+  "test_group_refusal_routing": [
+   "exec"
+  ],
+  "test_combined_objectives": [
+   "exec"
+  ],
+  "test_objective_travel_is_bounded": [
+   "exec"
+  ],
+  "test_adjacent_crossing_is_bounded_tighter": [
+   "exec"
+  ],
+  "test_promise_shadow_names_a_bounced_crossing": [
+   "exec"
+  ],
+  "test_online_learn_gate_needs_transfer_it_did_not_copy": [
+   "exec"
+  ],
+  "test_duel_simulator_keeps_its_own_contract": [
+   "exec"
+  ],
+  "test_env_scatter_and_mask_are_witnessed": [
+   "exec"
+  ],
+  "test_the_search_borders_are_bounded": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_silent_house_map_is_left_by_the_crossings_it_knows": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_a_return_to_the_objective_map_is_granted_once": [
+   "exec"
+  ],
+  "test_the_active_quest_survives_one_unplannable_pass": [
+   "exec"
+  ],
+  "test_fork_carries_the_planner_state": [
+   "exec"
+  ],
+  "test_lexical_seam_fills_only_what_the_sentence_states": [
+   "exec"
+  ],
+  "test_search_prefers_fresh_maps": [
+   "exec"
+  ],
+  "test_no_call_is_explained": [
+   "exec"
+  ],
+  "test_session_report": [
+   "exec"
+  ],
+  "test_data_janitor": [
+   "exec"
+  ],
+  "test_session_close": [
+   "exec"
+  ],
+  "test_session_close_hook": [
+   "exec"
+  ],
+  "test_the_close_fits_the_timeout_that_kills_it": [
+   "exec"
+  ],
+  "test_side_swap": [
+   "exec"
+  ],
+  "test_move_gate": [
+   "exec"
+  ],
+  "test_progress_report": [
+   "exec"
+  ],
+  "test_artifact_rollback": [
+   "exec"
+  ],
+  "test_ready_objective_scan": [
+   "exec"
+  ],
+  "test_the_page_s_word_for_a_wall_is_read": [
+   "exec"
+  ],
+  "test_objective_buckets": [
+   "exec"
+  ],
+  "test_objective_parameter_table": [
+   "exec"
+  ],
+  "test_knowledge_identity": [
+   "exec"
+  ],
+  "test_knowledge_index_storage": [
+   "exec"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_slim_live_observation": [
+   "exec"
+  ],
+  "test_encounter_input_tables": [
+   "exec"
+  ],
+  "test_combat_decision_log": [
+   "exec"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "exec",
+   "read"
+  ],
+  "test_live_action_realization": [
+   "exec"
+  ],
+  "test_duel_harness_statistics": [
+   "exec"
+  ],
+  "test_client_confirmed_starts": [
+   "exec"
+  ],
+  "test_quest_advance_shapes": [
+   "exec"
+  ],
+  "test_session_report_census": [
+   "exec"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_veto_alternative_priced": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_session_report_play_quality": [
+   "exec"
+  ],
+  "test_npc_map_fact_is_routed": [
+   "exec"
+  ],
+  "test_map_graph_live_wins": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_critic_gate_opens_before_the_solver_returns": [
+   "exec"
+  ],
+  "test_report_instrument": [
+   "exec"
+  ],
+  "test_settle_waits_for_promised_effect": [
+   "exec"
+  ],
+  "test_plan_stack": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "exec",
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "exec",
+   "read"
+  ],
+  "test_damage_calibration_sees_the_recorded_fights": [
+   "exec"
+  ],
+  "test_check_helper_survives_a_tuple_detail": [
+   "exec"
+  ],
+  "test_delegated_suites_report_themselves": [
+   "exec"
+  ],
+  "test_one_log_record_per_line": [
+   "exec",
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "exec"
+  ],
+  "test_the_witness_instrument_sees_what_a_test_touches": [
+   "exec"
+  ],
+  "test_the_mutation_pass_stays_affordable": [
+   "exec"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "exec",
+   "read"
+  ],
+  "test_live_evidence_lands_in_the_repository": [
+   "exec"
+  ],
+  "test_battle_log_and_challenges": [
+   "exec"
+  ],
+  "test_live_fight_corpus_is_read_in_process": [
+   "exec"
+  ],
+  "test_the_battle_solver_reads_what_the_page_writes": [
+   "exec"
+  ],
+  "test_tool_vocabulary": [
+   "exec"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ],
+  "test_mutation_targets_have_witnesses": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/ai/lexical_policy.py": {
+  "test_command_parser": [
+   "exec",
+   "read"
+  ],
+  "test_reads_are_not_actions": [
+   "read"
+  ],
+  "test_lexical_seam_fills_only_what_the_sentence_states": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/ai/train_move_head.py": {
+  "test_move_gate": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/battle_solver.py": {
+  "test_brain_readiness": [
+   "exec",
+   "read"
+  ],
+  "test_duel_simulator_keeps_its_own_contract": [
+   "exec"
+  ],
+  "test_side_swap": [
+   "exec"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_slim_live_observation": [
+   "exec"
+  ],
+  "test_encounter_input_tables": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_live_action_realization": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_the_battle_solver_reads_what_the_page_writes": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/brain_service.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_brain_autostart": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/combat_ai_server.py": {
+  "test_combat_decision_log": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_battle_log_and_challenges": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/duel.py": {
+  "test_duel_simulator_keeps_its_own_contract": [
+   "exec",
+   "read"
+  ],
+  "test_side_swap": [
+   "exec"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/encounter/backend.py": {
+  "test_env_scatter_and_mask_are_witnessed": [
+   "exec",
+   "read"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_live_action_realization": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/encounter/checkpoint.py": {
+  "test_board_payload_round_trip": [
+   "exec",
+   "read"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/encounter/env.py": {
+  "test_env_scatter_and_mask_are_witnessed": [
+   "exec",
+   "read"
+  ],
+  "test_board_payload_round_trip": [
+   "exec"
+  ],
+  "test_encounter_input_tables": [
+   "exec"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/encounter/model.py": {
+  "test_board_payload_round_trip": [
+   "exec",
+   "read"
+  ],
+  "test_encounter_model_and_checkpoint": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/fight_estimate.py": {
+  "test_failure_causes": [
+   "exec",
+   "read"
+  ],
+  "test_reads_are_not_actions": [
+   "exec"
+  ],
+  "test_online_learn_gate_needs_transfer_it_did_not_copy": [
+   "exec"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "exec"
+  ],
+  "test_the_plan_reason_reaches_the_action_row": [
+   "exec"
+  ],
+  "test_a_crossing_in_flight_is_waited_out": [
+   "exec"
+  ],
+  "test_the_session_end_row_names_the_reason": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_gate_shadow_reaches_the_trajectory": [
+   "exec"
+  ],
+  "test_stall_retirement_is_bounded": [
+   "exec"
+  ],
+  "test_read_streak_is_bounded": [
+   "exec"
+  ],
+  "test_reads_are_not_world_progress": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_battle_log_and_challenges": [
+   "exec"
+  ],
+  "test_brain_lifecycle": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/live_data.py": {
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_live_fight_corpus_is_read_in_process": [
+   "exec",
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/live_policy.py": {
+  "test_reads_are_not_actions": [
+   "read"
+  ],
+  "test_the_brain_stamps_its_own_code_identity": [
+   "read"
+  ],
+  "test_board_payload_round_trip": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_critic_gate_opens_before_the_solver_returns": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/observation.py": {
+  "test_brain_readiness": [
+   "exec",
+   "read"
+  ],
+  "test_slim_live_observation": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/online_learn.py": {
+  "test_online_learn_gate_needs_transfer_it_did_not_copy": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/plan_value.py": {
+  "test_board_payload_round_trip": [
+   "exec",
+   "read"
+  ],
+  "test_encounter_input_tables": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/combat/side_swap.py": {
+  "test_side_swap": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/data/capabilities.json": {
+  "test_failure_causes": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_tool_vocabulary": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/sim/run.py": {
+  "test_sim_planner_runs": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/auto_live.py": {
+  "test_auto_live_guards": [
+   "exec",
+   "read"
+  ],
+  "test_auto_live_summarise": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/brain_readiness.py": {
+  "test_brain_readiness": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/build_command_dataset.py": {
+  "test_command_dataset": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/build_live_transitions.py": {
+  "test_live_transitions": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/command_replay.py": {
+  "test_command_replay": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/command_shadow_report.py": {
+  "test_command_shadow_report": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/data_janitor.py": {
+  "test_data_janitor": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/doc_facts.py": {
+  "test_doc_facts_self_witness": [
+   "exec",
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_live_evidence_lands_in_the_repository": [
+   "exec"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/freeze_planner_replay.py": {
+  "test_planner_replay": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/group_scan.py": {
+  "test_group_scan_reader": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/host_control.py": {
+  "test_host_launch_guard": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/ingest_observed_quests.py": {
+  "test_observed_quest_ingest": [
+   "exec",
+   "read",
+   "spawn"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/live_evidence.py": {
+  "test_live_evidence": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/live_outcome_probe.py": {
+  "test_claim_calibration": [
+   "exec",
+   "read"
+  ],
+  "test_worker_headroom_layer": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_veto_alternative_priced": [
+   "exec",
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/live_ready.py": {
+  "test_live_ready": [
+   "exec",
+   "read"
+  ],
+  "test_egress_preflight": [
+   "exec",
+   "read"
+  ],
+  "test_host_launch_guard": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/policy_over_record_boards.py": {
+  "test_board_replay": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/progress_report.py": {
+  "test_session_close": [
+   "exec",
+   "read"
+  ],
+  "test_progress_report": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/quest_advance_shapes.py": {
+  "test_live_witnesses": [
+   "exec",
+   "read"
+  ],
+  "test_session_report": [
+   "exec"
+  ],
+  "test_session_close": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_quest_advance_shapes": [
+   "exec",
+   "read"
+  ],
+  "test_session_report_census": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "exec",
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/recovery_report.py": {
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_report_instrument": [
+   "exec",
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/session_close.py": {
+  "test_session_close": [
+   "exec",
+   "read"
+  ],
+  "test_the_close_fits_the_timeout_that_kills_it": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/session_report.py": {
+  "test_live_witnesses": [
+   "exec",
+   "read"
+  ],
+  "test_session_report": [
+   "exec",
+   "read"
+  ],
+  "test_session_close": [
+   "exec"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_session_report_census": [
+   "exec",
+   "read"
+  ],
+  "test_session_report_play_quality": [
+   "exec"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "exec",
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read",
+   "spawn"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/dofus-network/tools/sync_kaggle_toolkit.py": {
+  "test_sync_kaggle_toolkit_rules": [
+   "exec",
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_console_output_is_utf8": [
+   "read"
+  ],
+  "test_text_io_declares_encoding": [
+   "read"
+  ],
+  "test_one_log_record_per_line": [
+   "read"
+  ],
+  "test_tools_scripts_find_the_repo_root": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/scripts/mobile-disguise.js": {
+  "test_live_ready": [
+   "read"
+  ],
+  "test_per_instance_ai": [
+   "read"
+  ],
+  "test_js_page_suites": [
+   "spawn"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ],
+  "test_battle_log_and_challenges": [
+   "read"
+  ],
+  "test_tool_vocabulary": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/apply-patch-rules.py": {
+  "test_patch_rules_are_idempotent": [
+   "exec",
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/compat_probe.js": {
+  "test_measured_sizes_say_their_unit": [
+   "read"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/damage_calibration.py": {
+  "test_damage_calibration_sees_the_recorded_fights": [
+   "exec",
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/patch-engine.js": {
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/test_fight_state_fields.js": {
+  "test_js_page_suites": [
+   "spawn"
+  ],
+  "test_doc_facts_self_witness": [
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ },
+ "C:/Users/sao/Documents/dofus-emu/tools/wsp_fight.py": {
+  "test_duel_harness_statistics": [
+   "exec",
+   "read"
+  ],
+  "test_every_mutation_anchor_still_points_at_code": [
+   "read"
+  ]
+ }
+}

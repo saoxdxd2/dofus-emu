@@ -63,6 +63,15 @@ PVAL = ROOT / "combat" / "plan_value.py"
 # The production entry point: the decision row every offline read-out is built from, its rotation
 # threshold, and its promise that a bad disk never reaches the fight.
 CSRV = ROOT / "combat" / "combat_ai_server.py"
+# The reward the whole fight learner trains on. `resolve()` invented a win from
+# post-regen HP and reported 0.0 damage on all 14 resolved fights in the ledger,
+# and no mutation reached this file: a wrong label here is a silently wrong model.
+FEST = ROOT / "combat" / "fight_estimate.py"
+# The other fight label: what a monster's spell actually cost us, and which fight a
+# verdict belongs to. This file had no anchor, so the builder read an empty list for
+# a whole corpus and lent 8 of 19 fights another fight's `won: true` with nothing in
+# the sweep able to see it.
+LDATA = ROOT / "combat" / "live_data.py"
 # The forward math and the loader that decides how wide its inputs are -- #85's last two files.
 MODEL = ROOT / "combat" / "encounter" / "model.py"
 CKPT = ROOT / "combat" / "encounter" / "checkpoint.py"
@@ -168,6 +177,11 @@ LOCKTEST = ROOT / "agent" / "test_brain_daemon.py"
 DAMAGE = ROOT.parent / "tools" / "damage_calibration.py"
 # The gate's own formatter: a mutation here must be caught by the gate it breaks.
 REG = ROOT / "agent" / "regression.py"
+# The instrument the mutation-coverage ratchet reads. A wrong channel here does not crash
+# anything -- it makes the ratchet report a file as witnessed when no test touches it, or
+# as unwitnessed when one does, so the only witness is the suite that proves the channels
+# against a file it creates itself.
+WITNESS = ROOT / "agent" / "witness.py"
 
 SNIPPET = ("import agent.regression as r\n"
            # The snippet tells the gate it is inside a sweep: a check that re-derives a
@@ -287,6 +301,12 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_progress_report,\n"
            "    r.test_artifact_rollback,\n"
            "    r.test_ready_objective_scan,\n"
+           # The whole of G112 lives in this one suite -- the refusal reader, the wall
+           # memory, the deduplicated ask and the cached-geometry branch. It was written
+           # 2026-11-12 and not listed here, so a sweep over `planner.py` ran 671
+           # mutations with no check able to see any of them: measured MISSED on
+           # "house map: the cached geometry is ignored" before this line existed.
+           "    r.test_the_page_s_word_for_a_wall_is_read,\n"
            "    r.test_objective_buckets,\n"
            "    r.test_objective_parameter_table,\n"
            "    r.test_knowledge_identity,\n"
@@ -328,6 +348,8 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_npc_map_fact_is_routed,\n"
            "    r.test_map_graph_live_wins,\n"
            "    r.test_read_streak_is_bounded,\n"
+           "    r.test_reads_are_not_world_progress,\n"
+           "    r.test_critic_gate_opens_before_the_solver_returns,\n"
            "    r.test_report_instrument,\n"
            "    r.test_settle_waits_for_promised_effect,\n"
            "    r.test_plan_stack,\n"
@@ -338,12 +360,38 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_delegated_suites_report_themselves,\n"
            "    r.test_one_log_record_per_line,\n"
            "    r.test_tools_scripts_find_the_repo_root,\n"
-           # The harness's own wiring: a mutation that drops a test from the snippet must
-           # be caught by the rule that requires the snippet to see its targets.
-           "    r.test_the_snippet_can_see_its_own_mutation_targets,\n"
+           # The instrument the coverage ratchet reads. It replaces the old
+           # `test_the_snippet_can_see_its_own_mutation_targets`, which matched the *text*
+           # of each test body: measured 2026-11-12, it went green on a docstring naming
+           # `combat/battle_solver.py` while the anchors against that file reported MISSED.
+           # This suite proves the three channels against a file it creates itself, so a
+           # mutation that drops a channel is caught here. The ratchet itself
+           # (`test_mutation_targets_have_witnesses`) is deliberately NOT in this list: it
+           # reads the map this snippet never builds, so every arm would read CAUGHT.
+           "    r.test_the_witness_instrument_sees_what_a_test_touches,\n"
            "    r.test_the_mutation_pass_stays_affordable,\n"
            "    r.test_every_mutation_anchor_still_points_at_code,\n"
            "    r.test_live_evidence_lands_in_the_repository,\n"
+           # The fight reward: `resolve()` is the only writer of `won`, `hp_loss` and
+           # `turns`, and every one of them was wrong on the recorded ledger. Without
+           # this entry the FEST anchors below are unreachable from the sweep.
+           "    r.test_battle_log_and_challenges,\n"
+           # The live corpus builder's own suite, in-process. `test_combat_suites`
+           # runs it in a subprocess the snippet skips, so without this line every
+           # LDATA anchor below is unreachable -- the same trap that left
+           # `combat/observation.py` unseen until it got an entry.
+           "    r.test_live_fight_corpus_is_read_in_process,\n"
+           # The solver's parser and its notes. The BSOLVER anchors were caught only
+           # incidentally before this line: `_castable` was exercised through the
+           # live-corpus runner above, and everything else in the file was invisible.
+           # Measured 2026-11-12: both `castable_error` anchors reported MISSED.
+           "    r.test_the_battle_solver_reads_what_the_page_writes,\n"
+           # Measured 2026-11-12 by `agent/witness.py`: these two are the only tests in the
+           # gate that touch `data/capabilities.json` and `agent/test_brain_daemon.py`, and
+           # neither was in the snippet -- so the one mutation written against each of them
+           # could only ever report MISSED with 0 failing checks.
+           "    r.test_tool_vocabulary,\n"
+           "    r.test_brain_lifecycle,\n"
            "):\n"
            "    r._run_test(_t)\n"
            "print('FAILURES=%d' % len(r._FAILURES))\n"
@@ -379,6 +427,56 @@ MUTATIONS = [
     ("read-streak: reads are never bounded", AUTO,
      '        if self._read_streak < READ_STREAK_LIMIT:\n            return "keep"',
      '        if True:\n            return "keep"'),
+    # ---- the escalation that finds nothing must not restart its own streak.
+    # Live session e84012a0: 139 consecutive `quest.list` steps, one wait per
+    # escalation, `consecutive` never above 1, ended by the operator's stop file.
+    ("read-bound: an empty escalation restarts the count instead of spending it", AUTO,
+     '        if forced is None:\n            self._read_escalations += 1\n',
+     '        if forced is None:\n            self._read_escalations = 0\n'),
+    ("read-bound: empty escalations are never bounded", AUTO,
+     '            if self._read_escalations >= READ_ESCALATION_LIMIT:',
+     '            if False:'),
+    ("read-bound: an escalation that found an action keeps the empty count", AUTO,
+     '        self._read_escalations = 0\n        self._consecutive_waits = 0\n',
+     '        self._consecutive_waits = 0\n'),
+    ("read-bound: a dispatched action keeps the empty count", AUTO,
+     '            self._read_streak = 0\n            self._read_escalations = 0\n'
+     '            return "keep"',
+     '            self._read_streak = 0\n            return "keep"'),
+    ("read-bound: the next goal inherits the spent budget", AUTO,
+     '            self._read_streak = 0\n            self._read_escalations = 0\n'
+     '            self._read_stop_reason = ""\n            self._farm_wait = False',
+     '            self._read_streak = 0\n            self._farm_wait = False'),
+    ("read-bound: the end reason blames a wait instead of the reads", AUTO,
+     '                    ended_because = self._read_stop_reason or "stopped while waiting"',
+     '                    ended_because = "stopped while waiting"'),
+    ("read-bound: the reason no longer names the reads", AUTO,
+     '                    "no progress: %d reads in a row and %d searches of the board "',
+     '                    "no progress: %d lookups and %d searches of the board "'),
+# ---- an answered query is not a changed world
+    ("read-progress: a read clears the no-progress streak again", AUTO,
+     '                    if call.tool not in READ_ONLY_TOOLS:\n'
+     '                        self._recent.clear()',
+     '                    if True:\n'
+     '                        self._recent.clear()'),
+    ("read-progress: nothing clears the streak, not even a real change", AUTO,
+     '                    if call.tool not in READ_ONLY_TOOLS:\n'
+     '                        self._recent.clear()',
+     '                    if False:\n'
+     '                        self._recent.clear()'),
+    ("read-progress: an answered query is tallied as a world change", AUTO,
+     '        if step.verdict == "advanced":\n'
+     '            if step.tool in READ_ONLY_TOOLS:\n'
+     '                self._read_answers += 1\n'
+     '            else:\n'
+     '                self._world_changes += 1\n',
+     '        if step.verdict == "advanced":\n'
+     '            self._world_changes += 1\n'),
+    ("read-progress: the split is counted but never published", AUTO,
+     '            "world_changes": self._world_changes,\n'
+     '            "read_answers": self._read_answers,\n',
+     '            "world_changes": 0,\n'
+     '            "read_answers": 0,\n'),
 # ---- the client corrects the exported map index (live 2026-10-29)
     ("graph-live: the router plans on the export without the client's exits", EXEC,
      '        self._maps.observe(here, _obs_exit_map(observation))\n',
@@ -522,6 +620,113 @@ MUTATIONS = [
      "MAX_PERM_P = 0.10", "MAX_PERM_P = 1.5"),
     ("calibrate: the permutation comparison is dropped", OLEARN,
      "    elif perm_p > MAX_PERM_P:", "    elif False:"),
+    # ---- the fight reward itself (this file had no anchor). Every label below was
+    # wrong on the recorded ledger: hp_loss 0.0 on all 14 resolved fights while five
+    # had lost 19/20/25/11/43 HP, turns None on all 16, and two wins invented from
+    # post-regen HP. A calibrator trained on these numbers learns the regen, not the fight.
+    ("reward: damage taken goes back to the post-regen HP delta", FEST,
+     '        if log_loss is not None:\n            hp_loss = log_loss\n'
+     '            hp_loss_source = "battle_log"',
+     '        if False:\n            hp_loss = log_loss\n'
+     '            hp_loss_source = "battle_log"'),
+    ("reward: the enemy's damage is filed as mine", FEST,
+     '            if str(row.get("target")) != str(my_id):\n                continue',
+     '            if False:\n                continue'),
+    ("reward: turns counts every fighter's turn instead of rounds", FEST,
+     '        if kind == "GameFightNewRoundMessage":\n            rounds += 1',
+     '        if kind == "GameFightTurnStartMessage":\n            rounds += 1'),
+    ("reward: a log with no damage row answers zero instead of unknown", FEST,
+     '    return (loss if saw_loss_row else None), (rounds or None)',
+     '    return (loss if log else None), (rounds or None)'),
+    ("reward: standing alive is a win again", FEST,
+     '        else:\n            won = None\n            won_source = "unknown"',
+     '        else:\n            won = True\n            won_source = "unknown"'),
+    ("reward: an unmatched end message lends its log to this fight", FEST,
+     '        log_loss, log_turns = _fight_log_stats(end if end_matches else None)',
+     '        log_loss, log_turns = _fight_log_stats(end)'),
+    ("reward: an undecided fight is paid as a loss", FEST,
+     '        reward = (round((1.0 if won else 0.0) + challenge_bonus, 3)\n'
+     '                  if won is not None else None)',
+     '        reward = round((1.0 if won else 0.0) + challenge_bonus, 3)'),
+    ("reward: the round count never reaches the row", FEST,
+     '            "turns": log_turns,', '            "turns": None,'),
+    # ---- the live corpus builder (this file had no anchor either). It read
+    # `last_actions`, which is [] on all 333 recorded boards, while the page filled
+    # `battle_log` with 9,573 rows -- and it keyed the verdict dict on the run, so 8
+    # of 19 fights carried another fight's `won: true`. Both were silent: an empty
+    # join and a fight with no damage produce the same output.
+    ("live corpus: the empty list is read instead of the one the page fills", LDATA,
+     '    log = board.get("battle_log")\n    if isinstance(log, list) and log:\n'
+     '        return _actions_from_log(log)',
+     '    log = board.get("battle_log")\n    if False:\n'
+     '        return _actions_from_log(log)'),
+    ("live corpus: a board with no battle_log learns nothing", LDATA,
+     '    return _actions_from_last_actions(board.get("last_actions") or [],\n'
+     '                                      board.get("round"))',
+     '    return []'),
+    ("live corpus: damage is credited to a cast at another target", LDATA,
+     '        if entry["target_id"] != row.get("target") or cast_round != rounds:',
+     '        if cast_round != rounds:'),
+    ("live corpus: an earlier round's cast owns this round's damage", LDATA,
+     '        if entry["target_id"] != row.get("target") or cast_round != rounds:',
+     '        if entry["target_id"] != row.get("target"):'),
+    ("live corpus: any monster's cast owns the damage", LDATA,
+     '        prior = last_cast.get(row.get("source"))',
+     '        prior = next(iter(last_cast.values()), None)'),
+    ("live corpus: a cast's second damage row replaces the first", LDATA,
+     '        entry["dealt"] = (entry["dealt"] or 0.0) + value',
+     '        entry["dealt"] = value'),
+    ("live corpus: the damage that was seen is never counted", LDATA,
+     '        ATTRIBUTION["damage_rows"] += 1\n'
+     '        prior = last_cast.get(row.get("source"))',
+     '        prior = last_cast.get(row.get("source"))'),
+    ("live corpus: the damage that was priced is never counted", LDATA,
+     '                    ATTRIBUTION["attributed"] += 1',
+     '                    pass'),
+    ("live corpus: two casts in one round collapse into one", LDATA,
+     '                "log_index": index,', '                "log_index": None,'),
+    ("live corpus: the verdict is filed under the run, not the fight", LDATA,
+     '                    outcomes[(run, int(fight_id))] = record',
+     '                    outcomes[(run, 0)] = record'),
+    ("live corpus: the fight id is dropped when the verdict is read", LDATA,
+     '            "outcome": (outcomes.get((run, fight_id)) or {}).get("outcome"),',
+     '            "outcome": (outcomes.get((run, 0)) or {}).get("outcome"),'),
+    ("live corpus: the default goes back to the repo's 8-board snapshot", LDATA,
+     'DEFAULT_BOARDS = (Path(os.environ.get("LOCALAPPDATA", str(Path.home())))\n'
+     '                  / "DofusFarm" / "fight_boards.jsonl")',
+     'DEFAULT_BOARDS = REPO_ROOT / "trajectories" / "fight_boards.jsonl"'),
+    # ---- an unanswerable castability check is not a refusal. `castable: false`
+    # removes the spell from every candidate set the solver builds, so a swallowed
+    # exception silently shrinks the AI's options. No recorded board can show this:
+    # `castable` is absent from all 1,341 spell rows across the 333 boards, so the
+    # distinction is pinned by running the page block and the reader, not by a corpus.
+    ("castable: a check that threw is a refusal again", PAGE,
+     '                        castable = null;',
+     '                        castable = false;'),
+    ("castable: the reason it could not be answered is dropped", PAGE,
+     '                        castableError = String((eCast && eCast.message) || eCast);',
+     '                        castableError = null;'),
+    ("castable: the reason is kept but never reaches the payload", PAGE,
+     '                        castable_error: castableError,',
+     '                        castable_error: null,'),
+    ("castable: the client's own answer is discarded", PAGE,
+     '                        castable = myId !== null && !!fm.canCastThisSpell(myId, spellId);',
+     '                        castable = myId !== null ? null : false;'),
+    ("castable: unknown is read as a veto again", BSOLVER,
+     '    return True if value is None else bool(value)',
+     '    return bool(value)'),
+    ("castable: a spell the client refused is offered anyway", BSOLVER,
+     '    return True if value is None else bool(value)',
+     '    return True'),
+    ("castable: the reason a spell could not be checked is dropped", BSOLVER,
+     '            castable_error=(str(raw.get("castable_error"))[:120]\n'
+     '                            if raw.get("castable_error") else None),',
+     '            castable_error=None,  # mutated: the page said why and the parser dropped it'),
+    ("castable: the unchecked spell is not named in the plan", BSOLVER,
+     '        if unchecked:\n'
+     '            notes.append("client could not check these spells: " + "; ".join(unchecked))',
+     '        if False:\n'
+     '            notes.append("client could not check these spells: " + "; ".join(unchecked))'),
     # ---- the duel simulator (SS L.43: executed for months, never mutated)
     ("duel: overtime is scored on raw HP instead of the healthier fraction", DUEL,
      "        state.winner = a.id if ha > hb else (b.id if hb > ha else None)",
@@ -642,8 +847,19 @@ MUTATIONS = [
      "                 if key is not None and which == key and from_map == here_i",
      "        spent = set()  # mutated: nothing is ever spent, so one wall is walked\n        if False and key is not None and which == key and from_map == here_i"),
     ("house map: the ask is not counted", PLAN,
-     "            self._note_crossing(key, here_i, near)",
-     "            pass  # mutated: asked forever, counted never"),
+     "        if isinstance(dest, int) and dest != here:\n"
+     "            self._note_crossing(key, here, dest)",
+     "        if False and isinstance(dest, int) and dest != here:\n"
+     "            self._note_crossing(key, here, dest)  # mutated: asked forever, counted never"),
+    ("house map: the cached geometry is ignored", PLAN,
+     "        refused |= self._sealed_borders(here_i, neighbours)",
+     "        refused |= set()  # mutated: 2,696 cached maps of geometry go unread"),
+    ("house map: the page's refusal is not read", PLAN,
+     "        if isinstance(nav, dict) and nav.get(\"stage\") in NAV_WALL_STAGES:",
+     "        if False and isinstance(nav, dict) and nav.get(\"stage\") in NAV_WALL_STAGES:"),
+    ("house map: the wall is keyed on the objective, not the map", PLAN,
+     "        walls = self._walls.setdefault(here_i, set())",
+     "        walls = self._walls.setdefault(id(obs), set())  # mutated: per observation"),
     ("house map: the client's own exit list is overridden", PLAN,
      "            if isinstance(live_exits, list) and live_exits:\n"
      "                return None",
@@ -1477,10 +1693,11 @@ MUTATIONS = [
      '            out.add(int(raw))',
      '            out.add(raw)'),
     ("start: the refusal does not retire the quest, so it is re-derived every step", PLAN,
-     '                    self._skipped.add(qid)\n                    continue\n'
-     '                if self._start_failures.get(qid, 0) >= START_ATTEMPT_LIMIT:',
-     '                    continue\n'
-     '                if self._start_failures.get(qid, 0) >= START_ATTEMPT_LIMIT:'),
+     '                if qid in self._start_refused:\n'
+     '                    self._skip(qid, "the server refused to start it")\n'
+     '                    continue\n',
+     '                if qid in self._start_refused:\n'
+     '                    continue\n'),
     ("start: a fork loses the confirmed quests and re-asks them", PLAN,
      '        twin._client_quests = set(self._client_quests)',
      '        twin._client_quests = set()'),
@@ -2413,6 +2630,24 @@ MUTATIONS = [
     ("critic: a pick is reported that the ranker never made", LPOL,
      '        self._vc_fired = getattr(self, "_vc_fired", 0) + int(picked is not None)',
      '        self._vc_fired = getattr(self, "_vc_fired", 0) + 1'),
+    # The gate was assigned after the solver-first return, so on the default path the
+    # value head never ranked a live plan. These are the three ways that can come back.
+    ("critic: the gate is closed on the solver-first path again", LPOL,
+     '        self._value_ready = bool(contract.get("value_ready"))\n'
+     '        # Solver-first: play the deterministic plan a good player would.',
+     '        self._value_ready = False\n'
+     '        # Solver-first: play the deterministic plan a good player would.'),
+    ("critic: the gate ignores the contract and stays open", LPOL,
+     '        self._value_ready = bool(contract.get("value_ready"))\n'
+     '        # Solver-first: play the deterministic plan a good player would.',
+     '        self._value_ready = True\n'
+     '        # Solver-first: play the deterministic plan a good player would.'),
+    ("critic: the gate latches on the first ready turn and never closes", LPOL,
+     '        self._value_ready = bool(contract.get("value_ready"))\n'
+     '        # Solver-first: play the deterministic plan a good player would.',
+     '        self._value_ready = (getattr(self, "_value_ready", False)\n'
+     '                             or bool(contract.get("value_ready")))\n'
+     '        # Solver-first: play the deterministic plan a good player would.'),
     # §L.24's env math: the health spell and the mask loop are both on the path every interpreter
     # takes, so these are the arms that say the parity measurement can fail.
     ("env: a cast overwrites the target's hp instead of accumulating", EENV,
@@ -2704,6 +2939,15 @@ MUTATIONS = [
      "            if not isinstance(obs, dict):\n"
      "                continue\n"
      "                by_session.setdefault(str(record.get(\"session\")), []).append(record)"),
+    # ---- the witness instrument the coverage ratchet reads (2026-11-12, G114)
+    # A dead channel does not crash: it silently turns "no test touches this file" into
+    # "witnessed", which is the false comfort the ratchet was built to remove.
+    ("witness: the read and spawn channels go quiet", WITNESS,
+     '    if _ACTIVE is None:\n        return\n',
+     '    return  # mutated: nothing is recorded unless the sweep is already inside a test\n'),
+    ("witness: the executed-file channel never turns on", WITNESS,
+     '    sys.monitoring.set_events(_TOOL_ID, sys.monitoring.events.PY_START)',
+     '    sys.monitoring.set_events(_TOOL_ID, 0)  # mutated: the map has no exec entries'),
 ]
 
 

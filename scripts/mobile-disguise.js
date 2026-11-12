@@ -28,7 +28,12 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-11-10a';
+    //
+    // 2026-11-11a: door-first direction navigation, `_agentWalkBeside` for a cell the
+    // client's own adjacency form refuses, and the `door_step_off` marker. Unverified on
+    // a live client -- the injected script is replaced only by a full app restart, so a
+    // session reporting 2026-11-10a is still running the previous page.
+    var AGENT_BUILD = '2026-11-11a';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -6418,6 +6423,90 @@
             }
             return null;
         };
+        // Walk to a free cell beside `targetCell` and call `onArrive` when the client
+        // confirms the move. Returns the cell walked to, or null if every neighbour was
+        // refused.
+        //
+        // This exists because the client's own "walk next to this cell" form
+        // (`_movePlayerOnMap(cell, true, cb)`) fails on maps where it should not: live
+        // 2026-11-11 on map 145752833 it answered `_movePlayerOnMap noPath:176:147` for
+        // an NPC two cells away, twelve times in one run, and the agent had no second
+        // move to make. Its pathfinder is a weighted A* over the whole grid and the
+        // adjacency shortcut only fires under conditions we cannot see from outside.
+        // Walking to a *free* cell is the form that is verified to work (the door walks
+        // have used it since 2026-10-29), so the fallback is to do that ourselves:
+        // enumerate the target's neighbours, keep the walkable ones, nearest first.
+        //
+        // The failure callback fires synchronously with an error and the success
+        // callback fires later on the server's confirmation, so a candidate that is
+        // rejected does nothing and the loop simply tries the next one.
+        var _agentWalkBeside = function(targetCell, onArrive) {
+            var iso3 = window.isoEngine;
+            var report = { at: Date.now(), target: targetCell, tried: [], ok: null };
+            window.__agentWalkBeside = report;
+            if (targetCell == null || !iso3
+                    || typeof iso3._movePlayerOnMap !== 'function') {
+                return null;
+            }
+            var mr = (iso3.mapRenderer) || null;
+            var mine = null;
+            try {
+                var ua3 = iso3.actorManager && iso3.actorManager.userActor;
+                mine = ua3 && ua3.cellId != null ? Number(ua3.cellId) : null;
+            } catch (eMine) {}
+            var around = [Number(targetCell) - 1, Number(targetCell) + 1,
+                          Number(targetCell) - 14, Number(targetCell) - 15,
+                          Number(targetCell) - 13, Number(targetCell) + 13,
+                          Number(targetCell) + 14, Number(targetCell) + 15];
+            var cands = [];
+            for (var i = 0; i < around.length; i++) {
+                var cand = around[i];
+                if (cand == null || cand <= 0 || isNaN(cand)) continue;
+                var walkable = false;
+                try {
+                    walkable = !!(mr && typeof mr.isWalkable === 'function'
+                        && mr.isWalkable(cand));
+                } catch (eWalk2) {}
+                if (walkable) cands.push(cand);
+            }
+            // Nearest first: index distance is a rough proxy for map distance, and a
+            // neighbour on the far side of a wall costs a walk across the map.
+            if (mine != null) {
+                cands.sort(function (a, b) {
+                    return Math.abs(a - mine) - Math.abs(b - mine);
+                });
+            }
+            report.candidates = cands.slice(0);
+            for (var j = 0; j < cands.length; j++) {
+                var chosen = cands[j];
+                var moved = null;
+                try {
+                    // The cell is bound per candidate rather than read from the loop
+                    // variable: the success callback fires on the server's confirmation,
+                    // after this function has returned. The early return below keeps
+                    // `chosen` correct today, but that is a property of the return, not of
+                    // the callback, and arriving on the wrong cell is a silent wrong walk.
+                    moved = iso3._movePlayerOnMap(chosen, false,
+                        (function (walked) {
+                            return function (err) {
+                                if (err) return;      // rejected: the loop moves on
+                                if (typeof onArrive === 'function') {
+                                    try { onArrive(walked); } catch (eArrive) {}
+                                }
+                            };
+                        })(chosen));
+                } catch (eCand) {
+                    moved = null;
+                }
+                if (moved != null) {
+                    report.ok = chosen;
+                    return chosen;
+                }
+                report.tried.push(chosen);
+            }
+            report.ok = false;
+            return null;
+        };
         // Which border cell was tried last, per "<map>:<direction>". An exit built
         // from geometry lists every walkable cell on that edge, and only one of them
         // is the crossing the server accepts; without advancing past a cell that was
@@ -8473,9 +8562,21 @@
                     } catch (e) {}
                     if (levelId === null && level) levelId = num(level.id);
                     var castable = false;
+                    var castableError = null;
                     try {
                         castable = myId !== null && !!fm.canCastThisSpell(myId, spellId);
-                    } catch (e) {}
+                    } catch (eCast) {
+                        // `false` vetoes the spell for the whole turn: battle_solver
+                        // drops it from every candidate set, so the AI never gets to
+                        // consider it. A thrown exception is not the client refusing,
+                        // and this catch used to make the two indistinguishable.
+                        // `null` is "unknown"; the reader treats unknown as available.
+                        // The executor re-checks with its own gate before sending, so
+                        // an optimistic observation cannot spend the turn on a cast
+                        // the client will refuse.
+                        castable = null;
+                        castableError = String((eCast && eCast.message) || eCast);
+                    }
                     var name = null;
                     try { name = text(spell.getName ? spell.getName() : null); } catch (e) {}
                     var castsThisTurn = null;
@@ -8508,6 +8609,7 @@
                         zone_shape: prop(spell, 'zoneShape') || null,
                         casts_this_turn: castsThisTurn,
                         castable: castable,
+                        castable_error: castableError,
                         is_weapon: !!(spell.isWeapon && spell.isWeapon()),
                         effects: effects(level && level.effects),
                         critical_effects: effects(level && level.criticalEffect)
@@ -8656,6 +8758,45 @@
                     }
                     return null;
                 };
+                // Walk onto a door cell and let the client's own transition fire.
+                // Standing on the door is not the same as stepping onto it: a transition
+                // lands the character on the door cell, so a second "leave" from there is
+                // a no-op unless the character steps off first (measured 2026-10-29).
+                // Returns true when a walk was actually issued, and leaves
+                // `_agentDoorStepOff` set when the route was "off the door, then back on"
+                // so the caller's `via` says which of the two happened.
+                var _agentDoorStepOff = false;
+                var _agentWalkOntoDoor = function (cell, toMap) {
+                    if (cell == null || !iso || typeof iso._movePlayerOnMap !== 'function') {
+                        return false;
+                    }
+                    var hint = function () {
+                        window.__agentDoorHint = { at: Date.now(), map: here, cell: cell };
+                        try { _agentDoorHint = window.__agentDoorHint; } catch (eH) {}
+                    };
+                    try {
+                        if (Number(cell) === Number(details.cell)) {
+                            var off = _agentStepOffCell(cell, null);
+                            if (off == null) return false;
+                            _agentDoorStepOff = true;
+                            window.__agentLastNav = { at: Date.now(), stage: 'door_step_off',
+                                from_map: here, to_map: toMap == null ? null : Number(toMap),
+                                cell: cell, off: off };
+                            hint();
+                            iso._movePlayerOnMap(off, false, function () {
+                                setTimeout(function () {
+                                    hint();
+                                    iso._movePlayerOnMap(cell, false, function () {});
+                                }, 700);
+                            });
+                            return true;
+                        }
+                        hint();
+                        return iso._movePlayerOnMap(cell, false, function () {}) != null;
+                    } catch (eDoorWalk) {
+                        return false;
+                    }
+                };
 
                 // Resolve an NPC to the cell it is standing on.
                 if (wantCell == null && npcId) {
@@ -8736,14 +8877,54 @@
                 if (!wantMap && dir) {
                     var edge = exitFor(dir);
                     if (!edge) {
-                        // An interior map (a house, a solo area) has neighbours but no
-                        // change-map cell: its exit is a door or a scripted step, and
-                        // the client publishes nothing to walk to. The transition is
-                        // still the client's own request -- ask the server directly and
-                        // let it adjudicate, which is exactly what a tapped door does.
-                        // Measured live 2026-10-29 on the Albuera solo area: four edges
-                        // known, zero change cells, and every plan died on "no exit".
+                        // An interior map (an inn, a house, a solo area) has neighbours but
+                        // no change-map cell: the way out is a door, and the client
+                        // publishes nothing on the border to walk to. Asking the server
+                        // for the transition from wherever the character stands does
+                        // nothing -- measured live 2026-11-11 on map 146276352 (the
+                        // Belladonna inn): `nav.goto {direction:left}` returned ok 280
+                        // times in a row, the cell never changed, and the two doors that
+                        // do lead out (cells 451 and 346, both -> 145490435) were never
+                        // tried. So try the door first, and only ask the server directly
+                        // when the map has no door at all.
                         var nearDir = details.neighbours && details.neighbours[dir];
+                        var doorHere = nearDir != null
+                            ? _agentDoorFor(here, Number(nearDir)) : null;
+                        if (doorHere == null) {
+                            // No door to that neighbour, but an interior with any door at
+                            // all still has a way out; the planner re-plans from the map
+                            // it lands on, which is how every human leaves a building.
+                            // Prefer a door the character has *walked* onto over one it
+                            // merely arrived on: an arrival cell is where a transition
+                            // dropped the player, and measured live 2026-11-11 it can be
+                            // unreachable from the rest of the room (map 146276352: the
+                            // arrival door at 346 stopped the walk at cell 359, while the
+                            // walked door at 451 is the one that leads out).
+                            var allDoors = _agentDoorList(here);
+                            var walkedDoor = null;
+                            for (var dk = 0; dk < allDoors.length; dk++) {
+                                if (allDoors[dk].via === 'walk') { walkedDoor = allDoors[dk]; break; }
+                            }
+                            doorHere = walkedDoor ? walkedDoor.cell
+                                : (allDoors.length ? allDoors[0].cell : null);
+                        }
+                        if (doorHere != null && iso
+                                && typeof iso._movePlayerOnMap === 'function') {
+                            var walked = _agentWalkOntoDoor(doorHere, nearDir);
+                            if (walked) {
+                                window.__agentLastNav = { at: Date.now(),
+                                    stage: 'walk_to_door_by_direction', from_map: here,
+                                    to_map: nearDir != null ? Number(nearDir) : null,
+                                    direction: dir, cell: doorHere };
+                                return _agentResult(true, { from_map: here,
+                                    to_map: nearDir != null ? Number(nearDir) : null,
+                                    direction: dir, cell: doorHere,
+                                    via: 'isoEngine._movePlayerOnMap (door, no exit cell)'
+                                        + (_agentDoorStepOff
+                                            ? ' (door step off then on)' : ''),
+                                    unverified: true });
+                            }
+                        }
                         if (nearDir != null && !(tutorialActive && tutorial.can_change_map
                                 && tutorial.can_change_map[dir] === false)
                                 && typeof iso._requestMapChange === 'function') {
@@ -8753,11 +8934,18 @@
                             iso._requestMapChange(Number(nearDir), dir);
                             return _agentResult(true, { from_map: here,
                                 to_map: Number(nearDir), direction: dir,
-                                via: 'isoEngine._requestMapChange (no exit cell published)' });
+                                via: 'isoEngine._requestMapChange (no exit cell published)',
+                                unverified: true });
                         }
                         return _agentResult(false, { map_id: here, direction: dir,
-                            exits: exits, neighbours: details.neighbours },
-                            'no exit to the ' + dir + ' on map ' + here);
+                            exits: exits, neighbours: details.neighbours,
+                            doors: details.doors },
+                            'no exit to the ' + dir + ' on map ' + here
+                            + (details.doors && details.doors.length
+                                ? '; its doors are at cell '
+                                  + details.doors.map(function (dd) {
+                                      return dd.cell + '->' + dd.to_map;
+                                  }).join(', ') : '; it publishes no door either'));
                     }
                     wantMap = Number(edge.map_id);
                 }
@@ -8771,49 +8959,16 @@
                         // whole request. Checked before the neighbour fallback because
                         // a door names a destination, not a map edge.
                         var doorCell = _agentDoorFor(here, wantMap);
-                        if (doorCell != null && iso
-                                && typeof iso._movePlayerOnMap === 'function') {
-                            try {
-                                var doorHint = function () {
-                                    window.__agentDoorHint = { at: Date.now(), map: here,
-                                        cell: doorCell };
-                                    try { _agentDoorHint = window.__agentDoorHint; } catch (eH) {}
-                                };
-                                if (Number(doorCell) === Number(details.cell)) {
-                                    // Standing on the door does not trigger it; stepping
-                                    // onto it does. A transition lands the character on
-                                    // the door cell, so the next "leave" would be a
-                                    // no-op without stepping off first (2026-10-29).
-                                    var off = _agentStepOffCell(doorCell, null);
-                                    if (off != null) {
-                                        doorHint();
-                                        window.__agentLastNav = { at: Date.now(),
-                                            stage: 'door_step_off', from_map: here,
-                                            to_map: Number(wantMap), cell: doorCell };
-                                        iso._movePlayerOnMap(off, false, function () {
-                                            setTimeout(function () {
-                                                doorHint();
-                                                iso._movePlayerOnMap(doorCell, false,
-                                                    function () {});
-                                            }, 700);
-                                        });
-                                        return _agentResult(true, { from_map: here,
-                                            to_map: Number(wantMap), cell: doorCell,
-                                            via: 'isoEngine._movePlayerOnMap (door step off then on)' });
-                                    }
-                                }
-                                doorHint();
-                                window.__agentLastNav = { at: Date.now(),
-                                    stage: 'walk_to_door', from_map: here,
-                                    to_map: Number(wantMap), cell: doorCell };
-                                var doorWalk = iso._movePlayerOnMap(doorCell, false,
-                                    function () {});
-                                if (doorWalk != null) {
-                                    return _agentResult(true, { from_map: here,
-                                        to_map: Number(wantMap), cell: doorCell,
-                                        via: 'isoEngine._movePlayerOnMap (remembered door cell)' });
-                                }
-                            } catch (eDoor) {}
+                        if (doorCell != null && _agentWalkOntoDoor(doorCell, wantMap)) {
+                            window.__agentLastNav = { at: Date.now(),
+                                stage: 'walk_to_door', from_map: here,
+                                to_map: Number(wantMap), cell: doorCell };
+                            return _agentResult(true, { from_map: here,
+                                to_map: Number(wantMap), cell: doorCell,
+                                via: 'isoEngine._movePlayerOnMap (remembered door cell)'
+                                    + (_agentDoorStepOff
+                                        ? ' (door step off then on)' : ''),
+                                unverified: true });
                         }
                         // Same doorless-interior case, addressed by map id: the target
                         // is a known neighbour but the client published no cell for it.
@@ -9054,6 +9209,34 @@
                         }
                     });
                     if (walked == null) {
+                        // The client's adjacency form is the one that fails live:
+                        // `noPath:242:269` while cells 243/241/258/289 beside the same
+                        // target all take a walk. Fall back to walking onto a free
+                        // neighbour ourselves, nearest first, and say which cell it was.
+                        if (stopAdjacent) {
+                            var besideNav = _agentWalkBeside(wantCell, null);
+                            if (besideNav != null) {
+                                walkOutcome.cell = besideNav;
+                                walkOutcome.adjacent_to = wantCell;
+                                walkOutcome.via = 'walk beside (neighbour of the target)';
+                                window.__agentLastNav = { at: Date.now(),
+                                    stage: 'walking_beside', from_map: here,
+                                    cell: besideNav, adjacent_to: wantCell };
+                                window.__agentDoorHint = { at: Date.now(),
+                                    map: here, cell: besideNav };
+                                try { _agentDoorHint = window.__agentDoorHint; }
+                                catch (eHint2) {}
+                                return _agentResult(true, walkOutcome);
+                            }
+                            var navReport = window.__agentWalkBeside || {};
+                            return _agentResult(false, walkOutcome,
+                                'no path to cell ' + wantCell + ' on map ' + here
+                                + '; free cells beside it: '
+                                + ((navReport.candidates || []).join('/') || 'none')
+                                + (navReport.tried && navReport.tried.length
+                                    ? ' (refused: ' + navReport.tried.join('/') + ')'
+                                    : ''));
+                        }
                         return _agentResult(false, walkOutcome,
                             'no path to cell ' + wantCell + ' on map ' + here);
                     }
@@ -11161,14 +11344,37 @@
                         talkData.via = 'walking to npc then talking';
                         return _agentResult(true, talkData);
                     }
-                    if (walkError) {
-                        window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
-                            npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
-                            map_id: mapId, npc_cell: npcCell, my_cell: myCell,
-                            error: walkError };
-                        return _agentResult(false, talkData,
-                            'could not walk next to npc ' + npc.templateId + ': ' + walkError);
+                    // The client's adjacency form refused -- `noPath:<me>:<npc>` on a
+                    // map where the NPC is two cells away, twelve times in one live run.
+                    // Do the same job with the form that is verified to work: walk to a
+                    // free cell beside the NPC, nearest first, and talk from there.
+                    var beside = _agentWalkBeside(npcCell, doTalk);
+                    if (beside != null) {
+                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_beside',
+                            npc_template: npc.templateId,
+                            npc_contextual_id: npc.contextualId, map_id: mapId,
+                            npc_cell: npcCell, my_cell: myCell, beside_cell: beside,
+                            client_error: walkError };
+                        talkData.via = 'walking beside npc then talking';
+                        talkData.beside_cell = beside;
+                        return _agentResult(true, talkData);
                     }
+                    // Nothing beside it would take a walk either. Say which cells were
+                    // free and which were tried, so the caller learns a fact about this
+                    // spot instead of the word "noPath".
+                    var besideReport = window.__agentWalkBeside || {};
+                    window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
+                        npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
+                        map_id: mapId, npc_cell: npcCell, my_cell: myCell,
+                        error: walkError, free_beside: besideReport.candidates || [],
+                        tried_beside: besideReport.tried || [] };
+                    return _agentResult(false, talkData,
+                        'could not walk next to npc ' + npc.templateId + ': '
+                        + (walkError || 'the client returned no path')
+                        + '; free cells beside it: '
+                        + ((besideReport.candidates || []).join('/') || 'none')
+                        + (besideReport.tried && besideReport.tried.length
+                            ? ' (refused: ' + besideReport.tried.join('/') + ')' : ''));
                 }
                 // No movement API or no path: report the honest failure instead of
                 // sending a talk the server will ignore from this distance.

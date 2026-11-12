@@ -1,0 +1,22 @@
+unique boards: 298
+enemy spellbooks filled: 73
+A (as recorded) stats: {'asked': 7, 'fired': 7}
+B (spellbook filled) stats: {'asked': 13, 'fired': 13}
+
+actionable in both arms: 124
+actionable AND value_ready: A 15 -> B 37
+emitted actions changed: 1
+  board 271
+    A {"cell": 524, "spellId": 61, "targetId": -1, "type": "cast"}
+    B {"cell": 484, "path": [513, 498, 484], "type": "move"}
+whole plans changed: 3
+  board 260
+    A {"actions": [["cast", 61, -1, 425, null], ["cast", 61, -2, 425, null]], "final_cell": 425}
+    B {"actions": [["cast", 61, -1, 425, null], ["cast", 61, -2, 439, null]], "final_cell": 439}
+  board 270
+    A {"actions": [["cast", 61, -1, 513, null], ["cast", 61, -1, 513, null]], "final_cell": 513}
+    B {"actions": [["cast", 61, -1, 513, null], ["cast", 63, -1, 484, null]], "final_cell": 484}
+  board 271
+    A {"actions": [["cast", 61, -1, 513, null]], "final_cell": 513}
+    B {"actions": [["cast", 63, -1, 484, null]], "final_cell": 484}
+errors: Counter() Counter()

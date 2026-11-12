@@ -932,6 +932,12 @@ class LivePolicy:
                          "action": None, "latency_ms": round(
                              (time.perf_counter() - started) * 1000.0, 1)})
             return base
+        # The critic may only rank when its own inputs are complete (the enemy's
+        # spells are loaded); otherwise the solver's choice stands. This is read
+        # before the solver-first branch, not after it: that branch returns, so an
+        # assignment below it never ran on the default path and `_value_choice`
+        # saw the `__init__` False on every live turn.
+        self._value_ready = bool(contract.get("value_ready"))
         # Solver-first: play the deterministic plan a good player would. The
         # actor path below is the fallback for a turn the solver cannot express.
         if self._solver_first():
@@ -962,9 +968,6 @@ class LivePolicy:
                 int(board.round or 0))
             move, spell_slot, target_slot, probability, value = self._choose(
                 logits, masks)
-            # The critic may only rank when its own inputs are complete (the
-            # enemy's spells are loaded); otherwise the solver's choice stands.
-            self._value_ready = bool(contract.get("value_ready"))
             action, fallback, reason = self._realize(
                 board, spell_slot, target_slot, move, slots, targets)
             # A turn that ends with AP in hand and a legal cast on the board is a

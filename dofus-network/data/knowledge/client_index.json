@@ -1,40 +1,40 @@
 {
  "manifest": {
-  "checked_at": "2026-11-11T21:03:06",
+  "checked_at": "2026-11-12T13:39:34",
   "conflicts": {},
   "fields": {
    "map_id": {
-    "pct": 53.4,
-    "present": 39,
-    "total": 73
+    "pct": 64.2,
+    "present": 61,
+    "total": 95
    },
    "params": {
-    "pct": 94.5,
-    "present": 69,
-    "total": 73
+    "pct": 95.8,
+    "present": 91,
+    "total": 95
    },
    "quest_name": {
-    "pct": 94.5,
-    "present": 69,
-    "total": 73
+    "pct": 95.8,
+    "present": 91,
+    "total": 95
    },
    "step_id": {
-    "pct": 94.5,
-    "present": 69,
-    "total": 73
+    "pct": 95.8,
+    "present": 91,
+    "total": 95
    },
    "text": {
-    "pct": 75.3,
-    "present": 55,
-    "total": 73
+    "pct": 67.4,
+    "present": 64,
+    "total": 95
    },
    "type_id": {
-    "pct": 94.5,
-    "present": 69,
-    "total": 73
+    "pct": 95.8,
+    "present": 91,
+    "total": 95
    }
   },
-  "index_sha256": "bc5c4963fe7f14afc2d635c290ee02cd7ec45c7cf7282e92331eb5b7fa1d64c3",
+  "index_sha256": "1e23d3ef1719bc4bd83988b16e644dbf11a2d3dd04e34aba5a58b1672f0fc3a1",
   "logs": [
    {
     "mtime": 1794171216,
@@ -42,9 +42,9 @@
     "size": 67134173
    },
    {
-    "mtime": 1794326341,
+    "mtime": 1794444946,
     "name": "dofus-01.jsonl",
-    "size": 20667863
+    "size": 43904466
    },
    {
     "mtime": 1793261963,
@@ -52,19 +52,19 @@
     "size": 67106196
    },
    {
-    "mtime": 1793966328,
+    "mtime": 1794432562,
     "name": "dofus-02.jsonl",
-    "size": 4337125
+    "size": 4446759
    },
    {
-    "mtime": 1793966372,
+    "mtime": 1794432738,
     "name": "dofus-03.jsonl",
-    "size": 23285420
+    "size": 25420810
    },
    {
-    "mtime": 1794029336,
+    "mtime": 1794432734,
     "name": "dofus-04.jsonl",
-    "size": 11523818
+    "size": 28186590
    },
    {
     "mtime": 1793293670,
@@ -97,21 +97,22 @@
    4276,
    4278,
    4280,
+   4282,
    4604,
    4644
   ],
-  "rows": 73,
+  "rows": 95,
   "sources": {
-   "catalog": 69,
-   "current": 38,
-   "ready": 58,
-   "step": 44
+   "catalog": 91,
+   "current": 45,
+   "ready": 67,
+   "step": 52
   },
   "unbound_step_objectives_seen": 217
  },
  "rows": {
   "3841:13491": {
-   "captures": 7267,
+   "captures": 7584,
    "field_sources": {
     "params": [
      "catalog",
@@ -153,7 +154,7 @@
     ]
    },
    "first_at": 1792791189.141,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -182,7 +183,7 @@
    "type_id": 0
   },
   "3841:13493": {
-   "captures": 12754,
+   "captures": 13071,
    "field_sources": {
     "params": [
      "catalog",
@@ -224,7 +225,7 @@
     ]
    },
    "first_at": 1792791193.237,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -253,7 +254,7 @@
    "type_id": 0
   },
   "3841:13495": {
-   "captures": 7553,
+   "captures": 7870,
    "field_sources": {
     "params": [
      "catalog",
@@ -295,7 +296,7 @@
     ]
    },
    "first_at": 1792791197.57,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -324,7 +325,7 @@
    "type_id": 4
   },
   "3841:13499": {
-   "captures": 13394,
+   "captures": 13711,
    "field_sources": {
     "params": [
      "catalog",
@@ -366,7 +367,7 @@
     ]
    },
    "first_at": 1792802636.865,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -396,7 +397,7 @@
    "type_id": 6
   },
   "3841:13505": {
-   "captures": 7367,
+   "captures": 7684,
    "field_sources": {
     "params": [
      "catalog",
@@ -438,7 +439,7 @@
     ]
    },
    "first_at": 1792820866.024,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -467,7 +468,7 @@
    "type_id": 0
   },
   "3841:13507": {
-   "captures": 8156,
+   "captures": 8473,
    "field_sources": {
     "params": [
      "catalog",
@@ -509,7 +510,7 @@
     ]
    },
    "first_at": 1792867760.483,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -538,7 +539,7 @@
    "type_id": 0
   },
   "3841:13531": {
-   "captures": 7433,
+   "captures": 7750,
    "field_sources": {
     "params": [
      "catalog",
@@ -580,7 +581,7 @@
     ]
    },
    "first_at": 1792939111.251,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -609,7 +610,7 @@
    "type_id": 0
   },
   "3841:13537": {
-   "captures": 12872,
+   "captures": 13390,
    "field_sources": {
     "params": [
      "catalog",
@@ -651,7 +652,7 @@
     ]
    },
    "first_at": 1793007293.077,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -680,7 +681,7 @@
    "type_id": 0
   },
   "3841:13539": {
-   "captures": 7313,
+   "captures": 7642,
    "field_sources": {
     "params": [
      "catalog",
@@ -722,7 +723,7 @@
     ]
    },
    "first_at": 1793110977.674,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -751,7 +752,7 @@
    "type_id": 0
   },
   "3841:13541": {
-   "captures": 8399,
+   "captures": 8716,
    "field_sources": {
     "params": [
      "catalog",
@@ -793,7 +794,7 @@
     ]
    },
    "first_at": 1792846358.253,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -822,7 +823,7 @@
    "type_id": 4
   },
   "3841:13543": {
-   "captures": 12155,
+   "captures": 12472,
    "field_sources": {
     "params": [
      "catalog",
@@ -864,7 +865,7 @@
     ]
    },
    "first_at": 1792876561.56,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -894,7 +895,7 @@
    "type_id": 6
   },
   "3841:13922": {
-   "captures": 10022,
+   "captures": 10339,
    "field_sources": {
     "params": [
      "catalog",
@@ -936,7 +937,7 @@
     ]
    },
    "first_at": 1792861051.282,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -965,7 +966,7 @@
    "type_id": 1
   },
   "3841:13924": {
-   "captures": 7817,
+   "captures": 8134,
    "field_sources": {
     "params": [
      "catalog",
@@ -1007,7 +1008,7 @@
     ]
    },
    "first_at": 1792820876.823,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1036,7 +1037,7 @@
    "type_id": 1
   },
   "3841:14056": {
-   "captures": 7352,
+   "captures": 7669,
    "field_sources": {
     "params": [
      "catalog",
@@ -1078,7 +1079,7 @@
     ]
    },
    "first_at": 1792876556.672,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1107,7 +1108,7 @@
    "type_id": 1
   },
   "3841:14058": {
-   "captures": 7314,
+   "captures": 7631,
    "field_sources": {
     "params": [
      "catalog",
@@ -1144,7 +1145,7 @@
     ]
    },
    "first_at": 1792876556.672,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1172,57 +1173,7 @@
    "type_id": 0
   },
   "3841:14060": {
-   "captures": 7238,
-   "field_sources": {
-    "params": [
-     "catalog"
-    ],
-    "quest_name": [
-     "catalog"
-    ],
-    "step_description": [
-     "catalog"
-    ],
-    "step_id": [
-     "catalog"
-    ],
-    "step_name": [
-     "catalog"
-    ],
-    "type": [
-     "catalog"
-    ],
-    "type_id": [
-     "catalog"
-    ]
-   },
-   "first_at": 1793110977.674,
-   "last_at": 1794029336.97,
-   "logs": [
-    "default.jsonl",
-    "dofus-01.20261108-205337-063447.jsonl",
-    "dofus-02.20261029-022349-419629.jsonl",
-    "dofus-02.jsonl",
-    "dofus-03.jsonl",
-    "dofus-04.jsonl"
-   ],
-   "objective_id": 14060,
-   "params": {
-    "parameter0": 713846
-   },
-   "quest_id": 3841,
-   "quest_name": "Getting Started",
-   "sources": [
-    "catalog"
-   ],
-   "step_description": "Open the World Map.",
-   "step_id": 4968,
-   "step_name": "Open the World Map",
-   "type": "QuestObjectiveFreeForm",
-   "type_id": 0
-  },
-  "3841:14062": {
-   "captures": 7670,
+   "captures": 7561,
    "field_sources": {
     "params": [
      "catalog",
@@ -1264,7 +1215,78 @@
     ]
    },
    "first_at": 1793110977.674,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-04.jsonl"
+   ],
+   "objective_id": 14060,
+   "params": {
+    "parameter0": 713846
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Open the World Map.",
+   "step_id": 4968,
+   "step_name": "Open the World Map",
+   "text": "Open the World Map.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14062": {
+   "captures": 8686,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -1293,7 +1315,7 @@
    "type_id": 0
   },
   "3841:14070": {
-   "captures": 23141,
+   "captures": 23488,
    "field_sources": {
     "params": [
      "catalog",
@@ -1335,7 +1357,7 @@
     ]
    },
    "first_at": 1792939113.41,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1364,7 +1386,7 @@
    "type_id": 0
   },
   "3841:14072": {
-   "captures": 7877,
+   "captures": 8197,
    "field_sources": {
     "params": [
      "catalog",
@@ -1406,7 +1428,7 @@
     ]
    },
    "first_at": 1793007292.277,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -1435,7 +1457,7 @@
    "type_id": 0
   },
   "3841:14074": {
-   "captures": 8711,
+   "captures": 9028,
    "field_sources": {
     "params": [
      "catalog",
@@ -1477,7 +1499,7 @@
     ]
    },
    "first_at": 1793110977.674,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -1506,7 +1528,7 @@
    "type_id": 0
   },
   "3841:14076": {
-   "captures": 7289,
+   "captures": 7606,
    "field_sources": {
     "params": [
      "catalog",
@@ -1548,7 +1570,7 @@
     ]
    },
    "first_at": 1793110977.674,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -1577,7 +1599,7 @@
    "type_id": 0
   },
   "3841:14080": {
-   "captures": 7328,
+   "captures": 7645,
    "field_sources": {
     "params": [
      "catalog",
@@ -1619,7 +1641,7 @@
     ]
    },
    "first_at": 1792939112.169,
-   "last_at": 1794029336.97,
+   "last_at": 1794432734.88,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1648,7 +1670,7 @@
    "type_id": 0
   },
   "4260:13900": {
-   "captures": 3236,
+   "captures": 3255,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1684,7 +1706,7 @@
     ]
    },
    "first_at": 1792966970.81,
-   "last_at": 1794029336.97,
+   "last_at": 1794431840.071,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
@@ -1711,7 +1733,7 @@
    "type_id": 1
   },
   "4260:13902": {
-   "captures": 1999,
+   "captures": 2025,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1747,7 +1769,7 @@
     ]
    },
    "first_at": 1793006949.651,
-   "last_at": 1794029336.97,
+   "last_at": 1794431840.071,
    "logs": [
     "default.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
@@ -1773,7 +1795,7 @@
    "type_id": 0
   },
   "4260:14078": {
-   "captures": 790,
+   "captures": 819,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1809,7 +1831,7 @@
     ]
    },
    "first_at": 1793007292.277,
-   "last_at": 1794029336.97,
+   "last_at": 1794431840.071,
    "logs": [
     "default.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
@@ -1835,7 +1857,7 @@
    "type_id": 0
   },
   "4262:13930": {
-   "captures": 2627,
+   "captures": 2888,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1883,14 +1905,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13930,
@@ -1913,7 +1935,7 @@
    "type_id": 4
   },
   "4262:13932": {
-   "captures": 2380,
+   "captures": 2678,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1955,14 +1977,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13932,
@@ -1984,7 +2006,7 @@
    "type_id": 1
   },
   "4262:13934": {
-   "captures": 2347,
+   "captures": 2586,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2026,14 +2048,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "max_completion": 1,
    "objective_id": 13934,
@@ -2055,7 +2077,7 @@
    "type_id": 14
   },
   "4262:13936": {
-   "captures": 2347,
+   "captures": 2586,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2097,14 +2119,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "max_completion": 1,
    "objective_id": 13936,
@@ -2126,7 +2148,7 @@
    "type_id": 14
   },
   "4262:13938": {
-   "captures": 2347,
+   "captures": 2586,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2168,14 +2190,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "max_completion": 1,
    "objective_id": 13938,
@@ -2197,7 +2219,7 @@
    "type_id": 14
   },
   "4262:13940": {
-   "captures": 2989,
+   "captures": 3382,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2245,14 +2267,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13940,
@@ -2275,7 +2297,7 @@
    "type_id": 0
   },
   "4262:13942": {
-   "captures": 2321,
+   "captures": 2560,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2323,14 +2345,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13942,
@@ -2353,7 +2375,7 @@
    "type_id": 1
   },
   "4262:13944": {
-   "captures": 2306,
+   "captures": 2545,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2401,14 +2423,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13944,
@@ -2432,7 +2454,7 @@
    "type_id": 6
   },
   "4262:13946": {
-   "captures": 2299,
+   "captures": 2538,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2480,14 +2502,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145489920,
    "objective_id": 13946,
@@ -2510,7 +2532,7 @@
    "type_id": 1
   },
   "4262:13948": {
-   "captures": 2823,
+   "captures": 3062,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2558,14 +2580,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490432,
    "objective_id": 13948,
@@ -2588,7 +2610,7 @@
    "type_id": 0
   },
   "4262:13950": {
-   "captures": 2078,
+   "captures": 2317,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2636,14 +2658,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490944,
    "objective_id": 13950,
@@ -2666,7 +2688,7 @@
    "type_id": 0
   },
   "4262:13952": {
-   "captures": 2035,
+   "captures": 2274,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2714,14 +2736,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490944,
    "objective_id": 13952,
@@ -2744,7 +2766,7 @@
    "type_id": 1
   },
   "4262:13954": {
-   "captures": 1936,
+   "captures": 2175,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2792,14 +2814,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490944,
    "objective_id": 13954,
@@ -2822,7 +2844,7 @@
    "type_id": 1
   },
   "4262:13956": {
-   "captures": 1933,
+   "captures": 2172,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2870,14 +2892,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490944,
    "objective_id": 13956,
@@ -2900,7 +2922,7 @@
    "type_id": 0
   },
   "4262:13958": {
-   "captures": 2420,
+   "captures": 2659,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2948,14 +2970,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794164119.851,
+   "last_at": 1794432734.88,
    "logs": [
     "default.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
+    "dofus-04.jsonl"
    ],
    "map_id": 145490435,
    "objective_id": 13958,
@@ -2978,7 +3000,7 @@
    "type_id": 0
   },
   "4264:13960": {
-   "captures": 1445,
+   "captures": 1855,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3020,14 +3042,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13960,
@@ -3049,7 +3071,7 @@
    "type_id": 0
   },
   "4264:13962": {
-   "captures": 1029,
+   "captures": 1336,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3091,14 +3113,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13962,
@@ -3121,7 +3143,7 @@
    "type_id": 6
   },
   "4264:13964": {
-   "captures": 1038,
+   "captures": 1277,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3163,14 +3185,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13964,
@@ -3192,7 +3214,7 @@
    "type_id": 0
   },
   "4264:13966": {
-   "captures": 1547,
+   "captures": 1786,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3240,14 +3262,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13966,
@@ -3271,7 +3293,7 @@
    "type_id": 6
   },
   "4264:13968": {
-   "captures": 1015,
+   "captures": 1254,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -3299,14 +3321,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13968,
@@ -3325,7 +3347,7 @@
    "type_id": 1
   },
   "4264:13970": {
-   "captures": 1041,
+   "captures": 1280,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3361,14 +3383,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13970,
@@ -3390,7 +3412,7 @@
    "type_id": 6
   },
   "4264:13972": {
-   "captures": 1015,
+   "captures": 1254,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -3418,14 +3440,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13972,
@@ -3444,7 +3466,7 @@
    "type_id": 9
   },
   "4264:13974": {
-   "captures": 1015,
+   "captures": 1254,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -3472,14 +3494,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490946,
    "objective_id": 13974,
@@ -3498,7 +3520,7 @@
    "type_id": 1
   },
   "4264:13976": {
-   "captures": 1015,
+   "captures": 1254,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -3526,14 +3548,14 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793296238.721,
+   "last_at": 1794432734.88,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl",
-    "dofus-05.jsonl"
+    "dofus-04.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490435,
    "objective_id": 13976,
@@ -3581,7 +3603,7 @@
    ]
   },
   "4274:13926": {
-   "captures": 1988,
+   "captures": 2084,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3617,10 +3639,11 @@
     ]
    },
    "first_at": 1793007310.422,
-   "last_at": 1793240156.059,
+   "last_at": 1794431949.262,
    "logs": [
     "default.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-04.jsonl",
     "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490435,
@@ -3642,7 +3665,7 @@
    "type_id": 1
   },
   "4274:13928": {
-   "captures": 149,
+   "captures": 210,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3678,9 +3701,10 @@
     ]
    },
    "first_at": 1793232517.606,
-   "last_at": 1793240156.059,
+   "last_at": 1794431949.262,
    "logs": [
     "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-04.jsonl",
     "dofus-05.20261029-170756-782023.jsonl"
    ],
    "map_id": 145490435,
@@ -3702,7 +3726,7 @@
    "type_id": 1
   },
   "4276:13978": {
-   "captures": 1279,
+   "captures": 1932,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3750,7 +3774,7 @@
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -3776,7 +3800,7 @@
    "type_id": 0
   },
   "4276:13980": {
-   "captures": 1130,
+   "captures": 1783,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3824,7 +3848,7 @@
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -3850,7 +3874,7 @@
    "type_id": 4
   },
   "4276:13982": {
-   "captures": 1255,
+   "captures": 1908,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3898,7 +3922,7 @@
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -3924,7 +3948,7 @@
    "type_id": 1
   },
   "4276:13998": {
-   "captures": 1959,
+   "captures": 2612,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -3972,7 +3996,7 @@
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -3998,13 +4022,19 @@
    "type_id": 45
   },
   "4276:14000": {
-   "captures": 588,
+   "captures": 1295,
    "field_sources": {
     "map_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4013,20 +4043,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4039,22 +4083,32 @@
    "quest_id": 4276,
    "quest_name": "Witch Hunt",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
    "step_id": 4958,
    "step_name": "Witch Hunt",
+   "text": "Talk to Belladonna",
    "type": "QuestObjectiveGoToNpc",
    "type_id": 1
   },
   "4276:14002": {
-   "captures": 588,
+   "captures": 1228,
    "field_sources": {
     "map_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4063,20 +4117,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4089,22 +4157,32 @@
    "quest_id": 4276,
    "quest_name": "Witch Hunt",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
    "step_id": 4958,
    "step_name": "Witch Hunt",
+   "text": "Talk to Ayin Spyr",
    "type": "QuestObjectiveGoToNpc",
    "type_id": 1
   },
   "4276:14004": {
-   "captures": 588,
+   "captures": 1337,
    "field_sources": {
     "map_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4113,20 +4191,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4139,22 +4231,32 @@
    "quest_id": 4276,
    "quest_name": "Witch Hunt",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
    "step_id": 4958,
    "step_name": "Witch Hunt",
+   "text": "Tell Great Jarl Ordyn that you were victorious.",
    "type": "QuestObjectiveFreeForm",
    "type_id": 0
   },
   "4276:14006": {
-   "captures": 588,
+   "captures": 1428,
    "field_sources": {
     "map_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4163,20 +4265,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4189,22 +4305,32 @@
    "quest_id": 4276,
    "quest_name": "Witch Hunt",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
    "step_id": 4958,
    "step_name": "Witch Hunt",
+   "text": "Participate in the Albuera village festival in the inn.",
    "type": "QuestObjectiveFreeForm",
    "type_id": 0
   },
   "4276:14008": {
-   "captures": 588,
+   "captures": 1161,
    "field_sources": {
     "map_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4213,20 +4339,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794164121.838,
-   "last_at": 1794226337.912,
+   "last_at": 1794433230.364,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4239,24 +4379,30 @@
    "quest_id": 4276,
    "quest_name": "Witch Hunt",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
    "step_id": 4958,
    "step_name": "Witch Hunt",
+   "text": "Talk to Ayin Spyr when you want to sail away.",
    "type": "QuestObjectiveFreeForm",
    "type_id": 0
   },
   "4278:13984": {
-   "captures": 914,
+   "captures": 1673,
    "field_sources": {
     "map_id": [
      "catalog",
-     "ready"
+     "ready",
+     "step"
     ],
     "params": [
      "catalog",
-     "ready"
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4266,25 +4412,29 @@
     ],
     "step_id": [
      "catalog",
-     "ready"
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
     "text": [
-     "ready"
+     "ready",
+     "step"
     ],
     "type": [
      "catalog",
-     "ready"
+     "ready",
+     "step"
     ],
     "type_id": [
      "catalog",
-     "ready"
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794169909.363,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4298,7 +4448,8 @@
    "quest_name": "Slay Dungeons for Glory!",
    "sources": [
     "catalog",
-    "ready"
+    "ready",
+    "step"
    ],
    "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
    "step_id": 4960,
@@ -4308,7 +4459,7 @@
    "type_id": 45
   },
   "4278:13986": {
-   "captures": 589,
+   "captures": 1130,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -4336,7 +4487,7 @@
     ]
    },
    "first_at": 1792734929.565,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -4361,10 +4512,13 @@
    "type_id": 1
   },
   "4278:14068": {
-   "captures": 457,
+   "captures": 1975,
    "field_sources": {
     "params": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "quest_name": [
      "catalog"
@@ -4373,20 +4527,34 @@
      "catalog"
     ],
     "step_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "step_name": [
      "catalog"
     ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
     "type": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ],
     "type_id": [
-     "catalog"
+     "catalog",
+     "current",
+     "ready",
+     "step"
     ]
    },
    "first_at": 1794169909.363,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.20261108-205337-063447.jsonl",
     "dofus-01.jsonl"
@@ -4398,16 +4566,20 @@
    "quest_id": 4278,
    "quest_name": "Slay Dungeons for Glory!",
    "sources": [
-    "catalog"
+    "catalog",
+    "current",
+    "ready",
+    "step"
    ],
    "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
    "step_id": 4960,
    "step_name": "Slay Dungeons for Glory!",
+   "text": "Find the Astrub City area.",
    "type": "QuestObjectiveDiscoverSubArea",
    "type_id": 5
   },
   "4278:14090": {
-   "captures": 461,
+   "captures": 1002,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -4435,7 +4607,7 @@
     ]
    },
    "first_at": 1792780059.247,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "dofus-01.20261108-205337-063447.jsonl",
@@ -4459,7 +4631,7 @@
    "type_id": 0
   },
   "4280:13988": {
-   "captures": 842,
+   "captures": 1383,
    "field_sources": {
     "params": [
      "catalog",
@@ -4491,7 +4663,7 @@
     ]
    },
    "first_at": 1794171224.843,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.jsonl"
    ],
@@ -4514,7 +4686,7 @@
    "type_id": 6
   },
   "4280:13990": {
-   "captures": 842,
+   "captures": 1383,
    "field_sources": {
     "params": [
      "catalog",
@@ -4546,7 +4718,7 @@
     ]
    },
    "first_at": 1794171224.843,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.jsonl"
    ],
@@ -4569,7 +4741,7 @@
    "type_id": 6
   },
   "4280:13992": {
-   "captures": 842,
+   "captures": 1383,
    "field_sources": {
     "params": [
      "catalog",
@@ -4601,7 +4773,7 @@
     ]
    },
    "first_at": 1794171224.843,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.jsonl"
    ],
@@ -4624,7 +4796,7 @@
    "type_id": 6
   },
   "4280:13994": {
-   "captures": 842,
+   "captures": 1383,
    "field_sources": {
     "params": [
      "catalog",
@@ -4656,7 +4828,7 @@
     ]
    },
    "first_at": 1794171224.843,
-   "last_at": 1794226337.912,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.jsonl"
    ],
@@ -4679,7 +4851,125 @@
    "type_id": 6
   },
   "4280:13996": {
-   "captures": 421,
+   "captures": 1503,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13996,
+   "params": {
+    "parameter0": 3908
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "text": "Talk to Keeper of Belladonna's Dungeon",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4282:14010": {
+   "captures": 418,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145490947,
+   "objective_id": 14010,
+   "params": {
+    "parameter0": 715130
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "text": "Take the boat to Kanojedo Island.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14012": {
+   "captures": 209,
    "field_sources": {
     "map_id": [
      "catalog"
@@ -4706,24 +4996,1004 @@
      "catalog"
     ]
    },
-   "first_at": 1794171224.843,
-   "last_at": 1794226337.912,
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
    "logs": [
     "dofus-01.jsonl"
    ],
-   "map_id": 145752833,
-   "objective_id": 13996,
+   "map_id": 146014208,
+   "objective_id": 14012,
    "params": {
-    "parameter0": 3908
+    "parameter0": 3914
    },
-   "quest_id": 4280,
-   "quest_name": "Quick Clean",
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
    "sources": [
     "catalog"
    ],
-   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
-   "step_id": 4962,
-   "step_name": "Quick Clean",
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4282:14014": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 146014720,
+   "objective_id": 14014,
+   "params": {
+    "parameter0": 712596
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveDiscoverMap",
+   "type_id": 4
+  },
+  "4282:14016": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 146014720,
+   "objective_id": 14016,
+   "params": {
+    "parameter0": 3914
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4282:14018": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 146014465,
+   "objective_id": 14018,
+   "params": {
+    "parameter0": 799218
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14020": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14020,
+   "params": {
+    "parameter0": 771052
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14022": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14022,
+   "params": {
+    "parameter0": 771054
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14024": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14024,
+   "params": {
+    "parameter0": 771056
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14026": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14026,
+   "params": {
+    "parameter0": 771058
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14028": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14028,
+   "params": {
+    "parameter0": 771060
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14030": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14030,
+   "params": {
+    "parameter0": 771062
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14032": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14032,
+   "params": {
+    "parameter0": 771064
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14034": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14034,
+   "params": {
+    "parameter0": 771066
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14036": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14036,
+   "params": {
+    "parameter0": 771068
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14038": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14038,
+   "params": {
+    "parameter0": 771070
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14040": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14040,
+   "params": {
+    "parameter0": 771072
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14042": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14042,
+   "params": {
+    "parameter0": 771074
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14044": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14044,
+   "params": {
+    "parameter0": 771076
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14046": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14046,
+   "params": {
+    "parameter0": 771078
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14048": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148373505,
+   "objective_id": 14048,
+   "params": {
+    "parameter0": 771080
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14050": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752064,
+   "objective_id": 14050,
+   "params": {
+    "parameter0": 716866
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4282:14066": {
+   "captures": 209,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794433237.214,
+   "last_at": 1794444946.779,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 146016001,
+   "objective_id": 14066,
+   "params": {
+    "parameter0": 3916
+   },
+   "quest_id": 4282,
+   "quest_name": "Next Stop: Astrub!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Your adventures in Albuera are coming to a close. All that's left is to get yourself to Kanojedo Island and then to Astrub!",
+   "step_id": 4964,
+   "step_name": "Next Stop: Astrub!",
    "type": "QuestObjectiveGoToNpc",
    "type_id": 1
   },

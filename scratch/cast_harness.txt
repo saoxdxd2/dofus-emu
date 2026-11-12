@@ -1,0 +1,7 @@
+
+== The live fight corpus builder (the sweep's witness for live_data.py) ==
+
+== Every mutation anchor still points at code ==
+
+== The mutation snippet can see the files it mutates ==
+CHECKS=12 FAILURES=0

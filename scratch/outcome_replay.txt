@@ -1,0 +1,18 @@
+fid     oldwon | oldloss newloss newsrc      | oldturn  newturn  wonsrc      | reward same 
+None      True | 0.0    0.0    hp_delta    | None     None     unknown     | None  CHANGED
+124       True | 0.0    0.0    hp_delta    | None     None     server_end  | 1.0        
+124       True | 0.0    0.0    hp_delta    | None     None     unknown     | None  CHANGED
+900       True | 0.0    0.0    hp_delta    | None     1        server_end  | 1.0   CHANGED
+900       True | 0.0    0.0    hp_delta    | None     1        server_end  | 1.0   CHANGED
+1356      True | 0.0    19.0   battle_log  | None     2        server_end  | 1.5   CHANGED
+1358      True | 0.0    0.0    battle_log  | None     2        server_end  | 1.5   CHANGED
+1359      True | 0.0    20.0   battle_log  | None     2        server_end  | 1.25  CHANGED
+1482      True | 0.0    25.0   battle_log  | None     1        server_end  | 1.0   CHANGED
+9349      True | 0.0    11.0   battle_log  | None     2        server_end  | 1.5   CHANGED
+1640      True | 0.0    0.0    battle_log  | None     1        server_end  | 1.25  CHANGED
+1641      True | 0.0    43.0   battle_log  | None     3        server_end  | 1.25  CHANGED
+1825      True | 0.0    0.0    battle_log  | None     1        server_end  | 1.0   CHANGED
+124       True | 0.0    0.0    hp_delta    | None     None     server_end  | 1.0        
+
+resolved rows replayed: 14
+hp_loss changed: 5   turns changed: 10   won changed: 2

@@ -523,7 +523,7 @@ The distinction that matters is not "model vs rules". It is **could the client h
 | kind | example | verdict |
 |---|---|---|
 | **protocol marker** | `position: 63` means not equipped; `-1` means remove; `ObjectSetPositionMessage` | keep. The page exposes numbers and message names; there is nothing to discover |
-| **search budget** | `DIALOG_STALL_LIMIT = 4`, `QUEST_DATA_WAIT_LIMIT = 3`, `MAX_CONSECUTIVE_WAITS = 40` | keep. These are how long to try, not claims about the game |
+| **search budget** | `DIALOG_STALL_LIMIT = 4`, `QUEST_DATA_WAIT_LIMIT = 3`, `MAX_CONSECUTIVE_WAITS = 40`, `MEM_VETO_MIN_FAILURES = 2`, `MEM_VETO_TRIES = 2`, `CROSSING_ASK_LIMIT = 2`, `NAV_WALL_STAGES = {change_requested_no_cell, change_requested_at_edge}` | keep. These are how long to try, not claims about the game. The wall stages are the exception that is a claim: the page's `last_nav` says the border did not work, so that border is spent for the map on the first refusal instead of the second |
 | **game fact we asserted** | `_UI_WINDOWS = {"Bag": "equipment"}`, `"inventaire"` → Bag, `type_id == 0` never claimable | **debt.** The client publishes all three |
 
 The test is simple: *if the page changed the name tomorrow, would the constant be wrong?* A protocol
@@ -861,3 +861,70 @@ the control loop — is rejected above with the reason.
 
 
 ---
+
+---
+
+## 5. The two silent-zero instruments, and the suite that must be in the sweep
+
+> Written 2026-11-12, from the corpus audit that produced G113 and G114.
+
+A key can be wrong in two directions and only one of them is visible in the code.
+
+**Asked for and never present.** `group["monsters"]` against a corpus that carries `members`:
+1,368 asks, 0 hits, four features constant zero for the whole corpus. `.get()` returns `None`,
+`_num(None)` returns `0.0`, and the result looks measured. Instrument:
+`python -m tools.field_audit trajectories/dofus-01.jsonl --limit 0`.
+
+**Carried and never read.** `map.terrain` on every observation, `walk` for 2,696 maps in
+`data/maps/_index.json`: recorded, parsed, dropped. The agent then spent seven live steps asking the
+server a question its own logs answered. Instrument:
+`python -m tools.unread_fields trajectories/*.jsonl --min 5`.
+
+Neither is findable by grep, and both are *measurements*, not opinions -- which is why both tools
+exist rather than a convention. The rule: **before adding a reader for a field, run `field_audit`;
+before concluding a field is missing, run `unread_fields`.** The second one is the cheaper habit,
+because "we do not record that" is usually false.
+
+**A mutation anchor is only as good as the suite that reads it.** The sweep runs a fixed list
+(`SNIPPET`), not the gate, so a new suite that is not in that list leaves every mutation against its
+subject *MISSED* -- measured on 2026-11-12: 671 mutations ran against `planner.py` with no check able
+to see the G112 fixes. Adding a suite to the gate is half the work; the other half is adding it to
+`SNIPPET`, and the proof is a `MUT_ONLY=` run that says `CAUGHT`.
+
+## 6. An instrument must be witnessed by itself, and a scan is not a witness
+
+> Written 2026-11-12, from the fourth measurement in G114.
+
+For eight days the mutation-coverage ratchet asked whether the *name* of each mutated file appeared in
+the *text* of a test body. It reported 24 unwitnessed files out of 77. Re-measured against what the
+tests actually execute, open and spawn: **1 of 77**. Twenty-three of the twenty-four were facts about
+prose -- `planner.py` was "unwitnessed" 66 times because its tests call the planner without spelling
+its path, while `combat/battle_solver.py` was "witnessed" by a comment.
+
+The general rule: **a checker that reads something a human wrote measures the human.** A test body, a
+docstring, a constant, a manifest line -- all of them can be edited into agreement with the checker
+without the system changing at all. Ask the machine for its own record instead: what code ran, what
+file was opened, what process was started. `agent/witness.py` is that record, and it is cheap --
+59.4 s plain against 60.3 s instrumented over the sweep's 125-test snippet.
+
+**An instrument that reports zero must be witnessed by itself.** An empty map and a fully covered map
+look identical to a check that counts entries, which is how the two silent-zero instruments of §5
+survived for weeks. `test_the_witness_instrument_sees_what_a_test_touches` compiles a module into a
+temp directory and proves each channel against *that* path, including the negative case: a file the
+test only wrote is not a read.
+
+**A witness that opens everything is not a witness.** Two suites read 77 and 74 of the 77 targets --
+one of them deliberately opts out of judging inside a sweep, because a mutated file would fail it on
+every arm. Counting either as coverage would rebuild the false comfort the ratchet exists to remove.
+A witness may open at most 90% of the target list; above that it is a scan of the tree, and the
+ratchet names the scans instead of counting them.
+
+**An instrument paid per call may only do per-file work at the end.** The first draft normalised each
+path inside the PY_START callback -- `Path(...).resolve()` on every function call -- and turned a 62 s
+pass into more than twelve minutes before it was killed. The hot path is one set insert of a raw
+filename; normalisation happens once, when the map is read.
+
+**Record the survivors by name, never by count.** `tools/patch-engine.js` is still unwitnessed: five
+mutations, no test touches it, and the only thing that loads it is a delegated `node` run whose argv
+does not name it. `_MUT_UNWITNESSED_KNOWN` holds the path, so the check fails in both directions --
+when a new file joins it, and when someone finally covers it and the record must be tightened.

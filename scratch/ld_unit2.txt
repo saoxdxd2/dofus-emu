@@ -1,0 +1,41 @@
+test_a_board_with_an_empty_log_falls_back_to_the_older_list (combat.test_live_data.LiveLogShapeTests.test_a_board_with_an_empty_log_falls_back_to_the_older_list) ... ok
+test_a_cast_at_another_target_does_not_own_the_damage (combat.test_live_data.LiveLogShapeTests.test_a_cast_at_another_target_does_not_own_the_damage) ... ok
+test_a_cast_from_an_earlier_round_does_not_own_the_damage (combat.test_live_data.LiveLogShapeTests.test_a_cast_from_an_earlier_round_does_not_own_the_damage) ... ok
+test_a_damage_row_with_no_cast_by_its_source_is_not_priced (combat.test_live_data.LiveLogShapeTests.test_a_damage_row_with_no_cast_by_its_source_is_not_priced) ... ok
+test_one_cast_hitting_twice_is_one_cast_with_the_sum (combat.test_live_data.LiveLogShapeTests.test_one_cast_hitting_twice_is_one_cast_with_the_sum) ... ok
+test_our_own_cast_in_the_log_is_not_a_monster_spell (combat.test_live_data.LiveLogShapeTests.test_our_own_cast_in_the_log_is_not_a_monster_spell) ... ok
+test_the_live_shape_prices_a_spell_the_id_join_could_not (combat.test_live_data.LiveLogShapeTests.test_the_live_shape_prices_a_spell_the_id_join_could_not) ... ok
+test_the_same_ring_republished_on_a_later_board_is_not_counted_twice (combat.test_live_data.LiveLogShapeTests.test_the_same_ring_republished_on_a_later_board_is_not_counted_twice) ... ok
+test_the_two_producers_agree_on_the_same_fight (combat.test_live_data.LiveLogShapeTests.test_the_two_producers_agree_on_the_same_fight) ... ok
+test_the_unattributable_damage_is_still_counted (combat.test_live_data.LiveLogShapeTests.test_the_unattributable_damage_is_still_counted) ... FAIL
+test_two_casts_of_one_spell_in_one_round_are_two_hits (combat.test_live_data.LiveLogShapeTests.test_two_casts_of_one_spell_in_one_round_are_two_hits) ... ok
+test_a_cast_id_that_does_not_match_the_loss_id_prices_nothing (combat.test_live_data.MeasuredPayloadShapeTests.test_a_cast_id_that_does_not_match_the_loss_id_prices_nothing) ... ok
+test_the_damage_that_could_not_be_attributed_is_counted (combat.test_live_data.MeasuredPayloadShapeTests.test_the_damage_that_could_not_be_attributed_is_counted) ... ok
+test_a_monster_with_neither_id_nor_name_is_skipped (combat.test_live_data.NameKeyedMonsterTests.test_a_monster_with_neither_id_nor_name_is_skipped) ... ok
+test_a_monster_without_a_species_id_is_keyed_by_name (combat.test_live_data.NameKeyedMonsterTests.test_a_monster_without_a_species_id_is_keyed_by_name) ... ok
+test_a_numeric_id_still_wins_when_the_client_sends_one (combat.test_live_data.NameKeyedMonsterTests.test_a_numeric_id_still_wins_when_the_client_sends_one) ... ok
+test_the_name_key_cannot_be_mistaken_for_a_numeric_id (combat.test_live_data.NameKeyedMonsterTests.test_the_name_key_cannot_be_mistaken_for_a_numeric_id) ... ok
+test_a_board_without_actions_learns_nothing (combat.test_live_data.ObservedDamageTests.test_a_board_without_actions_learns_nothing) ... ok
+test_a_cast_with_no_recorded_loss_is_not_priced (combat.test_live_data.ObservedDamageTests.test_a_cast_with_no_recorded_loss_is_not_priced) ... ok
+test_a_missing_file_returns_empty_datasets (combat.test_live_data.ObservedDamageTests.test_a_missing_file_returns_empty_datasets) ... ok
+test_a_monster_cast_is_priced_from_the_damage_it_dealt (combat.test_live_data.ObservedDamageTests.test_a_monster_cast_is_priced_from_the_damage_it_dealt) ... ok
+test_a_repolled_action_is_not_counted_twice (combat.test_live_data.ObservedDamageTests.test_a_repolled_action_is_not_counted_twice) ... ok
+test_our_own_cast_is_not_a_monster_spell (combat.test_live_data.ObservedDamageTests.test_our_own_cast_is_not_a_monster_spell) ... ok
+test_several_hits_are_averaged_and_the_spread_kept (combat.test_live_data.ObservedDamageTests.test_several_hits_are_averaged_and_the_spread_kept) ... ok
+test_a_fight_with_no_outcome_is_unlabelled_not_borrowed (combat.test_live_data.OutcomeJoinTests.test_a_fight_with_no_outcome_is_unlabelled_not_borrowed) ... ok
+test_the_same_fight_id_in_another_run_does_not_lend_its_verdict (combat.test_live_data.OutcomeJoinTests.test_the_same_fight_id_in_another_run_does_not_lend_its_verdict) ... ok
+test_two_fights_in_one_run_keep_their_own_verdicts (combat.test_live_data.OutcomeJoinTests.test_two_fights_in_one_run_keep_their_own_verdicts) ... ok
+
+======================================================================
+FAIL: test_the_unattributable_damage_is_still_counted (combat.test_live_data.LiveLogShapeTests.test_the_unattributable_damage_is_still_counted)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\combat\test_live_data.py", line 334, in test_the_unattributable_damage_is_still_counted
+    self.assertEqual(ATTRIBUTION["attributed"], 0)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0
+
+----------------------------------------------------------------------
+Ran 27 tests in 0.076s
+
+FAILED (failures=1)

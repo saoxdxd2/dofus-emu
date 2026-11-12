@@ -1,17 +1,18 @@
 {
- "action_move_rate": 31.94,
- "actions": 5879,
- "actions_advance": 69,
+ "action_move_rate": 33.59,
+ "actions": 6324,
+ "actions_advance": 80,
  "actions_advance_by_lag": 1,
- "actions_moved": 1878,
+ "actions_moved": 2124,
  "actions_moved_by_lag": 6,
- "actions_progress": 128,
+ "actions_progress": 151,
  "actions_progress_by_lag": 6,
- "advance_per_hour": 7.9,
+ "advance_per_hour": 8.65,
  "characters": {
-  "4404438": 652,
+  "4404438": 925,
   "4409663": 1480,
-  "4409667": 161,
+  "4409666": 2,
+  "4409667": 328,
   "4422236": 196,
   "4425019": 5223,
   "4434089": 884,
@@ -19,9 +20,9 @@
   "4434148": 1199
  },
  "claim_rule": "the action's own promise, read from its args and the snapshot it returned: nav.goto at:<map> or a step, fight.join in_fight, quest.advance a talk opens a dialog / a reply moves the dialog to another node or changes quest state / accept activates the quest, tap.interactive an effect, inv.equip an inventory change; reads have no claim",
- "claims_derivable": 5600,
- "claims_met": 1507,
- "context_rows": 10405,
+ "claims_derivable": 6026,
+ "claims_met": 1679,
+ "context_rows": 10850,
  "days": {
   "2026-10-22": 48,
   "2026-10-23": 280,
@@ -37,11 +38,13 @@
   "2026-11-07": 66,
   "2026-11-08": 465,
   "2026-11-09": 10,
-  "2026-11-10": 4
+  "2026-11-10": 4,
+  "2026-11-11": 388,
+  "2026-11-12": 57
  },
  "explored_actions": 0,
- "hours": 8.603,
- "instance_days": 32,
+ "hours": 9.135,
+ "instance_days": 37,
  "label_rule": "a change observed in a run of reads is credited to the last acting step; reads never claim a change; a directive the page refused before sending is always a miss (G65)",
  "label_version": 3,
  "labeler_sha": "cbd39ce2dd57",
@@ -51,19 +54,20 @@
   "11": 320,
   "12": 416,
   "13": 74,
+  "15": 273,
   "18": 71,
   "2": 1004,
   "22": 3,
-  "3": 4060,
-  "4": 1967,
-  "5": 106,
+  "3": 4064,
+  "4": 2006,
+  "5": 230,
   "7": 69,
   "8": 153,
   "9": 37
  },
- "mean_step_s": 5.66,
+ "mean_step_s": 5.59,
  "median_step_s": 6.39,
- "moved_per_hour": 212.49,
+ "moved_per_hour": 226.37,
  "nav_form": {
   "cell": {
    "failed_pct": 0.0,
@@ -72,16 +76,16 @@
    "n": 3
   },
   "direction": {
-   "failed_pct": 0.2,
-   "moved": 508,
-   "moved_pct": 26.8,
-   "n": 1893
+   "failed_pct": 0.1,
+   "moved": 554,
+   "moved_pct": 27.2,
+   "n": 2039
   },
   "map": {
    "failed_pct": 0.0,
-   "moved": 350,
-   "moved_pct": 77.8,
-   "n": 450
+   "moved": 413,
+   "moved_pct": 80.4,
+   "n": 514
   }
  },
  "nav_form_by_split": {
@@ -93,16 +97,16 @@
     "n": 1
    },
    "direction": {
-    "failed_pct": 0.8,
-    "moved": 47,
-    "moved_pct": 18.2,
-    "n": 258
+    "failed_pct": 0.4,
+    "moved": 63,
+    "moved_pct": 25.4,
+    "n": 248
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 40,
-    "moved_pct": 46.0,
-    "n": 87
+    "moved": 58,
+    "moved_pct": 50.4,
+    "n": 115
    }
   },
   "train": {
@@ -113,16 +117,16 @@
     "n": 1
    },
    "direction": {
-    "failed_pct": 0.1,
-    "moved": 364,
-    "moved_pct": 25.9,
-    "n": 1408
+    "failed_pct": 0.0,
+    "moved": 424,
+    "moved_pct": 27.4,
+    "n": 1550
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 252,
-    "moved_pct": 88.4,
-    "n": 285
+    "moved": 299,
+    "moved_pct": 93.1,
+    "n": 321
    }
   },
   "val": {
@@ -133,27 +137,28 @@
     "n": 1
    },
    "direction": {
-    "failed_pct": 0.0,
-    "moved": 97,
-    "moved_pct": 42.7,
-    "n": 227
+    "failed_pct": 0.8,
+    "moved": 67,
+    "moved_pct": 27.8,
+    "n": 241
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 58,
-    "moved_pct": 74.4,
+    "moved": 56,
+    "moved_pct": 71.8,
     "n": 78
    }
   }
  },
  "objective_types": {
   "-1": 61,
-  "0": 7845,
-  "1": 343,
+  "0": 8162,
+  "1": 357,
   "4": 194,
   "45": 342,
+  "5": 109,
   "6": 1415,
-  "None": 205
+  "None": 210
  },
  "per_tool": {
   "farm.start": {
@@ -166,7 +171,7 @@
    "n": 86,
    "progress_pct": 1.2,
    "progress_per_hour": 12.14,
-   "time_pct": 1.0
+   "time_pct": 0.9
   },
   "fight.join": {
    "advance_pct": 30.3,
@@ -178,101 +183,113 @@
    "n": 33,
    "progress_pct": 36.4,
    "progress_per_hour": 105.27,
-   "time_pct": 1.3
+   "time_pct": 1.2
   },
   "inv.equip": {
    "advance_pct": 0.0,
    "advance_per_hour": 0.0,
-   "claim_n": 48,
+   "claim_n": 49,
    "claim_pct": 0.0,
    "failed_pct": 0.0,
-   "moved_pct": 2.1,
-   "n": 48,
+   "moved_pct": 2.0,
+   "n": 49,
    "progress_pct": 0.0,
    "progress_per_hour": 0.0,
    "time_pct": 0.1
   },
   "nav.goto": {
-   "advance_pct": 0.7,
-   "advance_per_hour": 3.19,
-   "claim_n": 2346,
-   "claim_pct": 32.9,
+   "advance_pct": 0.8,
+   "advance_per_hour": 3.51,
+   "claim_n": 2556,
+   "claim_pct": 33.3,
    "failed_pct": 0.1,
-   "moved_pct": 36.7,
-   "n": 2346,
-   "progress_pct": 1.1,
-   "progress_per_hour": 4.7,
-   "time_pct": 61.9
+   "moved_pct": 37.9,
+   "n": 2556,
+   "progress_pct": 1.3,
+   "progress_per_hour": 5.62,
+   "time_pct": 62.3
   },
   "quest.advance": {
-   "advance_pct": 1.3,
-   "advance_per_hour": 14.15,
-   "claim_n": 2848,
-   "claim_pct": 25.8,
+   "advance_pct": 1.5,
+   "advance_per_hour": 15.82,
+   "claim_n": 3034,
+   "claim_pct": 27.3,
    "failed_pct": 0.9,
-   "moved_pct": 30.5,
-   "n": 3075,
-   "progress_pct": 2.7,
-   "progress_per_hour": 29.0,
-   "time_pct": 33.7
+   "moved_pct": 32.5,
+   "n": 3274,
+   "progress_pct": 3.0,
+   "progress_per_hour": 31.96,
+   "time_pct": 33.2
   },
   "safe.stop": {
-   "advance_pct": 0.6,
-   "advance_per_hour": 7.85,
-   "claim_n": 175,
+   "advance_pct": 0.5,
+   "advance_per_hour": 6.72,
+   "claim_n": 194,
    "claim_pct": 0.0,
-   "failed_pct": 0.6,
-   "moved_pct": 1.7,
-   "n": 175,
-   "progress_pct": 1.1,
-   "progress_per_hour": 15.7,
-   "time_pct": 1.5
+   "failed_pct": 0.5,
+   "moved_pct": 1.5,
+   "n": 194,
+   "progress_pct": 1.0,
+   "progress_per_hour": 13.44,
+   "time_pct": 1.6
+  },
+  "shop.buy": {
+   "advance_pct": 0.0,
+   "advance_per_hour": 0.0,
+   "claim_n": 0,
+   "claim_pct": null,
+   "failed_pct": 0.0,
+   "moved_pct": 100.0,
+   "n": 1,
+   "progress_pct": 100.0,
+   "progress_per_hour": 6239.17,
+   "time_pct": 0.0
   },
   "tap.interactive": {
    "advance_pct": 0.0,
    "advance_per_hour": 0.0,
-   "claim_n": 59,
-   "claim_pct": 1.7,
+   "claim_n": 67,
+   "claim_pct": 1.5,
    "failed_pct": 0.0,
    "moved_pct": 74.6,
-   "n": 59,
-   "progress_pct": 1.7,
-   "progress_per_hour": 23.19,
+   "n": 67,
+   "progress_pct": 1.5,
+   "progress_per_hour": 22.47,
    "time_pct": 0.5
   },
   "ui.tap": {
-   "advance_pct": 0.0,
-   "advance_per_hour": 0.0,
-   "claim_n": 5,
+   "advance_pct": 1.6,
+   "advance_per_hour": 72.24,
+   "claim_n": 7,
    "claim_pct": 0.0,
-   "failed_pct": 1.8,
-   "moved_pct": 7.0,
-   "n": 57,
-   "progress_pct": 5.3,
-   "progress_per_hour": 254.45,
-   "time_pct": 0.1
+   "failed_pct": 1.6,
+   "moved_pct": 9.4,
+   "n": 64,
+   "progress_pct": 7.8,
+   "progress_per_hour": 361.18,
+   "time_pct": 0.2
   }
  },
- "progress_per_hour": 13.6,
+ "progress_per_hour": 15.32,
  "randomized_actions": 0,
  "reads": 4526,
  "reads_that_saw_a_change": 198,
- "ready_multi_rows": 5793,
- "rows": 10522,
- "rows_built": 10522,
- "segments": 595,
- "span_days": 20,
+ "ready_multi_rows": 6226,
+ "rows": 10967,
+ "rows_built": 10967,
+ "segments": 627,
+ "span_days": 21,
  "split_actions": {
-  "test": 882,
-  "train": 4115,
-  "val": 882
+  "test": 949,
+  "train": 4427,
+  "val": 948
  },
  "split_policy": "hash",
  "split_rows": {
-  "test": 1363,
-  "train": 8029,
-  "val": 1130
+  "test": 1387,
+  "train": 8239,
+  "val": 1341
  },
- "with_observation_pair": 10405,
- "x_coverage_pct": 98.0
+ "with_observation_pair": 10850,
+ "x_coverage_pct": 98.1
 }

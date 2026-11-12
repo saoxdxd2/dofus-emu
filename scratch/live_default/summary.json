@@ -1,0 +1,39 @@
+{
+ "generated_at": "2026-11-12T04:57:50Z",
+ "play_log": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\trajectories\\play_dofus-05.jsonl",
+ "boards": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\fight_boards.jsonl",
+ "casts": 134,
+ "unique_cast_spells": [
+  3,
+  19,
+  61,
+  6906,
+  6908,
+  6910,
+  6916,
+  6918,
+  6920,
+  6924,
+  6942,
+  6944,
+  7119,
+  7141,
+  8813
+ ],
+ "cast_sources": {
+  "4422236": 14,
+  "-1": 18,
+  "-2": 9,
+  "-3": 5,
+  "-4": 5,
+  "4425019": 66,
+  "4434148": 17
+ },
+ "monsters": 8,
+ "observed_damage_spells": 9,
+ "damage_rows_seen": 213,
+ "damage_rows_attributed": 14,
+ "monster_actions": 19,
+ "fights": 19,
+ "elapsed_s": 1.0
+}

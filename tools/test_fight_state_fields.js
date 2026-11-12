@@ -333,5 +333,68 @@ if (actionsBlock) {
         both && both.length === 1 && both[0].spell_id === 1, JSON.stringify(both));
 }
 
+// --- the spell facts block: what `castable` means when the client cannot answer ---
+// `castable: false` removes a spell from every candidate set battle_solver builds, so
+// the AI never considers it. The catch around `canCastThisSpell` used to swallow the
+// exception into that same `false`, which made "the client refused" and "the call
+// threw" the same observation. The recorded corpus cannot show the difference either
+// way -- `castable` is absent from all 1,341 spell rows across the 333 boards, because
+// the field postdates them -- so the distinction has to be pinned by running the block.
+const SPELL_START = 'var prop = function(spell, name, fallback) {';
+const SPELL_END = 'var lastActions = [];';
+const spellBlock = between(SPELL_START, SPELL_END, false);
+check('the spell-facts block is present in fight.state', !!spellBlock,
+    SPELL_START + ' .. ' + SPELL_END + ' not found');
+
+if (spellBlock) {
+    const numStub = (v) => {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(v);
+        return isFinite(n) ? n : null;
+    };
+    const spellStub = (id) => ({
+        id: id, level: 5,
+        spellLevel: {id: 900 + id, effects: [], criticalEffect: []},
+        getProperty: () => null,
+        getSpellLevelId: () => 900 + id,
+        getName: () => 'Spell' + id,
+        isWeapon: () => false
+    });
+    const runSpells = (fm, myId, list) => {
+        const fn = new Function('spellList', 'num', 'text', 'effects', 'fm', 'myId', 'state',
+            spellBlock + '\nreturn state;');
+        return fn(list, numStub, (v) => (v == null ? null : String(v)), () => [],
+                  fm, myId, {spells: []});
+    };
+    const list = {11: spellStub(11), 12: spellStub(12)};
+
+    const yes = runSpells({canCastThisSpell: () => true}, 7, list).spells;
+    check('a spell the client allows is castable',
+        yes.length === 2 && yes[0].castable === true && yes[0].castable_error === null,
+        JSON.stringify(yes[0]));
+
+    const no = runSpells({canCastThisSpell: () => false}, 7, list).spells;
+    check('a spell the client refuses is not castable, and carries no error',
+        no[0].castable === false && no[0].castable_error === null,
+        JSON.stringify(no[0]));
+
+    const threw = runSpells({canCastThisSpell: () => { throw new Error('no fighter'); }},
+                            7, list).spells;
+    check('a castability check that threw is unknown, not refused',
+        threw[0].castable === null, JSON.stringify(threw[0]));
+    check('the reason it could not be answered is recorded',
+        typeof threw[0].castable_error === 'string'
+        && threw[0].castable_error.indexOf('no fighter') >= 0,
+        JSON.stringify(threw[0]));
+    check('one unanswerable spell does not cost the rest of the spellbook',
+        threw.length === 2 && threw[1].id === 12 && threw[1].name === 'Spell12',
+        JSON.stringify(threw));
+
+    let asked = 0;
+    const noId = runSpells({canCastThisSpell: () => { asked++; return true; }}, null, list).spells;
+    check('with no fighter id the client is not asked at all',
+        asked === 0 && noId[0].castable === false, JSON.stringify([asked, noId[0]]));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

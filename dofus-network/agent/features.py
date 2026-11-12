@@ -359,6 +359,94 @@ def map_graph():
     return _MAP_GRAPH
 
 
+MAP_WIDTH = 14
+
+_MAP_WALK: Optional[Dict[int, str]] = None
+
+
+def _map_walk_table() -> Dict[int, str]:
+    """`map id -> walkability bitstring`, from the same file `map_graph` reads.
+
+    One read, one snapshot: a process that routes on one version of the cache and
+    reasons about geometry on another would answer "the border is there" and "there is
+    no cell to stand on" from the same map, which is exactly the contradiction G112
+    was made of.
+    """
+    global _MAP_WALK
+    if _MAP_WALK is None:
+        table: Dict[int, str] = {}
+        path = REPO_ROOT / "data" / "maps" / "_index.json"
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+            except (OSError, ValueError):
+                raw = None
+            entries = []
+            if isinstance(raw, dict):
+                entries = list(raw.items())
+            elif isinstance(raw, list):
+                entries = [(entry.get("id"), entry) for entry in raw
+                           if isinstance(entry, dict)]
+            for key, entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                walk = entry.get("walk")
+                if not isinstance(walk, str) or not walk:
+                    continue
+                try:
+                    table[int(key)] = walk
+                except (TypeError, ValueError):
+                    continue
+        _MAP_WALK = table
+    return _MAP_WALK
+
+
+def map_walk(map_id: Any) -> Optional[str]:
+    """The cached walkability bits for a map, or None when the cache has no geometry.
+
+    `data/maps/_index.json` carries `walk` -- one character per cell, `1` walkable --
+    for every map it holds, and nothing read it: `map_graph()` takes only `neighbours`.
+    Measured 2026-11-12, 2,696 maps had it and the map the character was standing on had
+    no entry at all, so the planner could not tell that its whole border ring was wall
+    and asked the server for four neighbours seven times (G112).
+    """
+    try:
+        mid = int(map_id)
+    except (TypeError, ValueError):
+        return None
+    return _map_walk_table().get(mid)
+
+
+def walkable_border_cells(walk: Optional[str], direction: str,
+                          width: int = MAP_WIDTH) -> List[int]:
+    """Cells on `direction`'s edge that can be stood on, from the cached bitstring.
+
+    The same geometry the page computes before it walks (`_agentBorderCells`): left is
+    every `i % width == 0`, right every `i % width == width - 1`, top the first two
+    rows, bottom the last two. An empty answer means this map has no cell to cross from
+    in that direction -- which is a fact about the map, not about the attempt.
+    """
+    if not isinstance(walk, str) or not walk:
+        return []
+    total = len(walk)
+    out: List[int] = []
+    for index in range(total):
+        if direction == "left":
+            on = index % width == 0
+        elif direction == "right":
+            on = index % width == width - 1
+        elif direction == "top":
+            on = index <= 2 * width
+        elif direction == "bottom":
+            on = index >= total - 2 * width
+        else:
+            return []
+        if on and walk[index] == "1":
+            out.append(index)
+    return out
+
+
 def known_map(map_id: Any) -> bool:
     """Whether `data/maps/_index.json` has this map, so a route can be planned.
 

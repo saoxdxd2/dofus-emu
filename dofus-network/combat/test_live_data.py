@@ -1,10 +1,14 @@
 """What the live builder can learn from a fight board.
 
-The interesting case is a monster whose spellbook the client never publishes. The
-page now records the enemy's casts in `last_actions` and the damage they did in the
-same rows, so the builder can price a monster turn from observation alone. These
-tests use a hand-written board because the recorded corpus predates that fix: it has
-`last_actions: []` on all 333 boards, which is exactly the bug being covered.
+The interesting case is a monster whose spellbook the client never publishes: the
+builder has to price a monster turn from the damage it was seen to deal.
+
+Two producers are covered. `last_actions` is the shape these tests were first
+written against, and it is `[]` on all 333 recorded boards. `battle_log` is the
+list the page actually fills -- 9,573 rows on 162 boards -- and it carries neither
+`action_id` nor `spell_id` on its damage rows, so the id join the first tests
+assume cannot work there. `LiveLogShapeTests` uses the measured keys; the older
+suites stay because the builder still falls back to that list.
 """
 
 from __future__ import annotations
@@ -202,6 +206,190 @@ class MeasuredPayloadShapeTests(unittest.TestCase):
         self._build([_board([self.MEASURED_CAST, self.MEASURED_LOSS])])
         self.assertEqual(ATTRIBUTION["damage_rows"], 1)
         self.assertEqual(ATTRIBUTION["attributed"], 0)
+
+
+def _log_row(kind, **fields):
+    """A `battle_log` row with exactly the 14 keys the live client writes.
+
+    Measured over 9,573 rows on the 333 recorded boards: `type, at_action, source,
+    target, spell, spell_level, cell, effect, critical, delta, value, loss,
+    permanent_damages, shield_loss, fight_id`. No `action_id`, no `spell_id`, no
+    `source_id`, no `destination_cell` -- those are the *other* producer's names,
+    and a fixture written with them tests a client that does not exist.
+    """
+    row = {"type": kind, "at_action": 300, "source": None, "target": None,
+           "spell": None, "spell_level": None, "cell": None, "effect": None,
+           "critical": None, "delta": None, "value": None, "loss": None,
+           "permanent_damages": None, "shield_loss": None, "fight_id": None}
+    row.update(fields)
+    return row
+
+
+LIVE_CAST = _log_row("GameActionFightSpellCastMessage", at_action=300, source=-1,
+                     target=4434090, spell=6908, spell_level=5, effect=0, critical=0)
+LIVE_LOSS = _log_row("GameActionFightLifePointsLostMessage", at_action=97, source=-1,
+                     target=4434090, effect=0, loss=47, permanent_damages=4)
+LIVE_ROUND = _log_row("GameFightNewRoundMessage")
+
+
+def _log_board(log, fight_id=7, run="r1", round_=2, **kw):
+    board = _board([], **kw)
+    board["run"] = run
+    board["board"]["fight_id"] = fight_id
+    board["board"]["round"] = round_
+    board["board"]["battle_log"] = log
+    return board
+
+
+def _outcome(run, fight_id, won):
+    return {"kind": "fight_outcome", "run": run,
+            "outcome": {"kind": "fight_outcome", "fight_id": fight_id, "won": won}}
+
+
+class LiveLogShapeTests(unittest.TestCase):
+    """The list the client actually fills, in the keys it actually writes.
+
+    `last_actions` is `[]` on all 333 recorded boards while `battle_log` carries
+    9,573 rows on 162 of them. The builder read only the empty one, so it reported
+    0 monster actions and 0 priced spells over a corpus holding 240 casts and 213
+    damage rows.
+    """
+
+    def _build(self, rows):
+        with tempfile.TemporaryDirectory(prefix="live-log-") as tmp:
+            path = Path(tmp) / "boards.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n",
+                            encoding="utf-8")
+            return build_from_boards(path)
+
+    def test_the_live_shape_prices_a_spell_the_id_join_could_not(self):
+        # at_action 300 on the cast and 97 on the loss, spell null on the loss:
+        # the measured shape, and the one the old action-id join priced as nothing.
+        _m, actions, _f, observed = self._build([_log_board([LIVE_CAST, LIVE_LOSS])])
+        self.assertEqual(len(observed), 1)
+        slot = observed["Barbakle|5|6908"]
+        self.assertEqual((slot["hits"], slot["mean"], slot["spell_id"]), (1, 47.0, 6908))
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["spell_id"], 6908)
+
+    def test_the_two_producers_agree_on_the_same_fight(self):
+        _m, _a, _f, from_log = self._build([_log_board([LIVE_CAST, LIVE_LOSS])])
+        _m2, _a2, _f2, from_actions = self._build([_board([CAST, LOSS])])
+        self.assertEqual(from_log, from_actions)
+
+    def test_a_damage_row_with_no_cast_by_its_source_is_not_priced(self):
+        # 32 of the 47 recorded damage rows are like this: a tackle or a poison
+        # tick. Crediting them to the last spell any monster cast would invent
+        # damage for a spell that did not deal it.
+        orphan = dict(LIVE_LOSS, source=-99)
+        _m, _a, _f, observed = self._build([_log_board([LIVE_CAST, orphan])])
+        self.assertEqual(observed, {})
+
+    def test_a_cast_at_another_target_does_not_own_the_damage(self):
+        elsewhere = dict(LIVE_LOSS, target=-3)
+        _m, _a, _f, observed = self._build([_log_board([LIVE_CAST, elsewhere])])
+        self.assertEqual(observed, {})
+
+    def test_a_cast_from_an_earlier_round_does_not_own_the_damage(self):
+        _m, _a, _f, observed = self._build(
+            [_log_board([LIVE_CAST, LIVE_ROUND, LIVE_LOSS])])
+        self.assertEqual(observed, {})
+
+    def test_two_casts_of_one_spell_in_one_round_are_two_hits(self):
+        second = dict(LIVE_LOSS, loss=53)
+        _m, _a, _f, observed = self._build(
+            [_log_board([LIVE_CAST, LIVE_LOSS, LIVE_CAST, second])])
+        slot = observed["Barbakle|5|6908"]
+        self.assertEqual((slot["hits"], slot["mean"], slot["min"], slot["max"]),
+                         (2, 50.0, 47.0, 53.0))
+
+    def test_one_cast_hitting_twice_is_one_cast_with_the_sum(self):
+        # `hits` counts casts, not damage rows: an AoE or a shield component adds
+        # to what that one cast took off us.
+        extra = dict(LIVE_LOSS, loss=3)
+        _m, _a, _f, observed = self._build([_log_board([LIVE_CAST, LIVE_LOSS, extra])])
+        slot = observed["Barbakle|5|6908"]
+        self.assertEqual((slot["hits"], slot["total"]), (1, 50.0))
+
+    def test_the_same_ring_republished_on_a_later_board_is_not_counted_twice(self):
+        first = _log_board([LIVE_CAST, LIVE_LOSS])
+        later = _log_board([LIVE_CAST, LIVE_LOSS, LIVE_ROUND], round_=3)
+        _m, _a, _f, observed = self._build([first, later])
+        self.assertEqual(observed["Barbakle|5|6908"]["hits"], 1)
+
+    def test_a_board_with_an_empty_log_falls_back_to_the_older_list(self):
+        board = _board([CAST, LOSS])
+        board["board"]["battle_log"] = []
+        _m, _a, _f, observed = self._build([board])
+        self.assertEqual(observed["Barbakle|5|6908"]["hits"], 1)
+
+    def test_our_own_cast_in_the_log_is_not_a_monster_spell(self):
+        mine = dict(LIVE_CAST, source=4434090, spell=19)
+        loss = dict(LIVE_LOSS, source=4434090)
+        _m, _a, _f, observed = self._build([_log_board([mine, loss])])
+        self.assertEqual(observed, {})
+
+    def test_the_damage_that_was_priced_is_counted_too(self):
+        # The other half of the counter pair: without it, "attributed 0" is the
+        # only reading the summary can ever give, and a dead join looks normal.
+        ATTRIBUTION["damage_rows"] = 0
+        ATTRIBUTION["attributed"] = 0
+        self._build([_log_board([LIVE_CAST, LIVE_LOSS])])
+        self.assertEqual((ATTRIBUTION["damage_rows"], ATTRIBUTION["attributed"]), (1, 1))
+
+    def test_the_unattributable_damage_is_still_counted(self):
+        ATTRIBUTION["damage_rows"] = 0
+        ATTRIBUTION["attributed"] = 0
+        # A cast is on the log, but both damage rows come from sources that never
+        # cast: nothing owns them. The summary must still say damage happened.
+        rows = [LIVE_CAST, dict(LIVE_LOSS, source=-99),
+                dict(LIVE_LOSS, source=-98, loss=12)]
+        _m, _a, _f, observed = self._build([_log_board(rows)])
+        self.assertEqual(observed, {})
+        self.assertEqual(ATTRIBUTION["damage_rows"], 2)
+        self.assertEqual(ATTRIBUTION["attributed"], 0)
+
+
+class OutcomeJoinTests(unittest.TestCase):
+    """One run holds several fights, so the verdict has to be keyed on the fight.
+
+    Measured on the recorded corpus: run 7a871278 carries fights 1356/1358/1359/1482
+    and run 452415f8 carries 9349/1640/1641. A run-keyed dict kept the last outcome
+    and labelled every fight in the run with it -- 8 of 19 fights carried another
+    fight's verdict, every one of them `won: true`.
+    """
+
+    def _build(self, rows):
+        with tempfile.TemporaryDirectory(prefix="live-join-") as tmp:
+            path = Path(tmp) / "boards.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n",
+                            encoding="utf-8")
+            return build_from_boards(path)
+
+    def test_two_fights_in_one_run_keep_their_own_verdicts(self):
+        rows = [_log_board([LIVE_CAST, LIVE_LOSS], fight_id=11),
+                _log_board([LIVE_CAST, LIVE_LOSS], fight_id=12),
+                _outcome("r1", 11, True), _outcome("r1", 12, False)]
+        _m, _a, fights, _o = self._build(rows)
+        got = {f["fight_id"]: (f["outcome"] or {}).get("won") for f in fights}
+        self.assertEqual(got, {11: True, 12: False})
+
+    def test_a_fight_with_no_outcome_is_unlabelled_not_borrowed(self):
+        rows = [_log_board([], fight_id=11), _log_board([], fight_id=12),
+                _outcome("r1", 12, True)]
+        _m, _a, fights, _o = self._build(rows)
+        got = {f["fight_id"]: f["outcome"] for f in fights}
+        self.assertIsNone(got[11])
+        self.assertEqual(got[12]["won"], True)
+
+    def test_the_same_fight_id_in_another_run_does_not_lend_its_verdict(self):
+        rows = [_log_board([], fight_id=11, run="r1"),
+                _log_board([], fight_id=11, run="r2"),
+                _outcome("r2", 11, True)]
+        _m, _a, fights, _o = self._build(rows)
+        got = {f["run"]: f["outcome"] for f in fights}
+        self.assertIsNone(got["r1"])
+        self.assertEqual(got["r2"]["won"], True)
 
 
 if __name__ == "__main__":

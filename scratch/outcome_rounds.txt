@@ -1,0 +1,29 @@
+fid        rows rounds fturns   join    end logids  results alive (me / others)
+124           0      0      0      0      0      0  me=True others=[False]
+124           0      0      0      0      0      0  me=True others=[False]
+900          22      1      1      1      1      2  me=True others=[False]
+        fight_ids in ring: {'None': 15, '900': 7}  end.fight_id: 900
+900          22      1      1      1      1      2  me=True others=[False]
+        fight_ids in ring: {'None': 15, '900': 7}  end.fight_id: 900
+1356         89      2      4      1      1      2  me=True others=[False, False]
+        fight_ids in ring: {'None': 81, '1356': 8}  end.fight_id: 1356
+1358         53      2      3      1      1      2  me=True others=[False, False]
+        fight_ids in ring: {'None': 45, '1358': 8}  end.fight_id: 1358
+1359         83      2      4      1      1      2  me=True others=[False, False]
+        fight_ids in ring: {'None': 75, '1359': 8}  end.fight_id: 1359
+1482         43      1      2      1      1      2  me=True others=[False]
+        fight_ids in ring: {'None': 37, '1482': 6}  end.fight_id: 1482
+9349         68      2      3      1      1      2  me=True others=[False, False]
+        fight_ids in ring: {'None': 60, '9349': 8}  end.fight_id: 9349
+1640         30      1      1      1      1      2  me=True others=[False]
+        fight_ids in ring: {'None': 23, '1640': 7}  end.fight_id: 1640
+1641         83      3      5      1      1      2  me=True others=[False, False]
+        fight_ids in ring: {'None': 75, '1641': 8}  end.fight_id: 1641
+1825         29      1      1      1      1      2  me=True others=[False]
+        fight_ids in ring: {'None': 22, '1825': 7}  end.fight_id: 1825
+124           0      0      0      0      0      0  me=True others=[False]
+
+rings spanning >1 fight_id: 10
+end.won=True while an enemy is still alive: 0
+row relying on a non-server verdict: None won= True alive= None hp_after= 60.0 end= False
+resolved rows whose won did NOT come from a server end verdict: 1

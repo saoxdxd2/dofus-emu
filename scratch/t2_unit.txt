@@ -1,0 +1,44 @@
+test_a_calibrated_forecast_sits_on_the_diagonal (combat.test_outcome_stats.TestCalibration.test_a_calibrated_forecast_sits_on_the_diagonal)
+Two buckets whose outcomes average exactly to their predictions. ... ok
+test_an_overconfident_forecast_does_not (combat.test_outcome_stats.TestCalibration.test_an_overconfident_forecast_does_not) ... ok
+test_a_bare_ratio_is_not_reported (combat.test_outcome_stats.TestLiveOutcomeRows.test_a_bare_ratio_is_not_reported)
+13 of 13 must carry its interval, because 13/13 is not 100%. ... ok
+test_an_open_fight_is_not_a_game (combat.test_outcome_stats.TestLiveOutcomeRows.test_an_open_fight_is_not_a_game) ... ok
+test_an_undecided_log_says_so_instead_of_printing_zero_percent (combat.test_outcome_stats.TestLiveOutcomeRows.test_an_undecided_log_says_so_instead_of_printing_zero_percent) ... ok
+test_start_rows_do_not_double_count (combat.test_outcome_stats.TestLiveOutcomeRows.test_start_rows_do_not_double_count) ... ok
+test_the_four_buckets_are_kept_apart (combat.test_outcome_stats.TestLiveOutcomeRows.test_the_four_buckets_are_kept_apart) ... ok
+test_a_better_than_base_rate_forecast_has_positive_skill (combat.test_outcome_stats.TestProperScoring.test_a_better_than_base_rate_forecast_has_positive_skill) ... ok
+test_a_coin_flip_has_a_brier_score_of_a_quarter (combat.test_outcome_stats.TestProperScoring.test_a_coin_flip_has_a_brier_score_of_a_quarter) ... ok
+test_a_perfect_forecast_scores_zero (combat.test_outcome_stats.TestProperScoring.test_a_perfect_forecast_scores_zero) ... ok
+test_mismatched_input_is_none_not_a_number (combat.test_outcome_stats.TestProperScoring.test_mismatched_input_is_none_not_a_number) ... ok
+test_the_base_rate_predictor_has_no_skill (combat.test_outcome_stats.TestProperScoring.test_the_base_rate_predictor_has_no_skill) ... ok
+test_a_policy_that_only_draws_scores_half_and_wins_nothing (combat.test_outcome_stats.TestTally.test_a_policy_that_only_draws_scores_half_and_wins_nothing) ... ok
+test_draws_are_not_half_wins (combat.test_outcome_stats.TestTally.test_draws_are_not_half_wins)
+The recorded fight head: 1 win, 157 draws, 42 losses. ... ok
+test_the_four_level_score_is_classified_like_the_file_does (combat.test_outcome_stats.TestTally.test_the_four_level_score_is_classified_like_the_file_does)
+0.75 is a partial win, 0.25 a partial loss -- not a draw. ... ok
+test_the_summary_carries_its_own_interval (combat.test_outcome_stats.TestTally.test_the_summary_carries_its_own_interval) ... ok
+test_no_games_is_the_whole_range (combat.test_outcome_stats.TestWilson.test_no_games_is_the_whole_range) ... ok
+test_one_win_in_one_game_is_not_certainty (combat.test_outcome_stats.TestWilson.test_one_win_in_one_game_is_not_certainty) ... ok
+test_the_interval_contains_the_point_estimate (combat.test_outcome_stats.TestWilson.test_the_interval_contains_the_point_estimate) ... ok
+test_the_interval_narrows_as_the_sample_grows (combat.test_outcome_stats.TestWilson.test_the_interval_narrows_as_the_sample_grows) ... ok
+test_zero_wins_in_twenty_still_has_an_upper_bound (combat.test_outcome_stats.TestWilson.test_zero_wins_in_twenty_still_has_an_upper_bound)
+The normal interval returns [0, 0] here, which claims certainty from ... ok
+test_duplicate_outcome_is_counted_once (combat.test_online_learn.FilterTest.test_duplicate_outcome_is_counted_once) ... ok
+test_non_live_fight_is_dropped (combat.test_online_learn.FilterTest.test_non_live_fight_is_dropped) ... ok
+test_scripted_fight_is_dropped_by_default (combat.test_online_learn.FilterTest.test_scripted_fight_is_dropped_by_default) ... ok
+test_strict_members_drops_unpriced_monsters (combat.test_online_learn.FilterTest.test_strict_members_drops_unpriced_monsters) ... ok
+test_unstarted_fight_is_dropped (combat.test_online_learn.FilterTest.test_unstarted_fight_is_dropped) ... ok
+test_collects_below_minimum (combat.test_online_learn.GateTest.test_collects_below_minimum) ... ok
+test_no_artifact_means_no_probability (combat.test_online_learn.GateTest.test_no_artifact_means_no_probability) ... ok
+test_not_due_writes_nothing (combat.test_online_learn.GateTest.test_not_due_writes_nothing) ... ok
+test_refuses_without_signal (combat.test_online_learn.GateTest.test_refuses_without_signal) ... ok
+test_scripted_corpus_keeps_nothing (combat.test_online_learn.GateTest.test_scripted_corpus_keeps_nothing) ... ok
+test_promotes_with_signal_and_rolls_back (combat.test_online_learn.PromotionTest.test_promotes_with_signal_and_rolls_back) ... ok
+test_keeps_only_resolved_fights_in_time_order (combat.test_online_learn.TerminalSamplesTest.test_keeps_only_resolved_fights_in_time_order) ... ok
+test_split_is_time_ordered (combat.test_online_learn.TerminalSamplesTest.test_split_is_time_ordered) ... ok
+
+----------------------------------------------------------------------
+Ran 34 tests in 3.285s
+
+OK

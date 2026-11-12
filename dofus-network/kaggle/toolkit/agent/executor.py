@@ -96,6 +96,26 @@ def _normalize(text: Any) -> str:
     return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
 
 
+def _is_prompt_echo(text: str) -> bool:
+    """True when a "name" argument is really a slice of the observation prompt.
+
+    The tool policy reads `Goal: ... / Current state: where: map 146538496 cell 176
+    in_world true ...` and occasionally answers with part of that line in a slot that
+    wants a name. The tell is structural, not semantic: the observation's own field
+    labels, or more words than any area name has. A real area is `astrub`,
+    `champs de glace`, `la foret des abraknydes` -- short, and never containing `:`.
+    """
+    if not isinstance(text, str):
+        return False
+    lowered = text.strip().lower()
+    if not lowered:
+        return False
+    for marker in ("where: map", "state:", "in_world", "cell ", "level ", "hp "):
+        if marker in lowered:
+            return True
+    return ":" in lowered or len(lowered.split()) > 6
+
+
 def _name_strings(record: Dict[str, Any]) -> List[str]:
     """Localised names only. Descriptions are matched but are not names."""
     out: List[str] = []
@@ -1833,6 +1853,19 @@ class ToolExecutor:
         level_max = args.get("level_max")
         dungeon_only = bool(args.get("dungeon_only", False))
         limit = max(1, int(args.get("limit", 10)))
+
+        if area_norm and _is_prompt_echo(area_norm):
+            # The learned policy sometimes answers with a slice of its own prompt: the
+            # line `Current state: where: map 146538496 cell 176` comes back as
+            # `area="urrent state: where: map 146538496 cell 176"`. Measured 2026-11-08,
+            # 168 such rows in one trajectory, and 20 more in the 2026-11-11 live run.
+            # Served as an empty list it looks like a successful read, so the policy
+            # repeats it; refused, it is an outcome the memory can record and avoid.
+            return ToolResult(
+                tool="quest.list", ok=False, source=source,
+                error=("area=%r is a fragment of the observation text, not an area name; "
+                       "pass a place name (e.g. 'astrub') or omit the filter"
+                       % area_norm[:60]))
 
         resolution: Optional[Dict[str, Any]] = None
         subarea_ids: set = set()

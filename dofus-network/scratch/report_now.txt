@@ -1,0 +1,52 @@
+== C:\Users\sao\Documents\dofus-emu\dofus-network\trajectories\default.jsonl
+  sessions 8, wall 57.8 min, steps 4023, ok 3992, failed 482
+  objectives +1, quests completed +0, maps 12, manual interventions 0
+  controller decisions {}, world recoveries 0/0
+  page build: 2026-10-25d=4782, 2026-10-27g=16, 2026-10-27s=2, 2026-10-31a=1
+  knowledge: 16 observed (catalog 16, file 0); 2704 not in store, 0 collision
+  quests_catalog: 19 row(s), 20 quest(s), 419 objective(s)
+  identity: no bound/drift rows -- the run predates the guard or never bound
+  accept: no explicit accept rows and no dialog carried start_quest
+  command_shadow: no status/row -- run did not request --command-shadow
+  play: reads 72.9% of steps, 0.0 wait row(s) per step, 4023.0 step(s) per objective
+    3541 of 4023 step(s) carry no verdict and are counted as neither (the page's own rows; the daemon's log judges them)
+    the client refused 451 call(s); the worst was: 269 x a previous claim of objective 14070 of quest 3841 ended the connection; perform the objective instead | 148 x dialog close failed: TypeError: Cannot read properties of null (reading 'id') | 24 x nav.goto needs one of: cell, npc_id, direction, or a map_id different from 145490435 | 6 x a previous claim of objective 13537 of quest 3841 ended the connection; perform the objective instead | 1 x target monster 715354 is not on this map
+    never advanced: quest.advance on map 145490435, 397 call(s)
+    never advanced: quest.advance on map 146276352, 28 call(s)
+    never advanced: nav.goto on map 145490435, 24 call(s)
+    never advanced: quest.advance on map 145489923, 13 call(s)
+    never advanced: quest.advance on map 145490947, 10 call(s)
+  proofs: equip {}, buy {}, fight {}, logins {}
+    2026-10-26T07:41:02.069000+00:00   3.27 min  steps  305  ok  304  fail  14  obj 0  maps 2  lvl 3.0
+    2026-10-26T07:47:32.528000+00:00  16.67 min  steps   88  ok   87  fail  28  obj 0  maps 2  lvl 3.0
+    2026-10-26T08:15:46.350000+00:00   1.11 min  steps   45  ok   45  fail   1  obj 0  maps 1  lvl 3.0
+    2026-10-26T09:10:11.334000+00:00  35.99 min  steps 3574  ok 3546  fail 438  obj 0  maps 4  lvl 4.0
+    2026-10-27T14:31:34.851000+00:00   0.78 min  steps    8  ok    8  fail   0  obj 1  maps 1  lvl 1.0
+    2026-10-28T18:24:38.924000+00:00    0.0 min  steps    1  ok    1  fail   0  obj 0  maps 1  lvl 11.0
+    2026-11-04T09:55:39.589000+00:00    0.0 min  steps    1  ok    1  fail   0  obj 0  maps 1  lvl 9.0
+    2026-11-10T15:50:04.883000+00:00    0.0 min  steps    1  ok    0  fail   1  obj None  maps 0  lvl None
+== C:\Users\sao\AppData\Local\DofusFarm\autopilot.jsonl
+  sessions 8, wall 41.4 min, steps 4295, ok 3777, failed 518
+  objectives +1, quests completed +0, maps 16, manual interventions 0
+  controller decisions {'retry': 22, 'recover': 526, 'replan': 408}, world recoveries 0/0
+  page build: missing=4295, 2026-10-25d=4286, 2026-10-27g=8
+  knowledge: 15 observed (catalog 15, file 0); 4991 not in store, 0 collision
+  quests_catalog: 8 row(s), 8 quest(s), 176 objective(s)
+  identity: bound 1, drift 0 (Bruuh)
+  accept: no explicit accept rows and no dialog carried start_quest
+  command_shadow: no status/row -- run did not request --command-shadow
+  play: reads 70.1% of steps, 0.0 wait row(s) per step, 4295.0 step(s) per objective
+    never advanced: nav.goto on map 145489923, 123 call(s)
+    never advanced: farm.start on map 145489923, 40 call(s)
+    never advanced: quest.advance on map 145490947, 32 call(s)
+    never advanced: fight.join on map None, 25 call(s)
+    never advanced: farm.start on map 145490435, 10 call(s)
+  proofs: equip {}, buy {}, fight {'calls': 50, 'named': 25}, logins {}
+    2026-10-25T22:21:50.641439+00:00   3.98 min  steps  118  ok  106  fail  12  obj 0  maps 4  lvl None
+    2026-10-26T07:40:43.058207+00:00   3.49 min  steps  342  ok  318  fail  24  obj 0  maps 2  lvl None
+    2026-10-26T08:03:10.485822+00:00   1.03 min  steps   88  ok   59  fail  29  obj 0  maps 2  lvl None
+    2026-10-26T08:09:28.796939+00:00   2.24 min  steps  112  ok  110  fail   2  obj 0  maps 1  lvl None
+    2026-10-26T08:15:46.507974+00:00    1.1 min  steps   45  ok   43  fail   2  obj 0  maps 1  lvl None
+    2026-10-26T09:10:11.517045+00:00   9.47 min  steps 1217  ok  947  fail 270  obj 0  maps 1  lvl None
+    2026-10-26T09:26:52.730427+00:00   19.3 min  steps 2365  ok 2187  fail 178  obj 0  maps 4  lvl None
+    2026-10-27T14:31:34.851677+00:00   0.77 min  steps    8  ok    7  fail   1  obj 1  maps 1  lvl None

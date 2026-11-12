@@ -91,9 +91,25 @@ def entity_vectors(obs: Dict[str, Any]) -> List[List[float]]:
     for g in (m.get("groups") or [])[:6]:
         if not isinstance(g, dict):
             continue
-        monsters = g.get("monsters") if isinstance(g.get("monsters"), list) else []
+        # The client names a group's creatures `members`; `monsters` was this reader's
+        # own invention. Measured 2026-11-12 with `tools.field_audit` over
+        # `trajectories/dofus-01.jsonl`: `map.groups.[].monsters` was asked 1,368 times
+        # and present 0 times, while all 645 groups in the file carried `members` with
+        # per-member `monster_id`, `level` and `is_boss`. So two of the four features
+        # below -- the count and the first member's level -- were constant zero for every
+        # group ever encoded, and a group of one was indistinguishable from a group of
+        # eight. Every other consumer (`awareness`, `hunting`, `planner`,
+        # `fight_estimate`) already reads `members`; this was the last one that did not.
+        monsters = g.get("members") if isinstance(g.get("members"), list) else []
+        if not monsters:
+            # Older corpora and the page's own debug shapes still say `monsters`.
+            monsters = g.get("monsters") if isinstance(g.get("monsters"), list) else []
         first = monsters[0] if monsters and isinstance(monsters[0], dict) else {}
-        add(3, first.get("cell") or g.get("cell"),
+        # The entity is the group, and the group is what carries a cell: a member is a
+        # species and a level, never a position. Asking a member for one made the field
+        # audit report `map.groups.[].members.[].cell` as asked-and-never-present, which
+        # is true and useless -- the fallback was doing the work all along.
+        add(3, g.get("cell"),
             (len(monsters) / 8.0, _num(g.get("group_id")) % 7 / 7.0,
              _num(first.get("level")) / 200.0))
     for ex in (m.get("exits") or [])[:8]:

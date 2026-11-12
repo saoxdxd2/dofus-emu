@@ -433,15 +433,22 @@ class BrainDaemon:
         if isinstance(goals, str):
             goals = [line.strip() for line in goals.splitlines() if line.strip()]
         verifier = config.get("verifier_model") or None
+        # The host names a *total* (`steps` in aipanel.cs) and never a per-goal slice,
+        # so `or 8` silently quartered every request: `/brain/start {"steps": 40}` ran
+        # 8 directives and exited "goals exhausted" (measured live 2026-12-12, session
+        # 75e47da4: 12 step rows -- 4 refusals and 8 directives -- for a 40-step
+        # request). The run-wide ceiling still applies, so giving one goal the whole
+        # budget cannot overspend a multi-goal start.
+        steps_total = int(config.get("steps") or 0)
         return _DaemonAutopilot(
             runtime=runtime,
             goals=list(goals),
             log_path=log_path,
             stop_file=stop_path,
-            max_steps=int(config.get("steps") or 0),
+            max_steps=steps_total,
             minutes=float(config.get("minutes") or 0.0),
             interval=float(config.get("interval") or 0.0),
-            steps_per_goal=int(config.get("steps_per_goal") or 8),
+            steps_per_goal=int(config.get("steps_per_goal") or steps_total or 8),
             dry_run=bool(config.get("dry_run")),
             verifier_model=Path(verifier) if verifier else None,
             veto_threshold=float(config.get("veto_threshold") or 0.0),

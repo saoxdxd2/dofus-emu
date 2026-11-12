@@ -1,0 +1,5 @@
+toolkit: 290 sync, 8 pinned, 3 drift/missing
+  drift: agent/regression.py
+  drift: combat/live_policy.py
+  drift: tools/mutate_cause_gate.py
+copied 3 file(s); manifest C:\Users\sao\Documents\dofus-emu\dofus-network\kaggle\toolkit\TOOLKIT_MANIFEST.json

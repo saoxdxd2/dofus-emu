@@ -1,0 +1,15 @@
+board 188 my_cell=315 first_cast_from=[329, 329] emitted=SAME
+    before action {"cell": 329, "path": [315, 329], "type": "move"}
+    after  action {"cell": 329, "path": [315, 329], "type": "move"}
+board 252 my_cell=450 first_cast_from=[450, 450] emitted=CHANGED
+    before action {"cell": 466, "spellId": 3, "targetId": -1, "type": "cast"}
+    after  action {"cell": 466, "spellId": 19, "targetId": -1, "type": "cast"}
+board 266 my_cell=439 first_cast_from=[439, 439] emitted=SAME
+    before action {"cell": 427, "spellId": 61, "targetId": -2, "type": "cast"}
+    after  action {"cell": 427, "spellId": 61, "targetId": -2, "type": "cast"}
+board 267 my_cell=439 first_cast_from=[454, 454] emitted=SAME
+    before action {"cell": 454, "path": [439, 454], "type": "move"}
+    after  action {"cell": 454, "path": [439, 454], "type": "move"}
+board 278 my_cell=241 first_cast_from=[241, 241] emitted=SAME
+    before action {"cell": 256, "spellId": 61, "targetId": -2, "type": "cast"}
+    after  action {"cell": 256, "spellId": 61, "targetId": -2, "type": "cast"}

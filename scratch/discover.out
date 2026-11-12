@@ -1,0 +1,207 @@
+FILES: 33
+  scanned autopilot.jsonl 396 lines 402 objs
+  scanned default.20261026-074102-070180.jsonl 4251 lines 4251 objs
+  scanned default.jsonl 4805 lines 4805 objs
+  scanned dofus-01.20261108-205337-063447.jsonl 2548 lines 2548 objs
+  scanned dofus-01.jsonl 994 lines 994 objs
+  scanned dofus-02.20261029-022349-419629.jsonl 2639 lines 2639 objs
+  scanned dofus-02.jsonl 481 lines 481 objs
+  scanned dofus-03.jsonl 2014 lines 2014 objs
+  scanned dofus-04.jsonl 608 lines 608 objs
+  scanned dofus-05.20261029-170756-782023.jsonl 3648 lines 3648 objs
+  scanned dofus-05.jsonl 593 lines 593 objs
+  scanned fight_boards.jsonl 9 lines 9 objs
+  scanned fight_outcomes.jsonl 30 lines 30 objs
+  scanned live_learning.jsonl 433 lines 433 objs
+  scanned phase1-equip-20261028T034924.jsonl 2 lines 2 objs
+  scanned phase1-equip-20261028T1105.jsonl 3 lines 3 objs
+  scanned phase1-fight-20261028T1330.jsonl 3 lines 3 objs
+  scanned phase1-proof-20261028T032406.jsonl 2 lines 2 objs
+  scanned play_dofus-01.20261111-033925.jsonl 122292 lines 122292 objs
+  scanned play_dofus-01.jsonl 21414 lines 21414 objs
+  scanned play_dofus-02.jsonl 29089 lines 29089 objs
+  scanned play_dofus-03.jsonl 38646 lines 38646 objs
+  scanned play_dofus-04.jsonl 8772 lines 8772 objs
+  scanned play_dofus-05.jsonl 106351 lines 106351 objs
+  scanned play_dofus-06.jsonl 252 lines 252 objs
+  scanned play_dofus-07.jsonl 56 lines 56 objs
+  scanned play_dofus-08.jsonl 38 lines 38 objs
+  scanned play_dofus-09.jsonl 57 lines 57 objs
+  scanned play_dofus-10.jsonl 44 lines 44 objs
+  scanned play_dofus-11.jsonl 51 lines 51 objs
+  scanned play_dofus-12.jsonl 31 lines 31 objs
+  scanned play_dofus-13.jsonl 16 lines 16 objs
+  scanned quest_state.dofus-03.jsonl 2 lines 2 objs
+
+=== KIND COUNTS ===
+   327233  <none>
+    11614  observation
+    10967  step
+      433  live_turn
+      124  decision
+       68  wait
+       26  brain
+       24  identity
+       21  session_end
+       16  fight_outcome
+       15  fight_start
+       13  dialog
+        8  fight_board
+        2  recovery
+        2  phase1_equip_before
+        2  phase1_equip_after
+        2  quest_state
+        1  phase1_equip_action
+        1  phase1_fight_join
+        1  phase1_fight_moves
+        1  phase1_fight_after
+        1  phase1_observation
+        1  phase1_start
+
+=== TOP-LEVEL KEYSETS PER KIND (top 3) ===
+-- <none> (327233)
+     327109 ['at', 'event', 'seq', 'session', 'type']
+        101 ['args', 'at', 'brain_build', 'drift', 'ensemble', 'error', 'evidence', 'fight_estimate', 'fight_outcome', 'goal', 'index', 'latency_ms', 'note', 'obs_after', 'obs_before', 'observation_cell', 'observation_map', 'ok', 'promise', 'residual_s', 'session', 'source', 'tool', 'verdict', 'why']
+         16 ['args', 'at', 'drift', 'ensemble', 'error', 'fight_estimate', 'fight_outcome', 'goal', 'index', 'latency_ms', 'note', 'obs_after', 'obs_before', 'observation_cell', 'observation_map', 'ok', 'residual_s', 'session', 'source', 'tool', 'verdict']
+-- observation (11614)
+      11614 ['goal', 'instance', 'iso', 'kind', 'observation', 'source', 'ts']
+-- step (10967)
+       9687 ['args', 'error', 'goal', 'instance', 'iso', 'kind', 'latency_ms', 'observation', 'observation_age_ms', 'observation_source', 'ok', 'result', 'source', 'tool', 'ts']
+       1280 ['args', 'error', 'explored', 'goal', 'instance', 'iso', 'kind', 'latency_ms', 'meta', 'observation', 'observation_age_ms', 'observation_source', 'ok', 'result', 'source', 'tool', 'ts']
+-- live_turn (433)
+        433 ['at', 'damage', 'enemies', 'features', 'fight_id', 'kind', 'my_hp_after', 'my_hp_before', 'round', 'signature']
+-- decision (124)
+        101 ['action', 'at', 'brain_build', 'cause', 'confidence', 'error', 'explored', 'goal', 'kind', 'obs', 'ok', 'session', 'tool']
+         23 ['action', 'at', 'cause', 'confidence', 'error', 'explored', 'goal', 'kind', 'obs', 'ok', 'session', 'tool']
+-- wait (68)
+         44 ['at', 'consecutive', 'escalated', 'goal', 'in_dialog', 'kind', 'reason', 'session']
+         24 ['at', 'brain_build', 'consecutive', 'escalated', 'goal', 'in_dialog', 'kind', 'reason', 'session']
+-- brain (26)
+         19 ['attempt', 'brain_build', 'kind', 'mode', 'model', 'reason', 'session', 'state', 'when']
+          5 ['attempt', 'kind', 'mode', 'model', 'session', 'state', 'when']
+          1 ['attempt', 'kind', 'mode', 'reason', 'session', 'state', 'when']
+-- identity (24)
+         19 ['at', 'brain_build', 'character_id', 'event', 'kind', 'name', 'session']
+          5 ['at', 'character_id', 'event', 'kind', 'name', 'session']
+-- session_end (21)
+         21 ['at', 'brain_build', 'crossings_waited_out', 'dead_talks', 'declined_crossings', 'elapsed_s', 'instance', 'kind', 'promises', 'reason', 'recoveries', 'retired', 'returns_granted', 'session', 'steps', 'verdicts', 'waits']
+-- fight_outcome (16)
+         10 ['at', 'challenge_bonus', 'challenges', 'challenges_done', 'end', 'estimate', 'features', 'fight_id', 'group_id', 'hp_after', 'hp_before', 'hp_loss', 'kind', 'model_version', 'reward', 'session', 'source', 'started_at', 'started_by', 'turns', 'won']
+          2 ['at', 'end', 'estimate', 'features', 'fight_id', 'group_id', 'hp_after', 'hp_before', 'hp_loss', 'kind', 'model_version', 'session', 'source', 'started_at', 'started_by', 'turns', 'won']
+          2 ['at', 'estimate', 'features', 'fight_id', 'group_id', 'hp_after', 'hp_before', 'hp_loss', 'kind', 'model_version', 'session', 'source', 'started_at', 'started_by', 'status', 'turns', 'won']
+-- fight_start (15)
+         14 ['at', 'estimate', 'fight_id', 'group_id', 'hp_before', 'kind', 'model_version', 'session', 'started_by']
+          1 ['at', 'estimate', 'group_id', 'hp_before', 'kind', 'model_version', 'session']
+-- dialog (13)
+         10 ['accepted_offer', 'after_source', 'asked', 'at', 'brain_build', 'dispatch_ok', 'ended_by', 'error', 'index', 'kind', 'name_id', 'npc_id', 'objective_id', 'objective_type', 'outcome', 'page', 'page_after', 'quest_id', 'reason', 'replies', 'reply_id', 'reply_text', 'scores', 'session', 'via']
+          3 ['accepted_offer', 'after_source', 'asked', 'at', 'dispatch_ok', 'ended_by', 'error', 'index', 'kind', 'name_id', 'npc_id', 'objective_id', 'objective_type', 'outcome', 'page', 'page_after', 'quest_id', 'reason', 'replies', 'reply_id', 'reply_text', 'scores', 'session', 'via']
+-- fight_board (8)
+          8 ['board', 'goal', 'kind', 'run']
+-- recovery (2)
+          1 ['at', 'kind', 'reason', 'recovered', 'session', 'trigger', 'waited_s']
+          1 ['at', 'brain_build', 'kind', 'login_cooldown', 'reason', 'recovered', 'screen', 'session', 'trigger', 'waited_s']
+-- phase1_equip_before (2)
+          2 ['instance', 'iso', 'kind', 'observation', 'source', 'ts']
+-- phase1_equip_after (2)
+          1 ['instance', 'iso', 'kind', 'observation', 'result', 'source', 'ts']
+          1 ['instance', 'iso', 'kind', 'note', 'observation', 'source', 'ts']
+-- quest_state (2)
+          2 ['at', 'character', 'instance', 'kind', 'position', 'quest_id', 'source', 'state', 'step_id']
+-- phase1_equip_action (1)
+          1 ['instance', 'iso', 'kind', 'note', 'result', 'source', 'ts']
+-- phase1_fight_join (1)
+          1 ['instance', 'iso', 'kind', 'observation', 'result', 'source', 'ts']
+-- phase1_fight_moves (1)
+          1 ['instance', 'iso', 'kind', 'observation', 'result', 'source', 'ts']
+-- phase1_fight_after (1)
+          1 ['instance', 'iso', 'kind', 'note', 'observation', 'source', 'ts']
+-- phase1_observation (1)
+          1 ['instance', 'iso', 'kind', 'phase', 'snapshot', 'source', 'ts']
+-- phase1_start (1)
+          1 ['instance', 'iso', 'kind', 'request', 'response', 'source', 'ts']
+
+=== META KEYS === {'gate': 1175, 'why': 348, 'gate_veto': 41, 'memory_veto': 19}
+
+=== RESULT KEYS === {'directive_payload': 10792, 'response': 10759, 'snapshot': 10639, 'directive_url': 887, 'port_recovered': 887, 'route': 508, 'count': 175, 'quests': 175, 'note': 169, 'area': 168, 'skipped': 3, 'circuit_open': 3, 'ok': 3, 'data': 2, 'error': 2, 'at': 1, 'group_id': 1, 'via': 1, 'moves': 1, 'probe_my_cells': 1}
+
+=== PARSE FAILURES === {} TOTAL 0
+
+=== TS RANGE PER FILE ===
+autopilot.jsonl                                    rows=    402 None -> None
+default.20261026-074102-070180.jsonl               rows=   4251 2026-10-23T05:04:33.317000+00:00 -> 2026-10-26T07:41:01.691000+00:00
+default.jsonl                                      rows=   4805 2026-10-26T07:41:02.069000+00:00 -> 2026-11-10T15:50:04.883000+00:00
+dofus-01.20261108-205337-063447.jsonl              rows=   2548 2026-10-27T14:22:57.674000+00:00 -> 2026-11-08T20:53:36.622000+00:00
+dofus-01.jsonl                                     rows=    994 2026-11-08T20:53:37.059000+00:00 -> 2026-11-12T00:55:46.779000+00:00
+dofus-02.20261029-022349-419629.jsonl              rows=   2639 2026-10-27T14:55:15.044000+00:00 -> 2026-10-29T02:23:43.387000+00:00
+dofus-02.jsonl                                     rows=    481 2026-10-29T02:23:49.418000+00:00 -> 2026-11-11T21:29:22.776000+00:00
+dofus-03.jsonl                                     rows=   2014 2026-10-27T14:55:15.032000+00:00 -> 2026-11-11T21:32:18.001000+00:00
+dofus-04.jsonl                                     rows=    608 2026-11-06T11:58:47.219000+00:00 -> 2026-11-11T21:32:14.880000+00:00
+dofus-05.20261029-170756-782023.jsonl              rows=   3648 2026-10-22T14:34:45.160000+00:00 -> 2026-10-29T17:07:50.755000+00:00
+dofus-05.jsonl                                     rows=    593 2026-10-29T17:07:56.781000+00:00 -> 2026-10-29T17:50:38.721000+00:00
+fight_boards.jsonl                                 rows=      9 None -> None
+fight_outcomes.jsonl                               rows=     30 None -> None
+live_learning.jsonl                                rows=    433 None -> None
+phase1-equip-20261028T034924.jsonl                 rows=      2 2026-10-28T02:49:25.473000+00:00 -> 2026-10-28T02:49:28.531000+00:00
+phase1-equip-20261028T1105.jsonl                   rows=      3 2026-10-28T03:07:43.264000+00:00 -> 2026-10-28T03:07:49.264000+00:00
+phase1-fight-20261028T1330.jsonl                   rows=      3 2026-10-28T03:47:56.718000+00:00 -> 2026-10-28T03:48:56.718000+00:00
+phase1-proof-20261028T032406.jsonl                 rows=      2 2026-10-28T02:24:06.948000+00:00 -> 2026-10-28T02:24:07.015000+00:00
+play_dofus-01.20261111-033925.jsonl                rows= 122292 None -> None
+play_dofus-01.jsonl                                rows=  21414 None -> None
+play_dofus-02.jsonl                                rows=  29089 None -> None
+play_dofus-03.jsonl                                rows=  38646 None -> None
+play_dofus-04.jsonl                                rows=   8772 None -> None
+play_dofus-05.jsonl                                rows= 106351 None -> None
+play_dofus-06.jsonl                                rows=    252 None -> None
+play_dofus-07.jsonl                                rows=     56 None -> None
+play_dofus-08.jsonl                                rows=     38 None -> None
+play_dofus-09.jsonl                                rows=     57 None -> None
+play_dofus-10.jsonl                                rows=     44 None -> None
+play_dofus-11.jsonl                                rows=     51 None -> None
+play_dofus-12.jsonl                                rows=     31 None -> None
+play_dofus-13.jsonl                                rows=     16 None -> None
+quest_state.dofus-03.jsonl                         rows=      2 None -> None
+
+=== EXAMPLES (compact, no observation) ===
+
+-- kind=<none> from autopilot.jsonl
+{"index": 0, "goal": "do all the quests", "tool": "-", "args": {}, "ok": false, "error": "policy returned no call", "latency_ms": 0.0, "verdict": "blocked", "residual_s": null, "drift": false, "observation_cell": null, "observation_map": null, "obs_before": {}, "obs_after": {}, "note": "nothing in the policy matched this goal", "session": "021ea13e", "source": "rule", "at": 1793134623.4254863, "fight_estimate": null, "fight_outcome": null}
+
+-- kind=observation from default.20261026-074102-070180.jsonl
+{"ts": 1792731873.839, "iso": "2026-10-23T05:04:33.839265+00:00", "instance": "default", "kind": "observation", "goal": null, "source": "live"}
+
+-- kind=step from default.20261026-074102-070180.jsonl
+{"ts": 1792731873.317, "iso": "2026-10-23T05:04:33.316858+00:00", "instance": "default", "kind": "step", "goal": "plz do all the quests", "source": "live", "observation_age_ms": null, "observation_source": "call", "tool": "quest.advance", "args": {"quest_id": 584}, "ok": true, "error": null, "latency_ms": 55.13}
+   result(no snapshot): {"directive_payload": {"id": "9e4f8ceb49854af8b09535e4f5f00098", "ts": 1792731873.262, "directive": "QUEST_ADVANCE", "tool": "quest.advance", "args": {"quest_id": 584}, "source": "live"}, "response": {"ok": true, "id": "9e4f8ceb49854af8b09535e4f5f00098", "target": "dofus-05", "result": {"ok": false, "data": {"quest_id": 584}, "error": "no NPC on this map to talk to; pass objective_id to validate directly", "at": 1792731873287}, "snapshot": {"auto_fight": false, "character": {"breed": 4, "id": 4422236, "level": 18, "name": "Aiismine"}, "connected": true, "farm_session": {"drop_count": 0, "drops": {}, "fights": 0, "kamas": 0, "kamas_per_minute": null, "kills": 0, "kills_per_minute": null, "losses": 0, "minutes": 0, "wins": 0, "xp": 0, "xp_per_minute": null}, "farm_state": {"inFight": false, "myTurn": false}, "hp": {"ap": 0, "life": 0, "max": 0, "mp": 0}, "in_dialog": false, "in_fight": false, "in_world": true, "inventory": {"items": [{"gid": 121974054, "qty": {"_type": "ObjectItem", "effects": [{"_effectCaller": "ItemInstance id 18858", "_hasMissingDdInfo": false, "_type": "EffectInstanceInteger", "actionId": 125, "description": "5 Vitality", "duration": 0, "effect": {"active": false, "bonusType": 1, "boost": true, "category": 0, "characteristic": 11, "descriptionId": "#1{~1~2 to }#2 Vitality", "effectPriority": 5000, "forceMinMax": true, "iconId": 0, "id": 125, "operator": "+", "showInSet": true, "showInTooltip": false, "useDice": true, "useInFight": false}, "effectId": 125, "
+
+-- kind=live_turn from live_learning.jsonl
+{"fight_id": 1099, "round": 0, "signature": "Clobberstone Clone:8|Clobberstone:8|Dolomanus:8|Marbmour:8", "my_hp_before": 140.0, "my_hp_after": 140.0, "damage": 0.0, "enemies": 4, "features": [1.0, 4.0, 32.0, 1.0, 1.0, 0.0, 6.0, 1.0, 63.0], "at": 1794332581.1986885, "kind": "live_turn"}
+
+-- kind=decision from autopilot.jsonl
+{"kind": "decision", "session": "021ea13e", "goal": null, "action": "replan", "cause": "invalid_assumption", "explored": false, "confidence": 0.9, "tool": "-", "ok": false, "error": "policy returned no call", "obs": {}, "at": 1793134623.4267805}
+
+-- kind=wait from autopilot.jsonl
+{"kind": "wait", "session": "68b1a7c3", "goal": "do all the quests", "reason": "the policy had no action to take", "consecutive": 1, "escalated": null, "in_dialog": true, "at": 1793136183.111647}
+
+-- kind=brain from autopilot.jsonl
+{"kind": "brain", "session": "021ea13e", "when": "startup", "mode": "auto", "state": "dry_run", "attempt": 1, "reason": "dry run does not start services"}
+
+-- kind=identity from autopilot.jsonl
+{"kind": "identity", "session": "68b1a7c3", "event": "bound", "character_id": "4434089", "name": "Brruh", "at": 1793136173.55031}
+
+-- kind=session_end from autopilot.jsonl
+{"brain_build": "brain-77d250f2619f", "kind": "session_end", "session": "3e4de0c2", "instance": "dofus-04", "at": 1793993223.441, "reason": "goals exhausted", "steps": 3, "waits": 0, "verdicts": {"blocked": 3}, "promises": {}, "retired": 0, "recoveries": 0, "dead_talks": 0, "declined_crossings": 0, "crossings_waited_out": 0, "returns_granted": 0, "elapsed_s": 0.0}
+
+-- kind=fight_outcome from fight_boards.jsonl
+{"kind": "fight_outcome", "run": "ad4071de", "outcome": {"kind": "fight_outcome", "session": "[redacted]", "at": 1793136602.7736719, "started_at": 1793136590.6362636, "group_id": -596, "won": true, "hp_before": 55.0, "hp_after": 60.0, "hp_loss": 0.0, "turns": null, "features": {"level_gap": 0.0, "group_size": 1.0, "turns_to_kill": 0.6839, "turns_to_die": 100.0, "hp_ratio": 1.2222, "hp_loss_fraction": 0.0, "has_boss": 0.0, "unknown_members": 1.0}, "estimate": {"p_win": null, "raw_score": 0.9932, "expected_hp_loss": 0.0, "expected_turns": 0.68, "allowed": true, "model_version": "fight-v0-analytic"}, "source": "live", "model_version": "fight-v0-analytic"}}
+
+-- kind=fight_start from fight_outcomes.jsonl
+{"kind": "fight_start", "session": "ad4071de", "at": 1793136590.6362636, "group_id": -596, "estimate": {"status": "estimated", "model_version": "fight-v0-analytic", "group_id": -596, "player": {"level": 1, "hp": 55.0, "ap": 6, "damage_per_turn": 65.8, "heal_per_turn": 73.5, "damage_by_element": {"water": 65.8}}, "enemies": {"count": 1, "total_hp": 45.0, "has_boss": false, "members": [{"monster_id": 4192, "name": "#4192", "level": 1, "hp": 45.0, "ap": 6.0, "resist_percent": {}, "fixed_res": 0.0, "is_boss": false}]}, "p_win": null, "raw_score": 0.9932, "expected_hp_loss": 0.0, "hp_loss_fraction": 0.0, "hp_ratio": 1.0, "expected_turns": 0.68, "incoming_per_turn": 4.5, "confidence": "low", "missing": ["monster:4192"], "assumptions": ["unpriced spells: 0", "monster 4192 has no cached row; HP and AP are pessimistic level heuristics", "group scale_level is not modelled in v0", "tutorial authorisation: the scripted scenario guarantees this fight", "incoming damage is a level/AP heuristic; the monster DB has no spell damage", "one target at a time; area damage is not credited", "healing is applied against incoming damage, not as a shield"], "features": {"level_gap": 0.0, "group_size": 1.0, "turns_to_kill": 0.6839, "turns_to_die": 100.0, "hp_ratio": 1.2222, "hp_loss_fraction": 0.0, "has_boss": 0.0, "unknown_members": 1.0}, "authorization": "tutorial", "bootstrap": false, "tutorial_fight": true, "thresholds": {"min_p_win": 0.9, "max_hp_loss_fraction": 0.5, "allow_boss": false}, "allowed": true, "blocked_reason": null}, "hp_before": 55.0, "model_version": "fight-v0-analytic"}
+
+-- kind=dialog from autopilot.jsonl
+{"kind": "dialog", "session": "68b1a7c3", "index": 2, "quest_id": 3841, "objective_id": 13499, "objective_type": 6, "npc_id": 3980, "name_id": "Injured Forgelance", "page": "", "replies": [], "asked": "close", "reply_text": "", "reply_id": null, "via": null, "accepted_offer": false, "dispatch_ok": true, "error": null, "reason": "dialog text or reply ids are not ready", "scores": [], "outcome": "closed", "ended_by": "asked", "page_after": null, "after_source": "carried", "at": 1793136183.630756}
+
+-- kind=fight_board from fight_boards.jsonl
+{"kind": "fight_board", "run": "6d211595", "goal": "do all the quests", "board": {"available": true, "in_fight": true, "in_preparation": true, "fight_id": 2659, "fight_state": 0, "round": 0, "current_fighter_id": null, "is_my_turn": false, "turn_started_ms_ago": null, "my_id": 4409667, "character_id": 4409667, "my_cell": 371, "map_id": 147064834, "cells": [66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 71, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 71, 71, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 71, 71, 66, 66, 66, 66, 66, 64, 66, 64, 66, 66, 66, 66, 71, 71, 64, 66, 66, 66, 66, 64, 64, 64, 64, 66, 64, 66, 67, 66, 64, 66, 66, 64, 64, 67, 64, 67, 64, 64, 64, 66, 67, 67, 66, 64, 64, 64, 64, 67, 67, 67, 67, 64, 67, 64, 67, 67, 66, 64, 64, 67, 67, 67, 67, 67, 67, 67, 67, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 83, 67, 67, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 67, 67, 67, 67, 67, 67, 75, 67, 67, 67, 67, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 75, 67, 67, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 66, 66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 66, 66, 66, 64, 67, 67, 67, 67, 67, 67, 67, 67, 67, 66, 66, 6
+
+-- kind=recovery from autopilot.jsonl
+{"kind": "recovery", "session": "23886d16", "trigger": "wait_fell_out", "reason": null, "recovered": false, "waited_s": 27.2, "at": 1793160501.7781446}

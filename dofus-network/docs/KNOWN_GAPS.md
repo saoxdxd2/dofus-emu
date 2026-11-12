@@ -6060,6 +6060,14 @@ then compare the outcome of "repeat" against "re-plan" on the same states. The t
 choice (repeat / re-plan / wait) is where the remaining value is, and the corpus has said
 everything it can about it.
 
+*Update 2026-11-11: the record this needs now exists, from the other side.* G111 wired a
+pre-dispatch veto on the durable store, and it writes the pair this item asks for: the refused
+call as a step row with `source: "memory"` and its refusal text, the controller's decision row
+with `cause: invalid_assumption`, then the next planned call as the following step row. That is
+"repeat" (the third attempt, once the bound is spent) against "re-plan" (what the thinking layer
+answered) on the same state, in one log. It is not the shadow arm this item describes -- nothing
+is priced until a live run produces rows -- but the instrument is no longer missing.
+
 ## G56. A forest ranks better than the counter; at the shipping point it is identical *(measured 2026-10-29)*
 
 **The challenge.** Is a regression / more complex model actually more accurate than the
@@ -6635,7 +6643,7 @@ is a silent refusal, which is what the corpus recorded as "no effect".
 so the next decision waits up to `settle_s = 3.0` - the successful request-to-ack took 2.2 s. No
 claim is involved anywhere in the working path; the claims in the corpus were refused.
 
-**What remains** is not discovery but a live run on page build `2026-11-10a`: fresh guest, tutorial,
+**What remains** is not discovery but a live run on page build `2026-11-11a`: fresh guest, tutorial,
 4260/4262, and the loop should tap 513208 from an adjacent cell and settle. If it does not, G64 now
 records the client's own words and G68 records the element's type and skills, which is what the last
 attempt lacked.
@@ -7047,7 +7055,7 @@ version passed `9` as the only walkable cell, which is not a neighbour of `5` on
 refactor onto the same helper is covered by the existing `test_nav_doorless_exit.js` and
 `test_door_arrival.js`, both green.
 
-Not yet measured live: a `2026-11-10a` session that crosses at cell 535 or 21 either
+Not yet measured live: a `2026-11-11a` session that crosses at cell 535 or 21 either
 moves within the first settle or this entry is wrong.
 
 ## G82. A close that worked was reported as a failure *(measured 2026-10-30)*
@@ -7079,7 +7087,7 @@ with `closed:false`; a throwing path alone is not a send). Two mutations
 (`close-sent: ...`), both caught: reporting a sent close as a failure again, and counting
 a throwing path as sent.
 
-Not yet measured live: a `2026-11-10a` session should show zero "still open" rows whose
+Not yet measured live: a `2026-11-11a` session should show zero "still open" rows whose
 attempts all read `:ok`, and the reply that follows a close should find the dialog gone.
 
 ## G83. The blind explore walked straight back the way it came *(measured 2026-10-30)*
@@ -7120,7 +7128,7 @@ the previous map -- so the tool prints the return count and the changed count se
 The counting rule is pinned by four checks in `test_explore_returns_replay`, including the
 dead end the fix must keep.
 
-Not yet measured live: a `2026-11-10a` session on 145490946 should leave toward a fresh
+Not yet measured live: a `2026-11-11a` session on 145490946 should leave toward a fresh
 map instead of back to 145490434, and the 46-return shape should not reappear.
 
 ## G84. The report counted deliveries and called every page call a success *(measured 2026-10-30)*
@@ -7158,7 +7166,7 @@ caught. While adding them, the `session-play: an advancing pair is counted as de
 anchor was found stale -- it still matched the pre-refactor text and had been silently
 skipped -- and was repaired before use.
 
-Not yet measured live: on a `2026-11-10a` session the report should print a non-zero
+Not yet measured live: on a `2026-11-11a` session the report should print a non-zero
 `failed` whenever the client refuses calls, and the play census should name the pair.
 The six "the right exit leads to 145490945, not 145490946" refusals were checked against
 the current router rather than assumed: replaying the recorded observation through
@@ -7197,7 +7205,7 @@ Pinned by 12 checks in `tools/test_reply_text_fallback.js` (the helper runs from
 page source; two checks pin the handler's use of it and the reported substitution) and
 four `reply-fallback:` mutations, all caught. Page build is now `2026-10-31a`.
 
-Not yet measured live: on a `2026-11-10a` session the 37 single-reply refusals should
+Not yet measured live: on a `2026-11-11a` session the 37 single-reply refusals should
 become answers whose `text_fallback.asked_text` names the text the plan sent. Separate
 and still open: **118 no-npc replies** (73 with a dialog open in the observation, 45 with
 it already closed) -- a reply issued outside a dialog has no NPC to reopen; that is a
@@ -7239,7 +7247,7 @@ Pinned by three checks in `test_combined_objectives` (the budget ends the walk, 
 does not, a group clears the memory) and three `gate-dry:` mutations, all caught; the
 section is now in the mutation driver's `SNIPPET` (it was outside it).
 
-Not yet measured live: on a `2026-11-10a` session the 145490946 shape should show at most
+Not yet measured live: on a `2026-11-11a` session the 145490946 shape should show at most
 `RETURN_LIMIT` visits between group sightings, and the 56 return trips should not
 reappear. The explore half of the bounce (leaving 946 toward the map just left) is G83's
 fix, already in the same build.
@@ -7273,7 +7281,7 @@ standing on the map is not a return, a different trip is planned and clears the 
 the walk is allowed again after it) and four `objective-travel:` mutations, all caught;
 the section is in the mutation driver's `SNIPPET`.
 
-Not yet measured live: on a `2026-11-10a` session, the 434 -> 946 return rows should not
+Not yet measured live: on a `2026-11-11a` session, the 434 -> 946 return rows should not
 exceed `RETURN_LIMIT` per objective per streak, and the 46-row shape should not reappear.
 
 ## G88. The explore search had no memory of the maps it had walked *(measured 2026-10-31)*
@@ -7311,7 +7319,7 @@ objective-derived key, an id-less objective staying stateless) and five `fresh-s
 mutations, all caught (483 total). One mutation anchor was updated: the hint guard line
 had been split, and a stale anchor skips silently.
 
-Not yet measured live: on a `2026-11-10a` session, an explore phase that revisits a map
+Not yet measured live: on a `2026-11-11a` session, an explore phase that revisits a map
 should show at most one fresh-destination search per objective before either the group
 appears or the search leaves the ring.
 
@@ -8251,3 +8259,475 @@ price table per step (it would repeat ~2,000 rows on every step) or a single sta
 pointer to the capture file. That is a data-model decision, not a bug fix. Meanwhile the encoder
 carries `prices_over_100` and reports presence the same way it reports `has_terrain`, so the tensors
 do not claim a price they do not have.
+
+## G110. A page-agent fix cannot be verified live in the same session *(measured 2026-11-11)*
+
+**Symptom.** `scripts/mobile-disguise.js` is edited, the client is reloaded, and the client is
+still running the old script. Nothing says so except the build string in an observation.
+
+**Measured.** `debug.reload` on `dofus-01` answered
+
+    {"ok": true, "data": {"reloading": true, "build": "2026-11-10a+1.74.12",
+     "note": "a reload keeps the already-injected script; a full app restart is required to
+     pick up a rebuilt one"}}
+
+and the client came back in world on the same `agent_build`. The page also guards itself with
+`window.__DofusFarmAgentLoaded`, so a second injection is a no-op. The host injects the file
+from disk when the page is created (`desktop/WebView2Backend.cs`), not on navigation, and the
+only script-push path it exposes (`ExecuteScriptOnInstance`) is used for the HUD badge, not
+exposed to the bridge.
+
+**Why it matters.** Every live test of a page fix needs a client window restarted, which needs
+the host UI — so an agent working headlessly can write and unit-test a page fix but cannot
+claim it works live. The build stamp is the only signal that separates "the fix did not work"
+from "the fix is not running", which is why it is now `2026-11-11a` and the running clients
+still report `2026-11-10a`.
+
+**Not fixed.** Exposing a script-push directive on the bridge would close it (the host method
+already exists), but that is a new remote-code-execution surface on a loopback service, and it
+needs its own decision rather than a convenience.
+
+*Update 2026-11-12.* Measured what the pending `_agentBorderCells` can and cannot do, on map
+146277376: every border cell there is `{l: 66}` and every interior cell `{l: 67}`, so the geometric
+fallback also finds no exit -- the wall ring is the geometry. G112 has the table. The fallback is
+still the right fix for a map whose flags are missing; it is not a fix for a sealed one, and the
+agent now says which it is looking at.
+
+## G111. The memory could veto a replay and nothing else *(measured 2026-11-11)*
+
+**Symptom.** A policy chooses a call that has already failed five times in this exact context, and
+the loop sends it anyway. The observation carries `already_failed` on every pass, so the record is
+*in front of* the planner and still has no effect on what leaves the machine.
+
+**Measured in the code, not guessed.** Three pieces of the memory were written and never read:
+
+| piece | written at | read at |
+|---|---|---|
+| `self._mem_veto: Dict[str, int]` | declared in `__init__`, cleared once per goal | **nowhere** |
+| `call_signature as _mem_sig` | imported | **nowhere** |
+| `ActionMemory.is_failed` | `observe` on every step | **nowhere** (only its own `self_check`) |
+| `PersistentMemory.known_failure` | same `observe` | `_remembered_call` only |
+
+So the store could stop a *replay* -- a call the memory itself proposed -- and could not stop a
+call the policy proposed. The line in `_run` that said the perception text was advisory "and the
+bounded veto below still applies" was describing a veto that did not exist; the comment had been
+true of the design and false of the code since the day it was written.
+
+The live shape this costs, measured on `dofus-01` earlier the same day: **280 consecutive
+`nav.goto {"direction": "left"}` calls on one map, every one a noop**, while
+`describe_failures` printed that same edge to the policy on all 280 passes.
+
+**Fixed.** `Autopilot._memory_veto` is consulted after the read becomes a wait and before the
+guard, so it applies to a call from any source (policy, thinking layer, controller recovery, or
+replay) and cannot be routed around.
+
+* The question is "has this failed *here* twice", not "has it ever failed". `PersistentMemory`
+  grew `failure_count`, and `known_failure` is now that same question asked coarsely. The floor of
+  two is deliberate: one failure can be a race -- a snapshot taken mid-transition, an NPC still
+  animating -- and the store cannot tell those apart.
+* The veto is **spent, not absolute**: `_mem_veto` allows `MEM_VETO_TRIES = 2` refusals per
+  (context, call) per run, and the third attempt goes through. KNOWN_GAPS G99.3 was a persisted
+  uid that no longer existed; a veto that could not be spent would have turned that into a
+  permanent dead end instead of two wasted passes.
+* Three calls are never vetoed: `state.snapshot` (a read is not an action, and the wait machinery
+  owns it -- vetoing one would turn "look again" into "do nothing"), a call the schema already
+  rejects (that refusal names the argument, which is more useful), and a call the store has a
+  *solution* for (`observe` deletes the dead row on success, so a solved context cannot be walled
+  off by its own earlier failures).
+* The refusal is **not** reported through `note_result`. That path is the planner's account of
+  what the server said, and it owns the start-failure counting that retires a quest
+  (`_start_refused`); a harness refusal filed there would retire a healthy quest because our own
+  memory said no. The planner still learns -- the line is on every observation as
+  `already_failed` -- and the controller gets the row, which is the layer that changes the plan.
+* `cause_of` files "the memory refuted" under `invalid_assumption`, which has no recovery hint by
+  design: the plan must change, not the observation.
+
+**Tests.** `test_the_memory_vetoes_what_the_context_refuted` (13 checks) drives the real loop with
+a store pre-seeded to look like a previous session: two refusals then a dispatch, the refusal
+naming the call and its count and how much of the veto it has spent, the controller's cause, the
+one-failure floor, context separation by map, the read exclusion, the solution exclusion, and the
+planner-report exclusion.
+
+**Not established.** The effect on the live noop count is unmeasured -- the daemon reloads Python
+only when idle, so the next live run is the first one with the veto in it. The expected shape is
+that a dead call costs 2 refusals per 2 dispatches instead of 4 dispatches, i.e. half the waste and
+a replan every time the bound trips, not silence.
+
+*Update 2026-11-12, from the first three live runs with the veto in (sessions `30d77686`,
+`9e886397`, `a0d4c924`, `7fede891`).* It fires, and two of its rules were written after watching it:
+
+* The first run spent the whole goal on refusals -- 6 of 8 steps -- because the store held five dead
+  edges for one objective and each call spent its own two. `MEM_VETO_CONTEXT_TRIES = 4` is the
+  answer: the per-call bound is not a bound on the run. After it, `7fede891` spent 3 of 16 steps on
+  refusals and 4 on the crossing wall, and the rest on real quest progress.
+* A refusal was consuming a directive (`taken` was not refunded), so the goal's budget shrank by
+  every call the memory saved it from doing. The veto branch now does `taken -= 1`.
+* The refusals name the call, the count, and both budgets --
+  `nav.goto(map_id=146276864,direction=left) x13 in this context; not sending it again (1/2 refusals
+  spent, 1/4 in this situation)` -- and `cause_of` files them under `invalid_assumption`, which is
+  what drives the `replan` in the same session's decision rows.
+
+## G112. One crossing rule, two implementations, and the bounded one was not the one running *(measured 2026-11-12)*
+
+**Symptom.** A character stands on a map it cannot leave. The planner asks for a border, the client
+says nothing happened, and the planner asks again -- seven times in one goal, some borders twice,
+under two different quests. The run then reports that the goals ran out.
+
+**Measured live on `dofus-01`, map 146277376, 2026-11-12** (sessions `a0d4c924`, `4a87306f`,
+`7fede891`). The map is a building interior and the measurement is complete:
+
+| fact | probe | answer |
+|---|---|---|
+| every border cell is a wall | `debug.inspect ... map.cells.<i>.l` over all four edges | `{l: 66}` -- bit 0 clear |
+| the interior is walkable | `... map.cells.259.l` | `{l: 67}` |
+| the client publishes no exit | `state.snapshot.map.exits` | `[]` |
+| and no door | `.map.doors`, `.map.interactives`, `debug.map.exit_cells` | `[]`, `[]`, `[]` |
+| but it does know four neighbours | `.map.neighbours` | `{left: 146276864, right: 146277888, top: 146277633, bottom: 146277377}` |
+| the request really went out | `debug.map.transition.outgoing` | `ChangeMapMessage {mapId: 146277888}`, then `{mapId: 146277633}` |
+| the server ignored it | same map id on the next observation | `146277376` |
+| the page said why | `snap.last_nav` | `{"stage": "change_requested_no_cell", "from_map": 146277376, "to_map": 146277633, "direction": "top"}` |
+
+`getChangeMapFlags` tests bit `c` only after a positional test, and `_agentBorderCells` -- the
+geometric fallback added for exactly this -- also reads `l & 1`, so it finds nothing either: the
+wall ring is the geometry, not a missing flag. G110 still stands, and the running client is
+`2026-11-10a`, so that fallback is not even loaded; it would not have helped on this map.
+
+**The defect was not the missing exit; it was that the same rule existed twice.** The sentence
+`"map %s publishes no crossable border; ask the server for the %s neighbour %s"` was produced in two
+places: `_indexed_crossing_ask`, which pays `CROSSING_ASK_LIMIT` and is counted by `_travel_call`,
+and an inline copy inside `_travel_ask`, which had its own rotation and **neither the budget nor the
+refusals**. The live run used the copy. In session `4a87306f` that cost seven asks -- `left` at
+steps 7, 8 and 12, `bottom` at 6 and 9 -- and in the session before it, six.
+
+And `last_nav.stage` -- the one field that says the crossing is impossible -- was read by nothing.
+`last_nav` reached the observation and was consumed by `plan_stack`, `thinking` and
+`tool_dataset`; the `stage` was never looked at. This is G111's shape one layer out: a fact written
+by one component and read by none.
+
+**Fixed.**
+
+* The inline copy is gone. `_travel_ask` calls `_indexed_crossing_ask`, so the budget, the rotation
+  and the refusals apply once, wherever the ask comes from. A source check in the test pins
+  `count("publishes no crossable border; ask the") == 1`.
+* `QuestPlanner._refused_borders(obs, here)` reads `last_nav`, and `NAV_WALL_STAGES` is the two
+  stages that mean *the border* did not work -- `change_requested_no_cell` and
+  `change_requested_at_edge`. The walk stages (`walk_stopped_short`, `cannot_reach`,
+  `walk_failed`) are deliberately excluded: they are evidence about the path, and a blocked path is
+  retryable. `map_change_failed` is an exception in the page, not an answer from the server.
+* A wall is keyed on `(direction, to_map)` under the map it was asked from, in `self._walls`. That
+  is the fix for the objective-scoped budget: the live run asked the same `top` neighbour under
+  quest 4278 objective 13996 and again under objective 14010, because each objective started with a
+  clean count. A wall is a property of the map; the next quest does not open a door.
+* `last_nav` has one slot and a run walks four borders, so the walls accumulate across observations
+  rather than being re-read each time.
+* `_indexed_crossing_ask` no longer calls `_note_crossing`. `_travel_call` owns that count for every
+  ask and is the only caller of `_travel_ask`, so the border was being charged twice per ask and
+  spent after a single retry. Found by replaying a live snapshot: three asks, then every border
+  read as spent.
+* When every published border is refused, the planner says so once and returns no ask:
+  `[planner] map 146277376 has refused every border it publishes (bottom->..., left->...,
+  right->..., top->...); not asking again`.
+
+**Two more defects the same session exposed, both in the loop.**
+
+* **Four rows carried index 17.** The unplannable branch emits a row and then loops -- retiring one
+  objective per pass -- without advancing `self._index`, which every other branch advances. The log
+  read as one step recorded four times and the index stopped matching the row count. Fixed: the
+  branch advances the index, and session `7fede891` shows `12, 13, 14, 15`.
+* **The run blamed the wrong thing.** `ended_because` defaults to `"goals exhausted"` and this
+  branch never set it, so a policy that could not express the goal reported that the objectives had
+  run out -- with three still ready and sixteen retired. It now reports
+  `"the policy could not express 'do all the quests': quest mode: nothing plannable -- 3 ready
+  objective(s), ..."`.
+
+**Effect, live.** Session `4a87306f` (before): 20 steps, 7 `noop` crossing asks with three repeats.
+Session `7fede891` (after): 16 steps, 4 `noop` asks -- `right`, `top`, `top`, `bottom` -- distinct
+indices, and the honest end reason.
+
+**Tests.** `test_the_page_s_word_for_a_wall_is_read` (14 checks): the two wall stages and only
+those, a request in flight is not a wall, a walk that stopped short is not a wall, a wall on
+another map is not this map's wall, the rotation skips it, a second objective does not restart it,
+a map nobody refused still gets its hint, four borders then a stop, the read-before-rotation source
+order, and one producer of the sentence. `test_a_silent_house_map_is_left_by_the_crossings_it_knows`
+keeps the door-less map leaving by the crossings the index knows; its "stops asking" check is now
+about the tail (once a read appears, no crossing follows it) instead of a count that only held
+while each ask was charged twice.
+
+**Not established.** One duplicate survives a one-step observation lag: in `7fede891` `top` was
+asked at steps 7 and 8 because the refusal for step 7 had not reached the snapshot yet. The obvious
+fix -- treat "same map on the next pass" as a wall -- is the defect that
+`test_a_crossing_in_flight_is_waited_out` already paid for (a crossing can land 30 s after the ask),
+so the lag is left alone. And the character is still on that map: **no action in the registry can
+leave a map with no walkable border cell, no door and no interactive element.** A teleport, a
+recall potion or a zaap would; none is exposed. That is a capability gap, not a planning one, and it
+is why the run ends with three objectives ready.
+
+## G113. An audit of what we record against what we read *(measured 2026-11-12)*
+
+**What this is.** A pass over the accumulated corpus -- `trajectories/dofus-01.jsonl` (994 rows,
+43.9 MB), `data/` (about 250 MB) -- asking one question of every key: *who reads this, and what does
+it become?* Two instruments, because one only sees half the problem:
+
+* `tools/field_audit.py` replays the corpus through the real consumers and counts keys that were
+  **asked for and never present** -- the silent-zero class.
+* `tools/unread_fields.py` (new) walks the same corpus, counts every **leaf path it carries**, and
+  subtracts the paths a consumer actually *found*. That is the opposite question: data we record and
+  throw away.
+
+Neither is a grep. A wrong key name looks exactly like a right one, and a field nobody reads leaves
+no trace at all. Both report against *the consumers the run replayed*, not the whole tree -- the
+planner reads observations directly and is not one of them -- so a hit is a shortlist to check, not a
+verdict. Over `dofus-01.jsonl`: 992 observations, **415** distinct leaf paths, **86** asked for by
+the three replayed consumers, **355** carried and never read by them.
+
+### 1. `map.groups.[].monsters` -- asked 1,368 times, present 0 times
+
+`agent/state_features.py` built four group features out of `group["monsters"]`. The audit counted
+**1,368** asks for that key across the corpus and **0** occurrences. All **645** groups in the corpus
+carry `members` instead, each member with `monster_id`, `level` and `is_boss`. So group count, total
+level and the boss flag were not *wrong* -- they were constant zero, which is worse: a zero feature
+looks measured.
+
+**Fixed.** The loop reads `g.get("members")` with a `g.get("monsters")` fallback, and takes the cell
+from `g.get("cell")` instead of `first.get("cell") or g.get("cell")` -- members never carry a cell,
+so that probe was a second silent zero. Re-audited: the only key left that is asked for and never
+present is `level` via `character.level`, which is the benign shape.
+
+**Scope, stated plainly:** this path is dormant. `entity_vectors` is imported by
+`tools/build_world_state_dataset.py`, `tools/state_encoder_probe.py`, `tools/field_audit.py` and one
+regression test -- not by the live planner. The live encoder in `agent/world_state.py` already read
+`members`, and `data/world_state_dataset/train.jsonl` holds 312 non-zero group vectors over 118
+distinct values, so the shipped dataset was never broken. The defect was real and would have bitten
+whoever wired `entity_vectors` in next; it was not costing steps today. Recorded because "we measured
+it and nothing happened" is not "nothing was wrong".
+
+### 2. The geometry was on disk twice and read zero times
+
+`data/maps/_index.json` carries `walk` -- one character per cell, `1` walkable, the exact geometry
+the page computes in `_agentBorderCells` -- for 2,696 maps. `map_graph()` opens that file and takes
+`neighbours` only. The field was parsed into the cache and dropped.
+
+G112's live map is the demonstration. 146277376 has every border cell `{l: 66}` and every interior
+cell `{l: 67}` -- and **146277376 was not in the cache at all**, so even a reader would have found
+nothing. Where the geometry actually was: every observation's `map.terrain`, 140 hex characters,
+present on every map block, one per cell. The corpus held it for **20** maps.
+
+**Fixed.**
+
+* `agent/features.py` gained `map_walk(map_id)` and `walkable_border_cells(walk, direction)` -- the
+  same border rule the page uses (left `i % 14 == 0`, right `i % 14 == 13`, top the first two rows,
+  bottom the last two).
+* `QuestPlanner._sealed_borders` refuses a border whose edge has no walkable cell, and
+  `_indexed_crossing_ask` folds that into the same `refused` set as the page's own refusals, so a
+  sealed map is silent on the **first** pass instead of the fifth. A wrong-shaped `walk` is not
+  evidence and refuses nothing; a map the cache does not hold is unknown, not walled.
+* `tools/ingest_map_terrain.py` (new) turns recorded `map.terrain` back into cache geometry.
+  `python -m tools.ingest_map_terrain trajectories/*.jsonl` prints a dry run, `--write` adds what is
+  missing, `--update` replaces what disagrees, and it never overwrites by default.
+
+The dry run doubles as a **check on the two encodings**: of the 20 maps in the corpus, 13 were
+already in the cache, and re-deriving them from terrain agreed **13 of 13, 0 disagreements**. The 7
+that were missing were written; the cache now holds 2,703 maps, and `map_walk(146277376)` returns 560
+characters whose four edges hold **0** walkable cells -- the page's `{l: 66}` ring, reproduced from
+data that was already on disk.
+
+**Consequence for G112.** "No action in the registry can leave that map" is still true of the *route*
+planner. But "the agent could not know" was wrong: the geometry that says so was recorded on every
+observation and discarded. Knowing earlier does not create an exit; it stops the run spending steps
+to learn what it already had.
+
+**And it changed a test's answer, which is how it is known to be live in the data path.**
+`test_index_route_travel` built a house from the real map 146276352 with four neighbours and no
+exits, and asserted that the planner asks for a neighbour -- the G112 behaviour. The ingest added that
+map's geometry, every edge is wall, and the gate went red on exactly that check. The fixture moved to
+a synthetic id (`190276352`, unknown to the cache) so the check still tests the ask, and a second
+check now asserts the opposite for the real house: it is not asked, because the ask cannot work.
+`[planner] map 146276352 has no border left to ask for (bottom->146276353, left->146407936,
+right->146276864, top->146276609); not asking again` is the new line on that suite.
+
+### 3. The transition rings: recorded, unread, and 58% noise -- measured, not fixed
+
+The page records `map.transition` on every snapshot: `outgoing[]`, `incoming[]`, `map_info`,
+`no_move`, `last_nav`. Python read `last_nav` (G112, this week) and redacted `args`; the rest has no
+reader. The numbers, over 994 observations:
+
+| what | rows | verdict |
+|---|---|---|
+| `outgoing[]` | 19,510 | names + args of every `sendMessage` call |
+| `incoming[]` | 19,783 | of which **11,412 (57.7%)** are EventEmitter plumbing: `data`, `send`, `send:sendMessage`, `newListener` |
+| `no_move` | 536 observations, **16 distinct `at`** | one value repeats 180 times: a sticky last-event marker published as state |
+| `map_info` | 974 | `{at, map, sub_area}`; `map.map_id` already carries the map |
+| `GameMapMovementConfirmMessagе` | 2,506 outgoing rows | **Cyrillic `е`**, in the shipped bundle's own `_confirmMovement` (`desktop/client/www/build/script.js`, byte 5122564). The pristine copy spells it ASCII. |
+
+**Verdict: this is diagnostics, not lost intelligence.** The rings were built to explain a refused
+map change and they did -- the refusal string G112 was diagnosed from is `last_nav`. The names are
+not a semantic model of the protocol, `no_move` is bare by nature (the server's message carries
+`_messageType` and nothing else, checked in the ring), and a reader would have to discard 58% of the
+window before it started. What the audit *did* surface is that the corpus proved a data-integrity
+fact for months -- a protocol message name with a non-ASCII character in the client that runs -- and
+nothing was reading the place where it was written down.
+
+**Not fixed, deliberately:** the ring is a page change, and a page change cannot be verified live in
+the session that makes it (G110); the stamp bump would also invalidate the ~20 "what is owed is a
+`2026-11-11a` session" lines that are the project's honest ledger. The two edits are named here so
+they land with the next page build: filter the emitter names out of `incoming`, and have the
+`GameMapNoMovementMessage` handler record `keys` alongside `at` so the next session reads the real
+field names off the row instead of guessing them again.
+
+### 4. Eight generations of SFT corpus and no document says which is current
+
+`data/` holds `tool_sft`, `tool_sft_v2`, `tool_sft_v2b`, `tool_sft_v3`, `tool_sft_v3_dagger`,
+`tool_sft_dagger`, `core_sft_v3`, `core_sft_v4` -- about 150 MB of derived corpora -- plus
+`transitions`, `transitions_v2`, `transitions_clean`, `transitions_temporal` at 16-18 MB each. No
+file in `docs/`, `resume.md` or `rules.md` names `tool_sft_v3_dagger`, the newest and largest
+(57,976 rows: `quest.advance` 19,673, `nav.goto` 14,051, `fight.join` 12,564, `farm.start` 8,168).
+Nothing states which generation is the training set, so "train on the current corpus" is an
+instruction that cannot be followed from the repository alone. Recorded as a gap because the wrong
+answer is silent: every generation parses, and a stale one trains yesterday's policy.
+
+## G114. The gate could not see the fix it was supposed to guard *(measured 2026-11-12)*
+
+**Symptom.** `MUT_ONLY="the cached geometry is ignored" python tools/mutate_cause_gate.py` printed
+`MISSED ... 0 failing check(s)` against a tree where `refused |= self._sealed_borders(...)` had been
+replaced by `refused |= set()`. The sweep ran 671 mutations and the whole of G112 -- the refusal
+reader, the wall memory, the deduplicated ask, the sealed-geometry branch -- was invisible to it.
+
+**Cause.** The mutation sweep does not run the gate; it runs a fixed list of tests, `SNIPPET`, chosen
+for cheapness. `test_the_page_s_word_for_a_wall_is_read` was written on 2026-11-12 and never added to
+that list, so `planner.py` mutations were being judged by suites that predate the planner change. A
+mutation anchor with no suite that reads it is a green light that means nothing -- the same failure
+as G111 and G112 one level up: the gate writes a verdict and nothing consumes it.
+
+**Fixed.** The suite is in `SNIPPET`, and the batch grew from 6 to 8 anchors: *the cached geometry is
+ignored*, *the page's refusal is not read*, *the wall is keyed on the objective, not the map*.
+
+**Verified** (`MUT_ONLY="house map:"`, 8 of 673 selected, `scratch/mut_house.log`): **8 CAUGHT, 0
+missed**, `restored: 0 failing checks, exit 0`. The three new anchors fail 2, 4 and 2 checks
+respectively -- the geometry branch, the `last_nav` reader, and the per-map key. Before this change
+the same batch reported `MISSED ... 0 failing check(s)` for the geometry anchor, and the suite that
+would have caught it had never been run by the sweep at all.
+
+### Update 2026-11-12, second measurement: the ratchet matched text, not execution
+
+G114's fix added the missing suite to `SNIPPET`. The same hole was then found one file over, and
+the guard that was supposed to prevent it had been passing the whole time.
+
+Two anchors were written for `LiveSpell.castable_error` -- *the reason a spell could not be checked
+is dropped* (the parser) and *the unchecked spell is not named in the plan* (`plan_turn`'s notes).
+Both reported `MISSED ... 0 failing check(s)` against a suite that passes. Cause: `SNIPPET` ran
+`test_live_fight_corpus_is_read_in_process`, whose body names `combat/live_data.py`, so `_castable`
+was exercised there and its two older anchors failed for the right reason -- but nothing in the
+snippet imported `combat.test_battle_solver`, so the parser and the notes were invisible.
+
+`test_mutation_targets_have_witnesses` did not catch it, and could not: it matches the mutated
+**file name** against the *text* of each snippet test's body, and a comment that says
+`battle_solver.py` satisfies it. The ratchet checks that a name is mentioned, not that the file is
+executed -- so a suite can be absent and the ratchet stays green.
+
+**Fixed** by the same shape as the live-data runner: `test_the_battle_solver_reads_what_the_page_writes`
+runs `test_battle_solver.PayloadParsingTests` in-process, one check per class, plus a check that the
+class still carries the unchecked-spell rule so a rename is red instead of silently empty. It is in
+`SNIPPET`. Both anchors are `CAUGHT` now (`scratch/mut_castable1.log`, `scratch/mut_castable2.log`).
+
+**Not fixed, named:** the witness ratchet still matches text. Making it match execution would mean
+mapping each anchor's target file to the test that imports it, which the sweep could derive from a
+`--witnesses` mode of its own runner -- worth doing before the next batch of anchors, not instead of
+the runner that actually executes them.
+
+### Update 2026-11-12, third measurement: the gate never called three of its own suites
+
+`run()` is an explicit list of `_run_test(...)` calls, and nothing checked that every `test_*`
+function in the module was on it. Measured after the second update: **three suites were defined,
+passed when named on the command line, and were never executed by the gate** --
+`test_the_page_s_word_for_a_wall_is_read` (24 checks, G112's own suite),
+`test_the_unread_field_audit_can_find_an_unread_field` (4) and
+`test_the_battle_solver_reads_what_the_page_writes` (2). The gate reported 2,316 checks green while
+30 checks it was supposed to run never ran.
+
+`test_no_suite_stops_answering` could not see them, and this is the interesting part: it compares
+this run's per-suite counts against the previous run's, and a suite that has never run has no count
+in either run. The silence audit is about suites that *stopped* answering; this was suites that were
+never asked. The mutation sweep had run the wall suite (it was added to `SNIPPET` for G114), so the
+same suite was executed 715 times by the sweep and zero times by the gate.
+
+**Fixed** by adding all three to `run()`, and by a check inside `test_no_suite_stops_answering` that
+every `test_*` function defined in `agent/regression.py` appears in `run()`'s source. It reads the
+runner's own source because `run()` is defined after the tests and cannot call itself. The gate now
+runs **232** suites, not 229, and the check fails on a suite that is written and forgotten -- the
+class of omission that produced all three of these.
+
+### Update 2026-11-12, fourth measurement: the ratchet now measures instead of matching
+
+The second update ended with *"not fixed, named: the witness ratchet still matches text"*. This is
+that fix, and it changed the number the ratchet had been reporting for eight days.
+
+**What was wrong.** `test_mutation_targets_have_witnesses` read the sweep's target list, read
+`agent/regression.py`, and asked whether the mutated **file name** appeared in the *text* of any
+test body in `SNIPPET`. A comment satisfied it. So did a docstring. `planner.py` was counted as
+unwitnessed 66 times over because its tests call the planner without ever spelling its path, while
+`combat/battle_solver.py` counted as witnessed because a comment mentioned it. The number the
+ratchet reported -- 24 unwitnessed files of 77 -- was a fact about prose.
+
+**The instrument.** `agent/witness.py` records, per test, three things a test cannot fake:
+
+* `exec` -- a Python frame from the file ran (`sys.monitoring` PY_START, 3.12+; this host is 3.13).
+* `read` -- the file was opened for reading (the `open` audit event). The only channel that can see
+  a `.cs`, `.js` or `.json` target, which is read as text and never executed.
+* `spawn` -- a child process was started with the path in its argv (the `subprocess.Popen` audit
+  event). This is how `tools/test_fight_state_fields.js` is witnessed at all: the gate delegates it
+  to `node`.
+
+`run()` installs it once and `_run_test` brackets every suite with it, so the map is built by the
+gate's own run and cannot go stale. Cost measured over the sweep's own snippet: **59.4 s plain,
+60.3 s instrumented** (+1.5%), which is why it runs every time instead of caching to disk.
+
+**What it measured.** 77 target files, **1 unwitnessed**:
+
+| target | mutations | verdict |
+|---|---|---|
+| the other 76 | 712 | witnessed -- 65 by execution, 11 by a read or a spawn in a suite the sweep runs |
+| `data/capabilities.json` | 1 | only `test_tool_vocabulary` and `test_brain_lifecycle` read it, and neither was in `SNIPPET` |
+| `agent/test_brain_daemon.py` | 1 | executed by `test_brain_lifecycle`, which was not in `SNIPPET` |
+| `tools/patch-engine.js` | 5 | **nothing in the gate touches it at all** |
+
+The first two are wiring, not coverage: both files were witnessed by tests the sweep never ran, which
+is the same class as the three suites that were never asked (third update). **Fixed** by adding
+`test_tool_vocabulary` and `test_brain_lifecycle` to `SNIPPET`; the sweep is 2 tests longer (125) and
+2 targets better covered.
+
+The third is real and is now named, not counted: `_MUT_UNWITNESSED_KNOWN = ("tools/patch-engine.js",)`.
+Nothing in the gate loads it -- the only thing that does is a delegated
+`node tools/apply-map-resilience.js --check`, whose argv does not name the file, so node's `require`
+is invisible to every channel. Five mutations against it can only ever report `MISSED` with 0 failing
+checks. Fixing it means giving the JS suite a witness, not editing the list; the check fails in both
+directions, so the day a test does touch it the ratchet says so and asks to be tightened.
+
+**A scan is not a witness.** Two suites open almost every target -- `test_every_mutation_anchor_still_
+points_at_code` (77 of 77) and `test_doc_facts_self_witness` (74 of 77) -- and the first *deliberately
+opts out of judging* inside a sweep (`GATE_IN_MUTATION_SNIPPET`), because a mutated file would fail it
+on every arm. Counting them would restore exactly the false comfort this ratchet removes. The ratchet
+therefore ignores a witness that opens more than 90% of the target list, and checks that the
+scan-only set stays at the 2 it measured.
+
+**The instrument is witnessed by itself.** `test_the_witness_instrument_sees_what_a_test_touches`
+(6 checks, in `SNIPPET`) proves each channel against a module this test compiles into a temp
+directory: execution is attributed to *that* path, the read is recorded, a file it only wrote is not
+counted as a read, and a child process is recorded with the path in its argv. Without this, an empty
+map and a fully covered map look identical to a check that only counts entries -- the same
+silent-zero failure as G110's two instruments.
+
+**Verified** (`MUT_FILES=witness.py`, 2 of 717 selected, `scratch/mut_witness.log`): **2 CAUGHT, 0
+missed**, `restored: 0 failing checks, exit 0`. *The read and spawn channels go quiet* fails 2 checks
+(the read proof and the spawn proof); *the executed-file channel never turns on* fails 2 (the exec
+proof and the map-keyed-by-test-name check). The total is 717 anchors, not 715.
+
+**Retired, not silently dropped.** `test_the_snippet_can_see_its_own_mutation_targets` did the same
+job by basenames and was fully superseded, so it is deleted -- and `_RETIRED_SUITES` names it with
+what replaced it, because `test_no_suite_stops_answering` compares per-suite counts against the
+previous run and a deletion is otherwise indistinguishable from a suite that stopped answering.
+
+**The lesson that cost an hour.** The first draft normalised each path *inside* the PY_START
+callback (`Path(...).resolve()` per function call) and turned the 62 s pass into more than twelve
+minutes before it was killed. The hot path is now a single set insert of a raw `co_filename` string;
+normalisation happens once, at read time. An instrument that is paid per *call* may only do
+per-*file* work at the end.

@@ -1,0 +1,60 @@
+fight_outcomes.jsonl: 15 fight_outcome rows
+fight_outcomes.jsonl: 1 fight_outcome rows
+
+total fight_outcome rows: 16
+won value census: Counter({'True': 14, 'None': 2})
+status census: Counter({'None': 14, "'session_end'": 2})
+turns census: Counter({'None': 16})
+hp_loss census: Counter({'0.0': 14, 'None': 2})
+
+rows carrying an end dict: 13
+end.won census: Counter({'True': 13})
+end has battle_log: 10
+end.my_id present: 13
+
+=== per-fight: reported hp_loss vs battle-log loss ===
+src                       fid    won hp_before hp_after rep_loss log_loss rounds end.won
+fight_outcomes.jsonl     None   True     55.0     60.0    0.0      0.0      0 None
+fight_outcomes.jsonl      124   True    135.0    135.0    0.0      0.0      0 True
+fight_outcomes.jsonl      124   True    135.0    135.0    0.0      0.0      0 True
+fight_outcomes.jsonl      900   True     55.0     60.0    0.0      0.0      1 True
+fight_outcomes.jsonl      900   True     55.0     60.0    0.0      0.0      1 True
+fight_outcomes.jsonl     None   None     60.0     None   None      0.0      0 None
+fight_outcomes.jsonl     None   None     60.0     None   None      0.0      0 None
+fight_outcomes.jsonl     1356   True    120.0    125.0    0.0     19.0      2 True  <-- MISMATCH
+fight_outcomes.jsonl     1358   True    125.0    125.0    0.0      0.0      2 True
+fight_outcomes.jsonl     1359   True    125.0    130.0    0.0     20.0      2 True  <-- MISMATCH
+fight_outcomes.jsonl     1482   True    130.0    135.0    0.0     25.0      1 True  <-- MISMATCH
+fight_outcomes.jsonl     9349   True    125.0    125.0    0.0     11.0      2 True  <-- MISMATCH
+fight_outcomes.jsonl     1640   True    125.0    125.0    0.0      0.0      1 True
+fight_outcomes.jsonl     1641   True    125.0    135.0    0.0     43.0      3 True  <-- MISMATCH
+fight_outcomes.jsonl     1825   True     55.0     60.0    0.0      0.0      1 True
+fight_outcomes.jsonl      124   True    135.0    135.0    0.0      0.0      0 True
+
+mismatches: 5   reported 0.0 while log shows real damage: 5
+
+battle_log row types across all ends:
+  GameFightSynchronizeMessage                                87
+  GameActionFightPointsVariationMessage                      63
+  GameActionFightSpellCastMessage                            41
+  GameFightOptionStateUpdateMessage                          40
+  GameActionFightLifePointsLostMessage                       38
+  GameFightUpdateTeamMessage                                 34
+  GameFightShowFighterMessage                                25
+  GameFightTurnStartMessage                                  25
+  GameFightTurnReadyRequestMessage                           25
+  GameActionFightDispellableEffectMessage                    19
+  GameFightTurnEndMessage                                    19
+  GameFightNewRoundMessage                                   16
+  GameActionFightDeathMessage                                13
+  GameFightJoinMessage                                       10
+  GameFightPlacementPossiblePositionsMessage                 10
+  GameFightHumanReadyStateMessage                            10
+  GameFightStartMessage                                      10
+  GameFightTurnListMessage                                   10
+  GameFightEndMessage                                        10
+  GameActionFightNoSpellCastMessage                          8
+  GameActionFightSlideMessage                                4
+  GameFightStartingMessage                                   2
+  GameActionFightTackledMessage                              2
+  GameActionFightLifePointsGainMessage                       1

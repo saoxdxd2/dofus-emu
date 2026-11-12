@@ -41,8 +41,9 @@ from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E4
                             KILL_TYPES, MAP_TYPES, OBJECTIVE_TYPES,
                             ObsTracker, TALK_TYPES,
                             _params, declares_monster_target, direction_hint,
-                            known_map, map_graph, required_map, route_distance,
-                            route_first_hop, travel_hops)
+                            known_map, map_graph, map_walk, required_map,
+                            route_distance, route_first_hop, travel_hops,
+                            walkable_border_cells)
 from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
 
 # Prompt routing. The panel pins the planner, so it must decide from the goal
@@ -280,6 +281,27 @@ ROUTE_STEP_LIMIT = 12
 # to be crossed twice is not a distance problem, it is an exit that does not work
 # from here: the door, the skill on it, or the gate. Two retries, then explore.
 CROSSING_ASK_LIMIT = 2
+
+# The page records why a crossing did not happen, on `last_nav`, and nothing in the
+# agent read it. Measured live 2026-11-12 on map 146277376 (dofus-01, session
+# a0d4c924): every border cell of that map is `{l: 66}` -- the wall ring of a
+# building, while its interior cells are `{l: 67}` -- so no cell carries an exit
+# flag, `exits` is empty, and `nav.goto` answered
+#
+#     {"stage": "change_requested_no_cell", "from_map": 146277376,
+#      "to_map": 146277633, "direction": "top"}
+#
+# which is the page saying "I had no cell to cross from, so I asked the server
+# directly". The server refused. Nothing read that, so the planner asked the same
+# top neighbour three times under two different objectives, plus left, right and
+# bottom -- six `noop` steps spent on one wall, and the goal ended on it with three
+# objectives still ready.
+#
+# These two stages mean *the border* did not work, as opposed to the walk towards it
+# (`walk_stopped_short`, `cannot_reach`, `walk_failed`) or a request that is still
+# in flight (`change_requested`, `walk_then_change`). `map_change_failed` is an
+# exception from the page rather than an answer from the server, so it is not here.
+NAV_WALL_STAGES = frozenset({"change_requested_no_cell", "change_requested_at_edge"})
 
 # How many consecutive unplannable passes the *active* quest may have before it is
 # retired. One `None` from `_plan_quest` used to execute it immediately, and a single
@@ -571,6 +593,16 @@ class QuestPlanner:
         # Why each *recoverable* retirement happened, so a changed world can undo
         # it. Quests absent from this map were retired permanently.
         self._skip_sigs: Dict[int, Tuple[Any, ...]] = {}
+        # Why every retirement happened, keyed by quest, for both kinds. Without it
+        # the only readable fact was the count: live 2026-11-11 reported "104 retired"
+        # and "nothing plannable" in the same sentence and no way to tell whether the
+        # knowledge base was missing the quests, the objectives had no tool, or the
+        # server never honoured a start. Three different repairs, one number.
+        self._skip_reasons: Dict[int, str] = {}
+        # Quests in the downloaded catalogue the client has never offered. Not a
+        # verdict and not a retirement: a different id space, and the number is a
+        # coverage fact about the cache, not about the quest.
+        self._unseen: set = set()
         # The observation the last decision was made from, so a retirement asked
         # for by the loop (`skip`) can record the situation it happened in.
         self._last_obs: Optional[Dict[str, Any]] = None
@@ -682,6 +714,16 @@ class QuestPlanner:
         # 145490435, four crossings out, and the loop asked for the first hop
         # 145490945 from 145490944 eight times in a row).
         self._crossings: Dict[Tuple[Any, Any, int], int] = {}
+        # Borders this run has been told do not work, per map: `{from_map: {(direction,
+        # to_map)}}`. The page states the fact on `last_nav` but only for the last
+        # attempt, so a run that walks four borders has four facts and one slot --
+        # accumulate them here instead. Keyed on the map and not on the objective,
+        # because that is what a wall is: measured live 2026-11-12, map 146277376 was
+        # asked for the same top neighbour under two different quests.
+        self._walls: Dict[int, set] = {}
+        # Maps already reported as sealed, so the sentence is printed once per map and
+        # not once per pass: an unplannable run re-enters this decision every step.
+        self._wall_said: set = set()
         # A scripted fight can be started by a map NPC even when no monster group
         # exists. Walk the NPCs on the current map when the objective is a fight and the map
         # reports no group -- each one asked at most once per (quest, objective, map), remembered
@@ -739,6 +781,14 @@ class QuestPlanner:
         # The flag waits for the next observation before counting a failure.
         self._start_waits: set = set()
         self._pending_start: Optional[int] = None
+        # Quests the server refused to start, remembered apart from `_skipped`.
+        # `_skipped` is cleared whenever the quest log changes, which is right for a dead
+        # end this build worked out for itself -- a new log is new information. A refusal
+        # from the server is not that kind of fact: it is a property of the account and
+        # the quest, and a log change does not make it less true. Measured before this
+        # set existed: one character re-sent quest 584's start 297 times, once per map it
+        # walked across, because the log kept changing under it.
+        self._start_refused: set = set()
         # Objective types the server counts and completes itself. Asking the
         # client to validate one answers `objective_server_counted` without
         # sending anything, so the claim attempt is pure waste — worse, on a
@@ -857,6 +907,68 @@ class QuestPlanner:
             return
         self._quests_loaded = True
         self._quests = shared_quest_table()
+
+    def _absorb_catalog(self, obs: Dict[str, Any]) -> int:
+        """Add the quests the client itself describes to the planner's table.
+
+        The downloaded cache and the live game are two different id spaces: the cache
+        stops at id 2,546 and the live quests start at 3,841. So every quest the
+        character actually holds was absent from `self.quests`, `_plannable` answered
+        False, and the curriculum loop retired them one by one. Measured live
+        2026-11-11: `104 retired (the client has never shown this quest x88, not in
+        the quest knowledge base x13, ...)` while the three active quests 4278/4280/
+        4282 were all in the catalogue the page had captured and none of them were in
+        the table. The planner was reading a quest graph that could not contain the
+        quest it was standing in.
+
+        The client's graph wins for its own ids: it is the only description of a live
+        quest. Returns how many quests it added, so a caller can tell "nothing to
+        learn" from "learned nothing".
+        """
+        catalog = obs.get("quests_catalog") if isinstance(obs, dict) else None
+        if not isinstance(catalog, list) or not catalog:
+            return 0
+        self._ensure_quests()
+        # `_ensure_quests` hands out the process-wide table by reference, and that table
+        # is documented read-only. Writing the client's quests into it would leak one
+        # character's catalogue into every other planner in the process -- which the gate
+        # caught as a test that passed alone and failed inside the mutation snippet,
+        # where an earlier test had already populated the shared table.
+        if self._quests is shared_quest_table():
+            self._quests = dict(self._quests)
+        added = 0
+        for row in catalog:
+            if not isinstance(row, dict):
+                continue
+            try:
+                qid = int(row.get("id"))
+            except (TypeError, ValueError):
+                continue
+            steps = [step for step in (row.get("steps") or []) if isinstance(step, dict)]
+            if not steps:
+                continue
+            if qid not in self._quests:
+                added += 1
+            try:
+                level_min = int(row.get("level_min") or 1)
+            except (TypeError, ValueError):
+                level_min = 1
+            self._quests[qid] = {"id": qid, "name": row.get("name"),
+                                 "steps": steps, "level_min": level_min,
+                                 "source": "client"}
+            # A retirement recorded because the table lacked the quest is not a
+            # verdict about the quest: the evidence it was based on is now false.
+            if (qid in self._skipped
+                    and self._skip_reasons.get(qid) == "not in the quest knowledge base"):
+                self._skipped.discard(qid)
+                self._skip_sigs.pop(qid, None)
+                self._skip_reasons.pop(qid, None)
+            self._plannable_cache.pop(qid, None)
+        if added:
+            # The curriculum is ordered from the table, so a new quest is a new
+            # candidate. Dropping the order is cheap; keeping it hides the addition.
+            self._order = None
+        return added
 
     # -- curriculum --------------------------------------------------------
 
@@ -1646,6 +1758,75 @@ class QuestPlanner:
             self._note_crossing(key, here, dest)
         return ask
 
+    def _refused_borders(self, obs: Any, here: Any) -> set:
+        """The borders this map has already been shown to refuse, per the page.
+
+        `last_nav` is written by the page on every crossing attempt and carries
+        `stage`, `from_map`, `to_map` and `direction`; the agent read none of it. A
+        border named by `NAV_WALL_STAGES` has been asked for and did not move the
+        character, which is a fact about the *map* and not about the objective that
+        happened to ask -- the next quest does not open a door. So the answer is
+        keyed on `(direction, to_map)` and filtered out of every rotation, which is
+        what stops objective two from restarting a wall objective one already spent.
+
+        Returns an empty set when the page said nothing, said something else, or
+        said it about a different map: the caller's own budgets still apply. What is
+        remembered outlives the observation, because `last_nav` is one slot and a run
+        walks four borders.
+        """
+        try:
+            here_i = int(here)
+        except (TypeError, ValueError):
+            here_i = None
+        if here_i is None:
+            return set()
+        walls = self._walls.setdefault(here_i, set())
+        nav = obs.get("last_nav") if isinstance(obs, dict) else None
+        if isinstance(nav, dict) and nav.get("stage") in NAV_WALL_STAGES:
+            try:
+                from_map = int(nav.get("from_map"))
+                to_map = int(nav.get("to_map"))
+            except (TypeError, ValueError):
+                from_map = to_map = None
+            direction = nav.get("direction")
+            if from_map == here_i and to_map is not None and direction:
+                walls.add((str(direction), to_map))
+        return set(walls)
+
+    def _sealed_borders(self, here: Any, neighbours: Any) -> set:
+        """Borders the cached geometry says this map has no cell to cross from.
+
+        `data/maps/_index.json` carries `walk`, one character per cell, for 2,696 maps,
+        and nothing read it. This branch runs exactly when the client published no exit
+        -- so the cached geometry is the only witness left, and it answers the question
+        the run was spending steps to learn: is there a cell on that edge to stand on?
+
+        Measured live 2026-11-12 on map 146277376: every border cell `{l: 66}`, every
+        interior cell `{l: 67}`, `exits` and `doors` and `interactives` all empty, seven
+        `nav.goto` asks, no crossing. A door would have been handled by the branch above
+        this one, so an empty answer here means the ask cannot work.
+        """
+        try:
+            here_i = int(here)
+        except (TypeError, ValueError):
+            return set()
+        walk = map_walk(here_i)
+        # A walk string of the wrong shape is not evidence about this map: the cache
+        # may predate a map revision. Only a well-formed one is allowed to refuse.
+        if not walk or len(walk) < 4 * 14 or len(walk) % 14:
+            return set()
+        out = set()
+        for direction, dest in (neighbours or {}).items():
+            if direction not in ("left", "right", "top", "bottom"):
+                continue
+            try:
+                dest_i = int(dest)
+            except (TypeError, ValueError):
+                continue
+            if not walkable_border_cells(walk, str(direction)):
+                out.add((str(direction), dest_i))
+        return out
+
     def _indexed_crossing_ask(self, obj: Dict[str, Any],
                               obs: Optional[Dict[str, Any]],
                               here: Any,
@@ -1691,9 +1872,33 @@ class QuestPlanner:
         spent = {dest for (which, from_map, dest), tried in self._crossings.items()
                  if key is not None and which == key and from_map == here_i
                  and tried >= CROSSING_ASK_LIMIT}
+        # And what the page already said about these borders, which outranks the
+        # objective-scoped count above: a border that was asked for and did not move
+        # the character is spent for this map, whoever asks next. The cached geometry
+        # joins it here because it is the same claim, made before the first ask instead
+        # of after the seventh.
+        refused = self._refused_borders(obs, here_i)
+        refused |= self._sealed_borders(here_i, neighbours)
         order = ("left", "right", "top", "bottom")
         hint = direction_hint(obj)
-        usable = [d for d in order if d in neighbours and int(neighbours[d]) not in spent]
+        usable = [d for d in order
+                  if d in neighbours and int(neighbours[d]) not in spent
+                  and (d, int(neighbours[d])) not in refused]
+        if not usable and refused:
+            # Every neighbour this map publishes is unusable -- refused by the page, or
+            # walled by the cached geometry. Say it once, with the borders named, instead
+            # of letting the run end on a policy that "gave no reason".
+            try:
+                here_key = int(here)
+            except (TypeError, ValueError):
+                here_key = None
+            if here_key is not None and here_key not in self._wall_said:
+                self._wall_said.add(here_key)
+                print("[planner] map %s has no border left to ask for (%s); "
+                      "not asking again"
+                      % (here_key, ", ".join("%s->%s" % (d, m)
+                                             for d, m in sorted(refused))))
+            return None
         wanted = hint if hint in usable else None
         if wanted is None and target is not None:
             # Where the objective itself wants to go is the first question, not a
@@ -1713,8 +1918,10 @@ class QuestPlanner:
             near = int(neighbours[wanted])
         except (TypeError, ValueError):
             return None
-        if key is not None and here_i is not None:
-            self._note_crossing(key, here_i, near)
+        # No `_note_crossing` here: `_travel_call` owns that count for every ask, and it
+        # is the only caller of `_travel_ask`. Counting in both places charged one ask
+        # twice, which halved the border budget to a single retry -- measured 2026-11-12
+        # by replaying a live snapshot: three asks, then every border read as spent.
         return {
             "tool": "nav.goto",
             "args": {"map_id": near, "direction": wanted},
@@ -1860,35 +2067,22 @@ class QuestPlanner:
                 # (2026-10-29). The page can ask the server for the neighbour
                 # directly -- the same ChangeMapMessage a tapped door sends -- so
                 # the honest plan is one request per neighbour, not a read.
-                hint = direction_hint(obj)
-                wanted = hint if hint in neighbours else None
-                if wanted is None:
-                    order = ("left", "right", "top", "bottom")
-                    usable = [d for d in order if d in neighbours]
-                    # Rotate: a refused request costs one step, and trying the
-                    # same wall four times teaches nothing. The objective's own
-                    # attempt counter is the rotation slot.
-                    tries = self._claim_actions.get(key, 0) if key is not None else 0
-                    if usable:
-                        wanted = usable[tries % len(usable)]
-                if wanted is not None:
-                    try:
-                        near = int(neighbours[wanted])
-                    except (TypeError, ValueError):
-                        near = None
-                    if near is not None:
-                        return {
-                            "tool": "nav.goto",
-                            "args": {"map_id": near, "direction": wanted},
-                            "why": ("objective %s: map %s publishes no crossable "
-                                    "border; ask the server for the %s neighbour %s"
-                                    % (obj.get("type_id"), here, wanted, near)),
-                        }
+                #
+                # One rule, one implementation. This branch used to keep its own copy
+                # of the rotation: the same sentence, and neither the crossing budget
+                # nor the page's own refusals, so the identical decision a few lines up
+                # was bounded and this one was not. Measured live 2026-11-12 (session
+                # 4a87306f, map 146277376): `left` was asked at steps 7, 8 and 12 of a
+                # single goal, and `bottom` twice, because nothing here counted.
+                ask = self._indexed_crossing_ask(obj, obs, here, key, target)
+                if ask is not None:
+                    return ask
                 return {
                     "tool": "state.snapshot",
                     "args": {},
                     "why": ("objective %s: map %s reports no crossable border and "
-                            "names no neighbour" % (obj.get("type_id"), here)),
+                            "none of the neighbours it names is left to ask"
+                            % (obj.get("type_id"), here)),
                 }
             route = route_first_hop(here, target)
             if route is None:
@@ -3170,7 +3364,32 @@ class QuestPlanner:
             tuple(sorted((str(k), bool(v)) for k, v in gate.items())),
         )
 
-    def _retire(self, quest_id: Any, obs: Optional[Dict[str, Any]] = None) -> None:
+    def _skip(self, quest_id: Any, reason: str) -> None:
+        """Retire a quest permanently, saying why.
+
+        The reason is what turns `104 retired` from a verdict into a finding. It is
+        read back by `retirement_report`, which the no-call line carries, so a session
+        that parks can be diagnosed from its own log instead of from a re-run.
+        """
+        try:
+            qid = int(quest_id)
+        except (TypeError, ValueError):
+            return
+        self._skipped.add(qid)
+        self._skip_reasons[qid] = reason
+
+    def retirement_report(self, limit: int = 4) -> str:
+        """A compact `reason xN` line for the retirements this session made."""
+        if not self._skip_reasons:
+            return ""
+        counts: Dict[str, int] = {}
+        for reason in self._skip_reasons.values():
+            counts[reason] = counts.get(reason, 0) + 1
+        ordered = sorted(counts.items(), key=lambda kv: -kv[1])
+        return ", ".join("%s x%d" % (reason, count) for reason, count in ordered[:limit])
+
+    def _retire(self, quest_id: Any, obs: Optional[Dict[str, Any]] = None,
+                reason: str = "no progress") -> None:
         """Give up on a quest for now, and remember the situation."""
         try:
             qid = int(quest_id)
@@ -3178,6 +3397,7 @@ class QuestPlanner:
             return
         self._skipped.add(qid)
         self._skip_sigs[qid] = self._situation_sig(obs or {}, qid)
+        self._skip_reasons[qid] = reason
 
     def _reopen(self, obs: Dict[str, Any]) -> None:
         """Undo retirements whose situation has changed.
@@ -3224,6 +3444,7 @@ class QuestPlanner:
             if self._situation_sig(obs, qid) != sig:
                 self._skipped.discard(qid)
                 self._skip_sigs.pop(qid, None)
+                self._skip_reasons.pop(qid, None)
 
     def _market_listing(self, obs: Dict[str, Any], gid: Any) -> Optional[Dict[str, Any]]:
         """The cheapest cached listing for a gid, or None.
@@ -3971,13 +4192,15 @@ class QuestPlanner:
         if started in active or started in done:
             self._start_failures.pop(started, None)
             self._start_waits.discard(started)
+            self._start_refused.discard(started)
             return
         if started not in self._start_waits:
             self._start_waits.add(started)
             return
         self._start_failures[started] = self._start_failures.get(started, 0) + 1
         if self._start_failures[started] >= START_ATTEMPT_LIMIT:
-            self._skipped.add(started)
+            self._start_refused.add(started)
+            self._skip(started, "the server never showed it active")
             self._start_failures.pop(started, None)
             self._start_waits.discard(started)
 
@@ -4002,6 +4225,8 @@ class QuestPlanner:
         twin._client_quests = set(self._client_quests)
         twin._skipped = set(self._skipped)
         twin._skip_sigs = dict(self._skip_sigs)
+        twin._skip_reasons = dict(self._skip_reasons)
+        twin._unseen = set(self._unseen)
         twin._last_obs = self._last_obs
         twin._claim_attempts = dict(self._claim_attempts)
         twin._claim_failures = dict(self._claim_failures)
@@ -4011,9 +4236,12 @@ class QuestPlanner:
         twin._parked = set(self._parked)
         twin._route_tries = {key: dict(value) for key, value in self._route_tries.items()}
         twin._crossings = dict(self._crossings)
+        twin._walls = {map_id: set(walls) for map_id, walls in self._walls.items()}
+        twin._wall_said = set(self._wall_said)
         twin._pending_claim = None       # a fork starts before its first action
         twin._start_failures = dict(self._start_failures)
         twin._start_waits = set(self._start_waits)
+        twin._start_refused = set(self._start_refused)
         twin._pending_start = None
         twin._server_counted_types = set(self._server_counted_types)
         twin._claim_quarantine = set(self._claim_quarantine)
@@ -4189,6 +4417,8 @@ class QuestPlanner:
             self._quest_key = quests
             self._skipped.clear()
             self._skip_sigs.clear()
+            self._skip_reasons.clear()
+            self._unseen.clear()
             self._plannable_cache.clear()
         self._note_arrival(map_id_of(obs))
 
@@ -4262,6 +4492,7 @@ class QuestPlanner:
             self._prev_map = previous
         self._last_obs = obs
         self._note_situation(obs)
+        self._absorb_catalog(obs)
         if obs.get("in_fight"):
             return ToolCall("state.snapshot", {}, goal)
         self.tracker.observe(obs)
@@ -4542,7 +4773,7 @@ class QuestPlanner:
             if tutorial is not None:
                 continue
             if self._plan_none_reaches_limit(quest_id, (objective_id, need)):
-                self._skipped.add(quest_id)
+                self._skip(quest_id, "no plan for the ready objective")
 
         if detour is not None:
             # Nothing ready could be acted on directly. Take the detour after all:
@@ -4613,10 +4844,10 @@ class QuestPlanner:
             if qid in seen_ids:
                 continue
             seen_ids.add(qid)
-            if qid in self._seen_done or qid in self._skipped:
+            if qid in self._seen_done or qid in self._skipped or qid in self._unseen:
                 continue
             if not self._plannable(qid):
-                self._skipped.add(qid)
+                self._skip(qid, "not in the quest knowledge base")
                 continue
             if qid not in active_ids:
                 # Not active yet: accept it first. A quest is a contract before it
@@ -4631,10 +4862,26 @@ class QuestPlanner:
                     # change clears `_skipped`. Nothing here hard-codes a quest: an id the
                     # client reports later becomes startable, and the client-side quest
                     # capture (G29) is what will populate this set properly.
-                    self._skipped.add(qid)
+                    #
+                    # This is *not* a retirement. The downloaded catalogue and the live
+                    # game are different id spaces (the cache stops at 2,546, live ids
+                    # start at 3,841), so a curriculum built from the cache is mostly
+                    # quests this account will never be offered. Measured live 2026-11-11:
+                    # 88 of 104 retirements were exactly this, and they consumed the
+                    # retirement budget that exists for real dead ends -- after which the
+                    # run read "104 retired, nothing plannable" while three live quests sat
+                    # ready. Counted separately and never added to `_skipped`, so the budget
+                    # stays about the quests the client actually has.
+                    self._unseen.add(qid)
+                    continue
+                # The server already refused this start its limit of times. Re-adding it
+                # to `_skipped` is the point: that set is the bookkeeping which gets
+                # cleared with the log, and this memory outranks it.
+                if qid in self._start_refused:
+                    self._skip(qid, "the server refused to start it")
                     continue
                 if self._start_failures.get(qid, 0) >= START_ATTEMPT_LIMIT:
-                    self._skipped.add(qid)
+                    self._skip(qid, "the server never showed it active")
                     self._start_failures.pop(qid, None)
                     self._start_waits.discard(qid)
                     continue
@@ -4670,7 +4917,7 @@ class QuestPlanner:
             # step, and the session then read "nothing plannable" and parked).
             if self._plan_none_reaches_limit(qid, (self._tracker_step(obs, qid),
                                                    map_id_of(obs))):
-                self._skipped.add(qid)
+                self._skip(qid, "no plan for the active objective")
         if mode == "auto":
             # Full Auto: quests first (above); when the curriculum has nothing
             # plannable, a standing farm order keeps the session productive.
@@ -4679,17 +4926,20 @@ class QuestPlanner:
         tried = ""
         if last:
             tried = "; last plan was %s %s (%s)" % (last[0], last[1], last[2])
+        retired = self.retirement_report()
+        unseen = len(self._unseen)
         self.last_no_call = (
             "quest mode: nothing plannable -- %d ready objective(s), %d active "
-            "quest(s), %d retired, tutorial=%s, map=%s%s"
+            "quest(s), %d retired (%s), %d in the catalogue the client never offered, "
+            "tutorial=%s, map=%s%s"
             % (len(obs.get("ready_objectives") or []), len(active_ids),
-               len(self._skipped),
+               len(self._skipped), retired or "no reason recorded", unseen,
                "on" if tutorial is not None
                else ("raw" if obs.get("tutorial") else "off"),
                here, tried))
         return None
 
-    def skip(self, quest_id: Any) -> None:
+    def skip(self, quest_id: Any, reason: str = "no progress") -> None:
         """Retire a quest the agent cannot advance.
 
         Nothing inside `_plan_quest` can tell "not yet" from "not ever": it reads the
@@ -4698,7 +4948,7 @@ class QuestPlanner:
         this.
         """
         try:
-            self._retire(int(quest_id), self._last_obs)
+            self._retire(int(quest_id), self._last_obs, reason=reason)
         except (TypeError, ValueError):
             pass
 

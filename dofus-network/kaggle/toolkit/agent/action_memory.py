@@ -35,6 +35,47 @@ except Exception:  # noqa: BLE001 - import must never fail the loop
 
 FAIL_VERDICTS = ("failed", "blocked", "noop")
 
+# Argument fields worth naming in a memory line, in reading order. `direction` is here
+# because a navigation dead end is an *edge*, not a tool: five dead directions on one map
+# are five different walls.
+DEAD_ARG_KEYS = ("map_id", "direction", "npc_id", "item", "monster", "quest_id", "x", "y")
+# A solution is replayed, so the cell it happened on is part of what worked.
+SOLUTION_ARG_KEYS = ("map_id", "direction", "npc_id", "quest_id", "item", "gid",
+                     "x", "y", "cell", "elem_id", "slot")
+
+
+def label_call(tool: str, args: Optional[Dict[str, Any]], count: int = 1,
+               keys: Iterable[str] = DEAD_ARG_KEYS, width: int = 40) -> str:
+    """``tool(arg=value,...) xN`` -- the single renderer for every memory line.
+
+    Both stores need this and both had their own copy: `ActionMemory.describe` rendered
+    arguments, `PersistentMemory.describe_failures` did not, so the live line the policy
+    actually read (2026-11-11, dofus-01) was
+    ``already failed here: nav.goto x10; nav.goto x8; nav.goto x3; nav.goto x3`` --
+    four distinct dead edges as four identical words. Fixing one copy left the other
+    lying, which is why the format lives in exactly one place now.
+    """
+    clean = args if isinstance(args, dict) else {}
+    bits: List[str] = []
+    for k in keys:
+        if clean.get(k) is not None:
+            bits.append("%s=%s" % (k, clean[k]))
+    if not bits and clean:
+        # No named field: a digest still tells two calls apart. Prefer the non-volatile
+        # remainder so `cell` alone does not masquerade as intent, but fall back to the
+        # full arguments rather than collapsing to the bare tool name.
+        rest = {k: v for k, v in clean.items() if k not in _VOLATILE}
+        bits.append(json.dumps(rest or clean, sort_keys=True, default=str)[:width])
+    label = str(tool)
+    if bits:
+        label += "(" + ",".join(bits) + ")"
+    try:
+        if int(count) > 1:
+            label += " x%d" % int(count)
+    except (TypeError, ValueError):
+        pass
+    return label
+
 
 def context_signature(objective: Optional[Dict[str, Any]],
                       observation: Optional[Dict[str, Any]]) -> Tuple:
@@ -119,22 +160,22 @@ class ActionMemory:
         return out
 
     def describe(self, context: Optional[Tuple], limit: int = 5) -> Optional[str]:
-        """A compact line the model can read: what already failed here."""
+        """A compact line the model can read: what already failed here.
+
+        The argument has to be in the label or the line is useless. Measured live
+        2026-11-11 on dofus-01: 280 consecutive `nav.goto {"direction": "left"}`
+        calls on one map, every one a noop, while the memory said
+        `already failed here: nav.goto x5; nav.goto x3; nav.goto x2; nav.goto`.
+        Four distinct dead edges, rendered as four identical words -- the policy
+        was told the tool was dead but not which edge, so it kept choosing one.
+        `direction` is therefore rendered, and a call whose arguments are all
+        volatile falls back to a short digest instead of collapsing to the bare
+        tool name.
+        """
         rows = self.failures(context)
         if not rows:
             return None
-        parts: List[str] = []
-        for row in rows[:limit]:
-            arg_bits = []
-            for k in ("map_id", "npc_id", "item", "x", "y", "quest_id"):
-                if row["args"].get(k) is not None:
-                    arg_bits.append("%s=%s" % (k, row["args"][k]))
-            label = row["tool"]
-            if arg_bits:
-                label += "(" + ",".join(arg_bits) + ")"
-            if row["count"] > 1:
-                label += " x%d" % row["count"]
-            parts.append(label)
+        parts = [label_call(row["tool"], row["args"], row["count"]) for row in rows[:limit]]
         more = len(rows) - limit
         text = "already failed here: " + "; ".join(parts)
         if more > 0:

@@ -1,0 +1,117 @@
+=== event.kind counts (play_*) ===
+   149697  console
+    84538  send
+    75988  recv
+     7721  state_delta
+     1686  key
+     1510  probe
+     1203  map_change
+      901  session_start
+      886  state
+      847  connect
+      821  hook_report
+      564  visibility
+      455  click
+      153  fight_start
+      142  fight_end
+
+=== non-recv/send (kind,name) top 60 ===
+
+=== sessions === 898
+    29426  auto-2026-11-10T19-46-21-448Z
+    28475  auto-2026-10-22T05-50-10-322Z
+    26052  auto-2026-11-10T18-32-22-687Z
+    14290  auto-2026-10-29T16-45-40-552Z
+    12189  auto-2026-10-29T01-11-55-924Z
+     7802  auto-2026-10-27T17-12-08-730Z
+     7634  auto-2026-10-28T03-45-57-088Z
+     7092  auto-2026-10-26T09-08-15-565Z
+     6495  auto-2026-10-28T03-18-29-376Z
+     5940  auto-2026-10-27T17-12-16-153Z
+     5844  auto-2026-10-27T17-12-19-940Z
+     5723  auto-2026-10-27T17-12-12-038Z
+     4925  auto-2026-10-25T14-32-15-643Z
+     4917  auto-2026-11-10T18-01-38-811Z
+     4612  auto-2026-10-28T06-14-20-463Z
+     4486  auto-2026-11-11T13-56-13-086Z
+     4466  auto-2026-10-28T15-52-58-582Z
+     4040  auto-2026-11-04T10-17-39-006Z
+     3855  auto-2026-11-11T21-16-42-845Z
+     3634  auto-2026-11-08T18-54-14-392Z
+     3191  auto-2026-10-29T15-07-48-340Z
+     3140  auto-2026-10-29T02-13-01-380Z
+     3000  auto-2026-10-27T16-44-53-377Z
+     2534  auto-2026-11-11T21-32-21-557Z
+     2427  auto-2026-10-28T04-37-39-242Z
+     2348  auto-2026-10-28T20-18-56-855Z
+     2328  auto-2026-10-26T08-01-46-914Z
+     2281  auto-2026-11-08T21-46-02-415Z
+     2044  auto-2026-11-04T09-50-01-919Z
+     2022  auto-2026-10-28T03-30-24-899Z
+
+AT range: 2026-10-22T03:58:03.389000+00:00 -> 2026-11-12T01:28:11.716000+00:00
+
+=== per file ===
+   122292  play_dofus-01.20261111-033925.jsonl
+   106351  play_dofus-05.jsonl
+    38646  play_dofus-03.jsonl
+    29089  play_dofus-02.jsonl
+    21417  play_dofus-01.jsonl
+     8772  play_dofus-04.jsonl
+      252  play_dofus-06.jsonl
+       57  play_dofus-09.jsonl
+       56  play_dofus-07.jsonl
+       51  play_dofus-11.jsonl
+       44  play_dofus-10.jsonl
+       38  play_dofus-08.jsonl
+       31  play_dofus-12.jsonl
+       16  play_dofus-13.jsonl
+
+=== EXAMPLES per event.kind (non recv/send) ===
+
+-- console (149697) from play_dofus-01.20261111-033925.jsonl
+{"kind": "console", "level": "log", "text": "[Recorder] recording as auto-2026-10-22T04-11-23-396Z"}
+
+-- state_delta (7721) from play_dofus-01.20261111-033925.jsonl
+{"kind": "state_delta", "diff": {"kamas": {"from": 0, "to": null}}, "state": {"map": null, "cell": null, "hp": null, "max": null, "xp": null, "level": null, "kamas": null, "fight": false, "inv": 0}}
+
+-- key (1686) from play_dofus-01.20261111-033925.jsonl
+{"kind": "key", "key": "Alt", "code": "AltLeft", "tag": "body", "id": null, "typed": false}
+
+-- probe (1510) from play_dofus-01.20261111-033925.jsonl
+{"kind": "probe", "tag": "early", "report": {"at": 1792642285400, "href": "https://dofus.local/standalone.html?appVersion=3.14.3&buildVersion=1.74.8&versionCode=3014003", "ua": "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36", "globals": {"gui": {"type": "object", "keys": ["eventHandlers", "windowsContainer", "playerData", "serversData", "almanaxData", "eventConfigurationData", "boxArranger", "isConnected", "wBody", "_orientationChanged", "backgroundScreen", "splashScreenNewsManager", "loginScreen", "splashScreen", "connectionSplashScreen", "dropDown", "tooltipBox", "ipadRatio"], "functions": [], "count": 18, "children": {"playerData": {"type": "object", "keys": ["_events", "_maxListeners", "_pushToken", "loginName", "identification", "subscriptionLevels", "isInDialog", "currentGameMode", "characterBaseInformations", "characterBreed", "accountCapabilities", "achievements", "lifePoints", "effectiveMaxLifePoints", "movementPoints", "actionPoints", "isFightLeader", "isFighting", "isSpectator", "state", "experienceFactor", "forcedAccount", "shieldTutorialQuestId", "shieldTutorialQuestObjective", "hasAutoHeal", "alliance", "characters", "emoteData", "fightRequests", "guildData", "guild", "houseData", "inventoryManager", "inventory", "labyrinthInventory", "heroInventory", "belongings", "jobs", "position", "partyData", "quests", "socialData", "alignment", "adminMenu", "ToaData", "MatchmakingData", "shopData", "popupData", "teleporterData", "companionData", "labyrinthData", "heroData", "laddersData", "isRiding"], "functions": [], "count": 54, "children": {"inventory": {"type": "object", "keys": ["_events", "_maxListeners", "objects", "isLoaded", "presets", "kamas", "goultines", "w
+
+-- map_change (1203) from play_dofus-01.20261111-033925.jsonl
+{"kind": "map_change", "from": 0, "to": 147062786, "cell": null}
+
+-- session_start (901) from play_dofus-01.20261111-033925.jsonl
+{"kind": "session_start", "label": "auto", "ua": "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36", "href": "https://dofus.local/standalone.html?appVersion=3.14.3&buildVersion=1.74.8&versionCode=3014003", "screen": {"w": 1333, "h": 720}}
+
+-- state (886) from play_dofus-01.20261111-033925.jsonl
+{"kind": "state", "state": {"map": null, "cell": null, "hp": null, "max": null, "xp": null, "level": null, "kamas": 0, "fight": false, "inv": 0}}
+
+-- connect (847) from play_dofus-01.20261111-033925.jsonl
+{"kind": "connect", "args": [{"eventHandlers": {"error": [null], "critical": [null], "alert": [null], "emergency": [null]}, "groups": false}, "https://dt-proxy-production-login.ankama-games.com?STICKER=pbCpicg8q1GnG0Pk"]}
+
+-- hook_report (821) from play_dofus-01.20261111-033925.jsonl
+{"kind": "hook_report", "incoming": false, "note": "no message registry found; outgoing only", "cmKeys": ["eventHandlers", "lockMessages", "lastReceivedMessage", "unlockMessages", "connect", "close", "switchToGame", "disconnect", "sendMessage", "send", "__recorderHooked"]}
+
+-- visibility (564) from play_dofus-01.20261111-033925.jsonl
+{"kind": "visibility", "hidden": true}
+
+-- click (455) from play_dofus-01.20261111-033925.jsonl
+{"kind": "click", "tag": "div", "id": "resizableBody", "cls": "", "x": 1097, "y": 669, "cell": null}
+
+-- fight_start (153) from play_dofus-01.20261111-033925.jsonl
+{"kind": "fight_start", "state": {"map": 147063810, "cell": 330, "hp": 55, "max": 55, "xp": 0, "level": 1, "kamas": 0, "fight": true, "inv": 1}}
+
+-- fight_end (142) from play_dofus-01.20261111-033925.jsonl
+{"kind": "fight_end", "state": {"map": 147063810, "cell": 330, "hp": 60, "max": 60, "xp": 165, "level": 2, "kamas": 0, "fight": false, "inv": 1}}
+
+=== recv/send example ===
+
+-- recv from play_dofus-01.20261111-033925.jsonl
+{"kind": "recv", "name": "open", "args": false}
+
+-- send from play_dofus-01.20261111-033925.jsonl
+{"kind": "send", "via": "send", "name": "connecting", "args": {"language": "en", "server": "login", "client": "android", "appVersion": "3.14.3", "buildVersion": "1.74.9"}}

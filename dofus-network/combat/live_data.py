@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from collections import Counter, defaultdict
@@ -28,7 +29,13 @@ from combat.cli import run_main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAY_LOG = REPO_ROOT / "trajectories" / "play_dofus-05.jsonl"
-DEFAULT_BOARDS = REPO_ROOT / "trajectories" / "fight_boards.jsonl"
+# Where the autopilot writes boards: `self.log_path.with_name("fight_boards.jsonl")`,
+# and the app's log_path is under LOCALAPPDATA. This pointed at the repo's
+# `trajectories/` copy, which is an untracked leftover holding 8 boards against the
+# live file's 333 -- so the default command built from 2.4% of the corpus and said
+# nothing about it. Resolved the same way as combat/grid_dataset.py and grid_probe.py.
+DEFAULT_BOARDS = (Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+                  / "DofusFarm" / "fight_boards.jsonl")
 DEFAULT_OUT = REPO_ROOT / "trajectories" / "live"
 
 # How much damage the boards carried, and how much of it could be tied to the cast
@@ -46,6 +53,131 @@ CAST_RE = re.compile(
     r'"spellLevel":(?P<level>\d+)'
 )
 AUTHOR_RE = re.compile(r'"authorId":(?P<author>-?\d+)')
+
+CAST_TYPE = "GameActionFightSpellCastMessage"
+LOSS_TYPE = "GameActionFightLifePointsLostMessage"
+ROUND_TYPE = "GameFightNewRoundMessage"
+
+
+def _actions_from_log(log: List[Any]) -> List[Dict[str, Any]]:
+    """Cast rows from the client's `battle_log`, each with the damage it owns.
+
+    The two id spaces in this list do not meet. Measured over the 333 recorded
+    boards: `at_action` is 300 on every one of the 240 cast rows, while the 213
+    life-points-lost rows carry 91/96/97/98, and a loss row's `spell` is null on
+    all 213. So a damage row is tied to the most recent preceding cast by the
+    same source, at the same target, in the same round.
+
+    Measured on the 16 recorded fights that carry a log, counting each event once
+    (the longest log per fight -- the ring never truncated, max 163 of 800 rows):
+    51 casts, 47 damage rows, 15 of them attributable, landing on 14 casts and 9
+    monster|level|spell keys. Relaxing the rule to source alone, source+target or
+    source+round yields exactly the same 15, so the strict form costs nothing.
+    The other 32 have no preceding cast by their source at all: a tackle or a
+    poison tick, which no spell may be credited with.
+    """
+    rows: List[Dict[str, Any]] = []
+    last_cast: Dict[Any, Tuple[Dict[str, Any], int]] = {}
+    rounds = 0
+    for index, row in enumerate(log):
+        if not isinstance(row, dict):
+            continue
+        kind = row.get("type")
+        if kind == ROUND_TYPE:
+            rounds += 1
+            continue
+        if kind == CAST_TYPE:
+            entry = {
+                "type": kind,
+                "action_id": row.get("at_action"),
+                "spell_id": row.get("spell"),
+                "spell_level": row.get("spell_level"),
+                "source_id": row.get("source"),
+                "target_id": row.get("target"),
+                "destination_cell": row.get("cell"),
+                "critical": row.get("critical"),
+                "round": rounds,
+                # The ring is re-published on every board of a fight, so an event
+                # needs its own identity: two casts of the same spell at the same
+                # target in one round are two hits, not one.
+                "log_index": index,
+                "dealt": None,
+            }
+            rows.append(entry)
+            last_cast[row.get("source")] = (entry, rounds)
+            continue
+        if kind != LOSS_TYPE:
+            continue
+        loss = row.get("loss")
+        if loss is None:
+            continue
+        ATTRIBUTION["damage_rows"] += 1
+        prior = last_cast.get(row.get("source"))
+        if prior is None:
+            continue
+        entry, cast_round = prior
+        if entry["target_id"] != row.get("target") or cast_round != rounds:
+            continue
+        try:
+            value = abs(float(loss))
+        except (TypeError, ValueError):
+            continue
+        entry["dealt"] = (entry["dealt"] or 0.0) + value
+    return rows
+
+
+def _actions_from_last_actions(rows: List[Any], board_round: Any
+                               ) -> List[Dict[str, Any]]:
+    """The older producer's rows, joined on the action id it stamped on both.
+
+    Empty on all 333 recorded boards. Kept because it is the shape the page wrote
+    before `battle_log`, and a corpus recorded then still has to build.
+    """
+    damage_by_action: Dict[Any, float] = {}
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        loss = row.get("loss")
+        action_id = row.get("action_id")
+        if loss is not None:
+            ATTRIBUTION["damage_rows"] += 1
+            if action_id is not None:
+                try:
+                    damage_by_action[action_id] = (
+                        damage_by_action.get(action_id, 0.0) + abs(float(loss)))
+                except (TypeError, ValueError):
+                    pass
+        out.append({
+            "type": row.get("type"),
+            "action_id": action_id,
+            "spell_id": row.get("spell_id"),
+            "spell_level": row.get("spell_level"),
+            "source_id": row.get("source_id"),
+            "target_id": row.get("target_id"),
+            "destination_cell": row.get("destination_cell"),
+            "critical": row.get("critical"),
+            "round": board_round,
+            "log_index": None,
+            "dealt": None,
+        })
+    for entry in out:
+        dealt = damage_by_action.get(entry["action_id"])
+        kind = str(entry["type"] or "")
+        # Only a cast row owns the damage: the loss row carries the same action id,
+        # so attributing from every row would file the same hit twice.
+        if dealt and (not kind or "SpellCast" in kind):
+            entry["dealt"] = dealt
+    return out
+
+
+def _fight_actions(board: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The casts this board saw, from whichever list the client actually filled."""
+    log = board.get("battle_log")
+    if isinstance(log, list) and log:
+        return _actions_from_log(log)
+    return _actions_from_last_actions(board.get("last_actions") or [],
+                                      board.get("round"))
 
 
 def parse_play_log(path: Path, max_lines: Optional[int] = None
@@ -132,7 +264,7 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
     observed hits is enough to price an enemy turn (ARCH_REASSESSMENT XII.18).
     """
     boards: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
-    outcomes: Dict[str, Dict[str, Any]] = {}
+    outcomes: Dict[Tuple[str, int], Dict[str, Any]] = {}
     observed: Dict[str, Dict[str, Any]] = {}
     if not Path(path).exists():
         return [], [], [], {}
@@ -153,8 +285,14 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                 boards[(record.get("run") or "", int(fight_id))].append(record)
             elif record.get("kind") == "fight_outcome":
                 run = record.get("run") or ""
-                if run:
-                    outcomes[run] = record
+                # Keyed on the fight, not the run. One run holds several fights --
+                # measured: run 7a871278 carries 1356/1358/1359/1482 -- so a
+                # run-keyed dict kept the last one and labelled all four with it.
+                # 8 of the 19 fights in the recorded corpus carried another
+                # fight's verdict that way, every one of them `won: true`.
+                fight_id = (record.get("outcome") or {}).get("fight_id")
+                if run and fight_id is not None:
+                    outcomes[(run, int(fight_id))] = record
 
     monsters: Dict[int, Dict[str, Any]] = {}
     actions: List[Dict[str, Any]] = []
@@ -172,10 +310,15 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                 "fighters": [[f.get("id"), f.get("hp"), f.get("cell")]
                              for f in (board.get("fighters") or [])],
             }, sort_keys=True)
-            if key in seen_states:
-                continue
-            seen_states.add(key)
-            deduped.append(record)
+            # A repeated fighter state is not a repeated fight log. The ring is
+            # cumulative, so a board whose hp/cells match an earlier one can still
+            # carry a cast the earlier snapshot did not. `seen_actions` keys each
+            # event on its position in the ring, so the events dedup themselves.
+            # No measured difference on the recorded corpus (14 casts either way);
+            # this removes a path that could drop one.
+            if key not in seen_states:
+                seen_states.add(key)
+                deduped.append(record)
             for fighter in board.get("fighters") or []:
                 if fighter.get("team") != "enemy":
                     continue
@@ -214,33 +357,11 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                     descriptor = _spell_descriptor(raw)
                     if descriptor:
                         entry["spells"].setdefault(str(descriptor["id"]), descriptor)
-            # What each cast actually took off us.
-            #
-            # This used to join the cast row to its life-points-lost row on `action_id`,
-            # on the reading that the client stamps one id on both. Measured live on
-            # 2026-11-10 against fight 875: all 12 cast rows carried action_id 300 while
-            # all 8 damage rows carried 97 or 98, and every damage row had spell_id null.
-            # The two are separate id spaces, so the join matched nothing and
-            # `observed_damage` came out empty for every board -- silently, because an
-            # empty join and a fight with no damage look the same in the output.
-            #
-            # The counters below are what tell them apart. Until a join key that exists
-            # in the payload is found, a run reports how much damage it saw and how much
-            # it could attribute, instead of returning nothing and saying nothing.
-            damage_by_action: Dict[Any, float] = {}
-            for row in board.get("last_actions") or []:
-                action_id = row.get("action_id")
-                loss = row.get("loss")
-                if loss is not None:
-                    ATTRIBUTION["damage_rows"] += 1
-                if action_id is None or loss is None:
-                    continue
-                try:
-                    damage_by_action[action_id] = (
-                        damage_by_action.get(action_id, 0.0) + abs(float(loss)))
-                except (TypeError, ValueError):
-                    continue
-            for action in board.get("last_actions") or []:
+            # What each cast actually took off us. `_fight_actions` reads the list
+            # the client fills (`battle_log`) and attributes the damage there; the
+            # counters it keeps are what tell an empty join apart from a fight with
+            # no damage in it.
+            for action in _fight_actions(board):
                 spell_id = action.get("spell_id")
                 source_id = action.get("source_id")
                 if not spell_id or source_id is None:
@@ -249,16 +370,15 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                 source = fighters.get(source_id)
                 if not source or source.get("team") != "enemy":
                     continue
-                key = (run, fight_id, board.get("round"), source_id, spell_id,
-                       action.get("target_id"), action.get("destination_cell"))
+                # The cast's own round, not the board's: one log is re-published on
+                # every board of a fight, and the board's round advances over it.
+                key = (run, fight_id, action.get("round"), source_id, spell_id,
+                       action.get("target_id"), action.get("destination_cell"),
+                       action.get("log_index"))
                 if key in seen_actions:
                     continue
                 seen_actions.add(key)
-                dealt = damage_by_action.get(action.get("action_id"))
-                # Only a cast row owns the damage. The life-points-lost row that
-                # carries the same action id also carries `spell_id`, so attributing
-                # from every row would file the same hit twice -- and would file a
-                # hit whose caster we never saw cast.
+                dealt = action.get("dealt")
                 action_type = str(action.get("type") or "")
                 if dealt and (not action_type or "SpellCast" in action_type):
                     ATTRIBUTION["attributed"] += 1
@@ -311,7 +431,7 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
         fights.append({
             "run": run,
             "fight_id": fight_id,
-            "outcome": (outcomes.get(run) or {}).get("outcome"),
+            "outcome": (outcomes.get((run, fight_id)) or {}).get("outcome"),
             "boards": deduped,
         })
 

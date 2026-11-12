@@ -1,0 +1,1 @@
+C:\Users\sao\AppData\Local\Programs\Python\Python314\python.exe: can't open file 'C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\scratch\\live_data_now.py': [Errno 2] No such file or directory

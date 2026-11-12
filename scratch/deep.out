@@ -1,0 +1,110 @@
+=== A: gate_veto / memory_veto sample rows ===
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): objective 0: map 146276352 remembers a door cell 346 that leads to 145490435; stepping on it is the transition", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): learned choice: objective 0: map 146276352 remembers a door cell 346 that leads to 145490435; stepping on it is the transition", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): learned choice: objective 0: map 146276352 remembers a door cell 346 that leads to 145490435; stepping on it is the transition", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): learned choice: objective 0: map 146276352 publishes no crossable border; ask the server for the left neighbour 146407936", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): learned choice: objective 0: map 146276352 publishes no crossable border; ask the server for the left neighbour 146407936", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+  dofus-01.20261108-205337-063447.jsonl state.snapshot ok= True inner_ok= True err= None meta= {"why": "objective 13958 (Give a report to Great Jarl Ordyn.): learned choice: objective 0: map 146276352 publishes no crossable border; ask the server for the left neighbour 146407936", "gate_veto": true, "gate": {"rule": "state.snapshot|{}", "streak": 0, "would_veto": false}}
+
+=== B: longest state.snapshot streak in default.jsonl ===
+streak len 1581
+window 2026-10-26T09:36:19.175000+00:00 -> 2026-10-26T09:46:04.906000+00:00 duration_s= 585.7
+goals {'do all the quests': 1581}
+inner_ok {True: 1576, None: 5}
+observation_source {'carried': 1581}
+obs_age_ms min/med/max 351.7 353.5 1005.2
+distinct pre-obs (map,cell) during streak: 1
+sample: [(146276352, 328)]
+first row meta: null
+inner errors: {'None': 1581}
+
+=== C: objective counter trajectories (from step observations) ===
+default.20261026-074102-070180.jsonl           n= 4210 obj_completed first=0 last=0 max=0 | quests_finished first=None last=None max=None | step_obj_done max=2
+default.jsonl                                  n= 4801 obj_completed first=0 last=19 max=19 | quests_finished first=0 last=3 max=4 | step_obj_done max=10
+dofus-01.20261108-205337-063447.jsonl          n= 2544 obj_completed first=0 last=0 max=20 | quests_finished first=0 last=5 max=5 | step_obj_done max=14
+dofus-01.jsonl                                 n=  992 obj_completed first=0 last=0 max=0 | quests_finished first=5 last=6 max=6 | step_obj_done max=8
+dofus-02.20261029-022349-419629.jsonl          n= 2634 obj_completed first=4 last=14 max=20 | quests_finished first=0 last=2 max=4 | step_obj_done max=13
+dofus-02.jsonl                                 n=  478 obj_completed first=14 last=0 max=14 | quests_finished first=2 last=0 max=2 | step_obj_done max=0
+dofus-03.jsonl                                 n= 2007 obj_completed first=1 last=0 max=20 | quests_finished first=0 last=0 max=4 | step_obj_done max=13
+dofus-04.jsonl                                 n=  607 obj_completed first=0 last=18 max=18 | quests_finished first=0 last=2 max=2 | step_obj_done max=0
+dofus-05.20261029-170756-782023.jsonl          n= 3573 obj_completed first=0 last=19 max=19 | quests_finished first=0 last=2 max=2 | step_obj_done max=0
+dofus-05.jsonl                                 n=  593 obj_completed first=19 last=0 max=20 | quests_finished first=2 last=3 max=3 | step_obj_done max=9
+
+=== D: play_* client recorder census ===
+play rows total 327136
+fight_start total 153 recent 58
+fight_end   total 142 recent 57
+per file [start,end]: {'play_dofus-01.20261111-033925.jsonl': [78, 74], 'play_dofus-02.jsonl': [1, 1], 'play_dofus-03.jsonl': [26, 21], 'play_dofus-04.jsonl': [2, 2], 'play_dofus-05.jsonl': [46, 44]}
+console levels: {'log': 58394, 'info': 2781, 'warn': 85728, 'error': 2795}
+level at fight_end hist: {2: 5, 3: 6, 5: 1, 6: 4, 7: 12, 8: 8, 9: 12, 10: 5, 11: 7, 12: 17, 13: 13, 14: 21, 15: 1, 19: 1, 20: 1}
+
+TOP console error/warn texts:
+   62249  [WebGLRenderer.drawSpriteBatch] No buffer loaded for 
+    3406  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"id":"AnimStatique_1","base":"AnimStatique","direction":3}
+    3282  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"id":"AnimStatique_1","base":"AnimStatique","direction":1}
+    2620  [AnimationManager.clear] Trying to clear an already cleared animation manager
+     996  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"id":"AnimStatique_5","base":"AnimStatique","direction":7}
+     792  {}
+     772  [Actor._startPath] error: actor "4434089" is already moving.
+     699  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"id":"AnimStatique_5","base":"AnimStatique","direction":5}
+     656  UIElement.getPosition - The element does not exist or does not have rootElement
+     634  (node) warning: possible EventEmitter memory leak detected. %d listeners added. Use emitter.setMaxListeners() to increase limit. 11
+     616  isFeatureOn(scrollerBoundToWrapper) called before we can tell
+     459  [WebGLRenderer._drawSubBatch] Texture not loaded: bones/1/AnimEmoteInterface_1_1.png
+     450  [Actor._startPath] error: actor "4409663" is already moving.
+     381  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"base":"AnimStatique","type":null,"direction":1}
+     379  [WebGLRenderer.updateVertexBuffer] No buffer loaded for mapSceneStaticSprites145490435
+     315  [animationController.addScene] Scene already in the animation controller
+     292  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeFloorStaticSprites145490435
+     292  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeWallStaticSprites145490435
+     250  [WebGLRenderer.updateVertexBuffer] No buffer loaded for mapSceneStaticSprites145489923
+     232  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeFloorStaticSprites145489923
+     232  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeWallStaticSprites145489923
+     220  [ISO ENGINE] previous movement request has been refused, canceling movement
+     196  Attempt to call abstract method TemporaryAnimationManager.assignSymbol {"id":"AnimStatique_0","base":"AnimStatique","direction":0}
+     184  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeFloorStaticSprites145490946
+     184  [WebGLRenderer.updateVertexBuffer] No buffer loaded for tacticalModeWallStaticSprites145490946
+
+TOP refusal/error-like console texts:
+     772  [Actor._startPath] error: actor "4434089" is already moving.
+     450  [Actor._startPath] error: actor "4409663" is already moving.
+     273  [AgentGuard] claim refused quest=3841 objective=14070 reason=known_kick_signature
+     220  [ISO ENGINE] previous movement request has been refused, canceling movement
+     169  [Auth] guest login made no progress in 60s; reloading to retry
+     162  [Unhandled Rejection] {"message":"Failed to execute 'decodeAudioData' on 'BaseAudioContext': parameter 1 is not of type 'ArrayBuffer'."}
+     135  [Browser Error] Uncaught TypeError: Cannot read properties of null (reading 'error') at https://dofus.local/build/script.js?v=5e0ce3abcf:12
+      95  [Actor._startPath] error: actor "4404438" is already moving.
+      76  [Actor._startPath] error: actor "4425019" is already moving.
+      64  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/666/motion.p
+      60  [Actor._startPath] error: actor "4434148" is already moving.
+      49  [Actor._startPath] error: actor "4409667" is already moving.
+      48  connectionManager.disconnect: reason=LOGIN_ERROR
+      40  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/2063.png wit
+      40  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/40.png with 
+      39  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/1/motion.png
+      39  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3741.png wit
+      39  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3740.png wit
+      39  loadAndCreateImage: Image could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3699.png wit
+      36  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/gfx/alignments/wings.json: 
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/666/motion.json: Synt
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/40.json: SyntaxError:
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/2063.json: SyntaxErro
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3741.json: SyntaxErro
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/1/motion.json: Syntax
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3699.json: SyntaxErro
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3740.json: SyntaxErro
+      35  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/40.json with er
+      35  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/2063.json with 
+      35  loadAndParseJson: Could not parse json https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/maps/145490432.json: Syntax
+      35  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/gfx/alignments/wings.
+      35  [Standalone] Viewport sync notice: Cannot read properties of undefined (reading 'setStyles')
+      34  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/666/motion.json
+      34  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/skins/3741.json with 
+      34  loadAndParseJson: json could not be deleted: https://assets.local/dofustouch.cdn.ankama.com/assets/3.3.11_1h-,mO*yuB0Adnu4P-_1Fa9c2gqbLXKo/bones/1/motion.json w
+
+=== E: live_policy_decisions.jsonl (in-fight AI) ===
+rows 2112 window 2026-10-25T16:53:57.980282+00:00 -> 2026-11-10T22:23:09.882461+00:00
+ok: {True: 2040, False: 72}
+action types: {'move': 791, 'pass': 634, 'cast': 615, None: 72}
+same-counter hist (repeat identical decision): {7: 1, None: 2111}
+errors: {}

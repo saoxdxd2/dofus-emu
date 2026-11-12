@@ -1,0 +1,21 @@
+=== autopilot.jsonl: 8588 tool rows
+  session key present on 8588 rows
+  longest consecutive read run (no session split): 3162, ends at row 8528
+  tools in that run: {'state.snapshot': 3162}
+  sessions in that run: {'4f07933d': 3162}
+  ok values: {'True': 3152, 'False': 10}
+  wall span: 585.7 s over 3162 rows (0.185 s/row)
+  first row: {"tool": "state.snapshot", "ok": true, "cause": null, "error": null, "at": 1793007379.1772718}
+  last row : {"tool": "state.snapshot", "ok": false, "cause": "unavailable", "error": "client directive failed: no client instance is running (start one in DofusFarm first)", "at": 1793007964.9135273}
+  run broken by: {"tool": "quest.advance", "ok": false, "cause": null, "error": "client directive failed: no client instance is running (start one in DofusFarm first)"}
+
+=== default.jsonl: 4023 tool rows
+  session key present on 0 rows
+  longest consecutive read run (no session split): 1581, ends at row 3988
+  tools in that run: {'state.snapshot': 1581}
+  sessions in that run: {'None': 1581}
+  ok values: {'True': 1576, 'False': 5}
+  first row: {"tool": "state.snapshot", "ok": true, "cause": null, "error": null, "at": null}
+  last row : {"tool": "state.snapshot", "ok": false, "cause": null, "error": "client directive failed: no client instance is running (start one in DofusFarm first)", "at": null}
+  run broken by: {"tool": "quest.advance", "ok": false, "cause": null, "error": "client directive failed: no client instance is running (start one in DofusFarm first)"}
+

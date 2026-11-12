@@ -1402,18 +1402,18 @@ class FightOutcomeLog:
             return None  # a disconnected session is not a fight outcome
         hp_after = _hp_of(observation)
         alive = observation.get("alive") if isinstance(observation, dict) else None
+        # Standing alive after the board vanished is not a win: a flee, a timeout
+        # and a victory all leave the character on its feet. Only the server's end
+        # verdict or a death decides this. Everything else stays unknown, which the
+        # readers already handle -- online_learn skips a non-bool `won`, and
+        # outcome_stats counts it unresolved rather than as a draw or a loss.
         if alive is False or (hp_after is not None and hp_after <= 0):
             won: Optional[bool] = False
-        elif alive is True and hp_after is not None:
-            won = True
-        elif hp_after is not None:
-            won = True
+            won_source = "death"
         else:
             won = None
+            won_source = "unknown"
         hp_before = pending.get("hp_before")
-        hp_loss = (max(0.0, float(hp_before) - float(hp_after))
-                   if isinstance(hp_before, (int, float))
-                   and isinstance(hp_after, (int, float)) else None)
         end = observation.get("last_fight_end") if isinstance(observation, dict) else None
         fight_id = pending.get("fight_id")
         end_matches = False
@@ -1432,6 +1432,20 @@ class FightOutcomeLog:
                     fight_id = end_fight_id
                 if end.get("won") is not None:
                     won = bool(end.get("won"))
+                    won_source = "server_end"
+        # Damage taken comes from the fight's own action log. The HP delta cannot
+        # measure it: the character regenerates between the last hit and the
+        # observation, so all 14 resolved fights in the recorded ledger reported
+        # 0.0 while five of them had actually lost 19, 20, 25, 11 and 43 HP.
+        log_loss, log_turns = _fight_log_stats(end if end_matches else None)
+        if log_loss is not None:
+            hp_loss = log_loss
+            hp_loss_source = "battle_log"
+        else:
+            hp_loss = (max(0.0, float(hp_before) - float(hp_after))
+                       if isinstance(hp_before, (int, float))
+                       and isinstance(hp_after, (int, float)) else None)
+            hp_loss_source = "hp_delta" if hp_loss is not None else None
         # Challenges belong to the end message of *this* fight. A completed one
         # adds CHALLENGE_BONUS; a missed one, or an empty list, adds nothing.
         challenge_rows: List[Dict[str, Any]] = []
@@ -1439,7 +1453,10 @@ class FightOutcomeLog:
             challenge_rows = [row for row in end["challenges"] if isinstance(row, dict)]
         challenges_done = sum(1 for row in challenge_rows if row.get("success") is True)
         challenge_bonus = round(CHALLENGE_BONUS * challenges_done, 3)
-        reward = round((1.0 if won else 0.0) + challenge_bonus, 3)
+        # An undecided fight has no reward. Paying it 0.0 would file it beside a
+        # loss, which is the same lie pointed the other way.
+        reward = (round((1.0 if won else 0.0) + challenge_bonus, 3)
+                  if won is not None else None)
         estimate = pending.get("estimate") or {}
         row = {
             "kind": "fight_outcome",
@@ -1450,6 +1467,7 @@ class FightOutcomeLog:
             "started_by": pending.get("started_by"),
             "fight_id": fight_id,
             "won": won,
+            "won_source": won_source,
             "reward": reward,
             "challenges": challenge_rows,
             "challenges_done": challenges_done,
@@ -1458,7 +1476,8 @@ class FightOutcomeLog:
             "hp_before": hp_before,
             "hp_after": hp_after,
             "hp_loss": round(hp_loss, 1) if hp_loss is not None else None,
-            "turns": None,
+            "hp_loss_source": hp_loss_source,
+            "turns": log_turns,
             "features": estimate.get("features"),
             "estimate": {
                 "p_win": estimate.get("p_win"),
@@ -1560,6 +1579,49 @@ def _hp_of(observation: Optional[Dict[str, Any]]) -> Optional[float]:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return float(value)
     return None
+
+
+def _fight_log_stats(end: Optional[Dict[str, Any]]) -> Tuple[Optional[float], Optional[int]]:
+    """Damage this character took, and the rounds fought, from the end message's log.
+
+    Returns ``(hp_loss, turns)``, either ``None`` when the log cannot answer.
+
+    `turns` counts rounds, not fighter turns. `expected_turns` is calibrated in
+    player turns -- hp over incoming-per-round -- and one round is one player turn.
+    `GameFightTurnStartMessage` fires for every fighter (4 times on a 2-round fight
+    in the recorded corpus), so counting it would compare two different units.
+
+    The log is deliberately not filtered by `fight_id`: that field is null on every
+    action row and only the lifecycle messages carry it, while each ring holds
+    exactly one join and one end. Filtering on it would delete every damage row.
+
+    A log with no life-points-lost row at all cannot tell "took no damage" from
+    "the damage rows never arrived", so it answers ``None`` rather than 0.0. A log
+    that does carry them, none aimed at this character, is a real zero.
+    """
+    if not isinstance(end, dict):
+        return None, None
+    log = end.get("battle_log")
+    my_id = end.get("my_id")
+    if not isinstance(log, list) or not log or my_id is None:
+        return None, None
+    loss = 0.0
+    saw_loss_row = False
+    rounds = 0
+    for row in log:
+        if not isinstance(row, dict):
+            continue
+        kind = row.get("type")
+        if kind == "GameFightNewRoundMessage":
+            rounds += 1
+        elif kind == "GameActionFightLifePointsLostMessage":
+            saw_loss_row = True
+            if str(row.get("target")) != str(my_id):
+                continue
+            value = row.get("loss")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                loss += abs(float(value))
+    return (loss if saw_loss_row else None), (rounds or None)
 
 
 def _now() -> float:

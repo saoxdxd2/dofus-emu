@@ -1,0 +1,15 @@
+=== fight 3977 round 0 ===
+ recorded: {"actionable": false, "errors": ["enemy_max_hp_missing:-1", "enemy_max_hp_missing:-3", "enemy_max_hp_missing:-4", "self_max_hp_missing"], "ok": false, "value_ready": false, "version": 1, "warnings": ["enemy_spells_missing:-3", "enemy_spells_missing:-4", "enemy_stats_not_exposed", "self_initiative_missing", "self_max_ap_missing", "self_max_mp_missing", "unmodeled_effects:4,5,8,111,116,117,138,171,181,186,265,266,269,271,401,406,753,792,793,950,1026,1036,1040,1091,1160,1163,2018,2812,2945"]}
+ mine    : {"actionable": true, "errors": [], "ok": true, "value_ready": false, "version": 1, "warnings": ["enemy_max_hp_missing:-1", "enemy_max_hp_missing:-3", "enemy_max_hp_missing:-4", "enemy_spells_missing:-3", "enemy_spells_missing:-4", "enemy_stats_not_exposed", "self_initiative_missing", "self_max_hp_missing", "unmodeled_effects:116,117,138,171,181,186,265,266,269,271,401,406,753,792,793,950,1026,1036,1040,1091,1160,1163,2018,2812,2945"]}
+ payload is_my_turn=True in_fight=True my_id=4425019
+ board   is_my_turn=True in_fight=True my_id=4425019 me=True
+
+=== fight 3977 round 0 ===
+ recorded: {"actionable": false, "errors": ["enemy_max_hp_missing:-1", "enemy_max_hp_missing:-4", "self_max_hp_missing"], "ok": false, "value_ready": false, "version": 1, "warnings": ["enemy_spells_missing:-4", "enemy_stats_not_exposed", "self_initiative_missing", "self_max_ap_missing", "self_max_mp_missing", "unmodeled_effects:4,5,8,111,116,117,138,171,181,186,265,266,269,271,401,406,753,792,793,950,1026,1036,1040,1091,1160,1163,2018,2812,2945"]}
+ mine    : {"actionable": true, "errors": [], "ok": true, "value_ready": false, "version": 1, "warnings": ["enemy_max_hp_missing:-1", "enemy_max_hp_missing:-4", "enemy_spells_missing:-4", "enemy_stats_not_exposed", "self_initiative_missing", "self_max_hp_missing", "unmodeled_effects:116,117,138,171,181,186,265,266,269,271,401,406,753,792,793,950,1026,1036,1040,1091,1160,1163,2018,2812,2945"]}
+ payload is_my_turn=True in_fight=True my_id=4425019
+ board   is_my_turn=True in_fight=True my_id=4425019 me=True
+
+keys that differ: {'actionable': 64, 'errors': 64, 'ok': 64, 'warnings': 64}
+warning deltas: {'mine_only:enemy_max_hp_missing': 181, 'mine_only:self_max_hp_missing': 64, 'mine_only:unmodeled_effects': 64, 'theirs_only:self_max_ap_missing': 64, 'theirs_only:self_max_mp_missing': 64, 'theirs_only:unmodeled_effects': 64}
+error deltas: {'theirs_only:enemy_max_hp_missing': 181, 'theirs_only:self_max_hp_missing': 64}

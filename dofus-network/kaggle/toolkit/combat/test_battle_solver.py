@@ -318,9 +318,12 @@ class PayloadParsingTests(unittest.TestCase):
         """The client sends `ap: null` on our own fighter; `my_stats` has the budget.
 
         Measured 2026-11-10 on the captured corpus: 106 of 160 boards taken on our own
-        turn read `ap: 0`, and the grid dataset builder dropped 198 of 333 boards as
-        `no_positive_ap` because of it. The stat is the turn's budget and
-        `spell_cast_counts` resets each round, so the remaining AP is derivable.
+        turn read `ap: 0`. Re-measured 2026-11-12 over the same 333 boards: the same 106,
+        and this derivation recovers 152 of them -- 8 boards still read no positive AP
+        and every one of those had genuinely spent the turn (`action_points: 6`, two
+        casts of a 3-AP spell). `data/combat_grid/manifest.json` records `no_positive_ap:
+        8`, `actionable: 7`. The earlier sentence here said 198 of 333 were dropped; that
+        was true before the derivation existed and has not been true since.
         """
         payload = self.payload()
         payload["my_stats"]["action_points"] = 6
@@ -349,6 +352,42 @@ class PayloadParsingTests(unittest.TestCase):
         payload["spell_cast_counts"] = {}
         board = Board.from_fight_state(payload)
         self.assertEqual(board.my_ap, 2, "the client's own number wins when it is there")
+
+    def test_an_unchecked_spell_keeps_the_reason_it_was_unchecked(self):
+        """`castable: null` is available, and the page also says *why* it could not tell.
+
+        The page writes `castable_error` when `canCastThisSpell` threw (2026-11-12). The
+        answer is already handled -- unknown is available, the executor re-checks before
+        sending -- but the reason was dropped at parse time, so a broken client API looked
+        exactly like a healthy board. Measured on the 333 recorded boards: `castable` is
+        never null, so this path is untested live and the fixture is the only witness.
+        """
+        payload = self.payload()
+        payload["spells"][0]["castable"] = None
+        payload["spells"][0]["castable_error"] = "Cannot read property 'states' of null"
+        board = Board.from_fight_state(payload)
+        spell = board.spells[0]
+        self.assertTrue(spell.castable, "unknown is available, not refused")
+        self.assertEqual(spell.castable_error, "Cannot read property 'states' of null")
+
+        # The round trip carries it: every offline measurement reads the payload back.
+        row = board.to_fight_state()["spells"][0]
+        self.assertEqual(row["castable_error"], "Cannot read property 'states' of null")
+
+        # And the decision says it, so a live session reads as an unchecked spell rather
+        # than as a turn the solver chose to spend.
+        plan = BattleSolver().plan_turn(board)
+        joined = " | ".join(plan.notes)
+        self.assertIn("client could not check these spells", joined)
+        self.assertIn("Hit", joined)
+
+        # A spell the client *did* answer carries no error, and no note appears.
+        payload["spells"][0]["castable"] = True
+        payload["spells"][0].pop("castable_error")
+        clean = Board.from_fight_state(payload)
+        self.assertIsNone(clean.spells[0].castable_error)
+        self.assertNotIn("client could not check these spells",
+                         " | ".join(BattleSolver().plan_turn(clean).notes))
 
     def test_roll_encoding_matches_the_client(self):
         self.assertEqual(_roll({"dice_num": 10, "dice_side": 15}), (10, 15))
@@ -509,6 +548,27 @@ class BoardSerializationTests(unittest.TestCase):
         payload["spells"][0]["requires_los"] = not payload["spells"][0]["requires_los"]
         again = Board.from_fight_state(payload)
         self.assertNotEqual(again.spells[0], board.spells[0])
+
+    def _castable_after(self, value, present=True):
+        payload = self.board().to_fight_state()
+        if present:
+            payload["spells"][0]["castable"] = value
+        else:
+            payload["spells"][0].pop("castable", None)
+        return Board.from_fight_state(payload).spells[0].castable
+
+    def test_a_spell_the_client_refused_is_not_castable(self):
+        self.assertIs(self._castable_after(False), False)
+
+    def test_a_spell_whose_castability_check_threw_is_still_offered(self):
+        # The page writes null when `canCastThisSpell` threw. Reading that as a
+        # veto removes the spell from every candidate set, so the AI never gets to
+        # consider it -- and the executor re-checks before sending anyway.
+        self.assertIs(self._castable_after(None), True)
+
+    def test_a_spell_row_without_the_field_is_still_offered(self):
+        # All 1,341 spell rows in the recorded corpus predate `castable`.
+        self.assertIs(self._castable_after(None, present=False), True)
 
     def test_a_duel_board_can_ask_the_live_policy(self):
         from combat.duel import make_duel, solver_policy  # noqa: F401

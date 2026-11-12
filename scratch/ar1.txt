@@ -1,0 +1,17 @@
+distinct logs: 90
+  casts                            136
+  damage_rows                      119
+  no_preceding_cast_by_source      79
+  source                           40
+  source+target                    40
+  source+round                     40
+  source+target+round              40
+  enemy_damage_rows                40
+  enemy_attributed_strict          40
+enemy hits on me, attributed:
+    {"monster": "Harrizarre", "level": 7, "spell": 7125, "loss": 7.0, "round": 1}
+    {"monster": "Harrizarre", "level": 7, "spell": 7125, "loss": 7.0, "round": 1}
+    {"monster": "Weaselraff", "level": 6, "spell": 7129, "loss": 5.0, "round": 1}
+    {"monster": "Weaselraff", "level": 6, "spell": 7131, "loss": 3.0, "round": 1}
+    {"monster": "Weaselraff", "level": 6, "spell": 7131, "loss": 4.0, "round": 1}
+    {"monster": "Harrizarre", "level": 7, "spell": 7125, "loss": 7.0, "round": 1}
