@@ -140,6 +140,8 @@ LEX = ROOT / "ai" / "lexical_policy.py"
 CSPA = CSPANEL
 CSB2 = ROOT.parent / "desktop" / "agentbridge.cs"
 CMAINF = ROOT.parent / "desktop" / "mainform.cs"
+CFARM = ROOT.parent / "desktop" / "farmengine.cs"
+CWEB2 = ROOT.parent / "desktop" / "WebView2ClientForm.cs"
 CSPROG = ROOT.parent / "desktop" / "program.cs"
 TDS = ROOT / "agent" / "tool_dataset.py"
 ENGINE = ROOT.parent / "tools" / "patch-engine.js"
@@ -233,6 +235,7 @@ SNIPPET = ("import agent.regression as r\n"
            # not read those paths (measured 2026-11-12 while adding the toggle).
            "    r.test_instance_reset,\n"
            "    r.test_the_row_can_turn_the_ai_on_and_off,\n"
+           "    r.test_guest_registration,\n"
            "    r.test_keep_alive_instrument,\n"
            "    r.test_tutorial_hold,\n"
            "    r.test_live_transitions,\n"
@@ -2964,15 +2967,115 @@ MUTATIONS = [
     ("ai-row: a click on one instance stops the whole farm", CSPANEL,
      '                StopInstance(instanceId, "AI switched off in the row");',
      '                StopAuto("AI switched off in the row");'),
+    # Two callers now read this switch (the launch and the armed wait), so the anchor has
+    # to name the launch's own line -- measured 2026-11-12: with the bare `if` it mutated
+    # the first copy, the second kept the check green, and the arm read MISSED.
     ("ai-row: a launch ignores the operator's switch", CMAINF,
-     '                if (!_aiPanel.AiEnabledFor(instanceName))',
-     '                if (false)'),
+     '                if (!_aiPanel.AiEnabledFor(instanceName))\n'
+     '                {\n'
+     '                    Log("[AI] " + instanceName + ": AI is switched off for this instance; not starting");',
+     '                if (false)\n'
+     '                {\n'
+     '                    Log("[AI] " + instanceName + ": AI is switched off for this instance; not starting");'),
     ("reset: the stop file outlives the reset", CMAINF,
      '                AiPanel.StopFilePath(slot),\n                own,',
      '                own,'),
     ("reset: a fresh instance comes back switched off", CMAINF,
      '            if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, true);',
      '            if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, false);'),
+    # ---- the toggle and the reset were decided from a one-second-old cache, and a stop
+    # was believed the moment the daemon answered it (2026-11-12). Each of these leaves a
+    # host that compiles, paints the same pill, and cannot do what the cell promises.
+    ("ai-row: the click decides from the cached active set", CSPANEL,
+     '            if (IsRunningNow(instanceId, 1200))',
+     '            if (RunningInstanceOf(instanceId) != null)'),
+    ("ai-row: the stop is believed the moment the daemon answers", CSPANEL,
+     '                    if (WaitForBrainInactive(instanceId, StopConfirmMs))',
+     '                    if (true)'),
+    ("ai-row: the click freezes the window while the stop is confirmed", CMAINF,
+     '                    ThreadPool.QueueUserWorkItem(delegate\n                    {\n                        try { _aiPanel.ToggleAi(aiSlot); }',
+     '                    SafeInvoke(delegate\n                    {\n                        try { _aiPanel.ToggleAi(aiSlot); }'),
+    ("reset: the wipe runs while the old loop is still alive", CMAINF,
+     '                if (!_aiPanel.WaitForLoopGone(inst.Name, 10000))',
+     '                if (false)'),
+    ("reset: the stop file is deleted under a live loop", CMAINF,
+     '            if (_aiPanel != null && _aiPanel.IsRunningNow(slot, 600))',
+     '            if (false)'),
+    ("reset: the pool hands the reset slot its old guest back", CMAINF,
+     '                if (!manualLogin && !freshIdentity) acc = FarmEngine.GetAccountForSlot(slot);',
+     '                if (!manualLogin) acc = FarmEngine.GetAccountForSlot(slot);'),
+    # ---- "a totally new instance", not just a wiped profile (2026-11-12). `+ Add` and
+    # Clone both end in "Unique hardware fingerprint applied" and a new slot owns no pool
+    # entry. A reset that keeps the device, keeps the relay's old serial, appends the new
+    # guest behind the old one, or never repaints the pill, all look like a reset and are
+    # not one.
+    ("reset: the new instance keeps the old device", CMAINF,
+     '            ResetInstanceDeviceIdentity(inst.Name);',
+     '            /* the device is kept */'),
+    ("reset: the slot's own objectives survive the reset", CMAINF,
+     '                Path.Combine(NetworkSettings.AppDataRoot, "objectives." + slot + ".json"),',
+     '                Path.Combine(NetworkSettings.AppDataRoot, "unused." + slot + ".json"),'),
+    ("reset: the relay keeps stamping the old serial", CFARM,
+     '                if (!upstreamChanged && !identityChanged && IsLocalPortOpen(port, 180)) {',
+     '                if (!upstreamChanged && IsLocalPortOpen(port, 180)) {'),
+    ("reset: the fresh guest is appended behind the old one", CWEB2,
+     '                    int slotIdx = _freshIdentityMode ? FarmEngine.AccountIndexOf(_instanceId) : -1;',
+     '                    int slotIdx = -1;'),
+    ("reset: the slot never returns to normal seeding", CWEB2,
+     '                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch { }',
+     '                        try { } catch { }'),
+    ("ai-row: the pill is painted once and never again", CMAINF,
+     '                if (aiStateChanged) RepaintAiColumn();',
+     '                if (false) RepaintAiColumn();'),
+    # ---- the third AI state, and a guest that has to be *created* (2026-11-12).
+    # "the ai toogle in the instance isnt linked yet to that in the window correctly and
+    # we cant make it of or on on the startup from it", and "creating a guest acount now
+    # its not working". Each of these leaves a host that compiles and a page that runs:
+    # a badge that cannot say "waiting", a row that refuses an ON press during startup,
+    # and a seeder that presses playback on a profile that has nothing to replay.
+    ("badge: the pending start is never sent to the page", CMAINF,
+     '                    + ", " + (waiting ? "true" : "false") + ")";',
+     '                    + ", " + (false ? "true" : "false") + ")";'),
+    ("badge: the page badge has only two states", PAGE,
+     '                this.aiWaiting = !!waiting && !this.aiRunning;',
+     '                this.aiWaiting = false;'),
+    ("badge: a repaint drops the pending flag", PAGE,
+     '                this.setAiState(this.aiRunning, null, this.aiWaiting);',
+     '                this.setAiState(this.aiRunning, null);'),
+    ("badge: the tick does not diff the pending answer", CMAINF,
+     '                            _aiPushedWaiting[id] = waitingMine;',
+     '                            /* mutated: the wait is not diffed */'),
+    ("ai-row: an ON press before the window exists is refused", CSPANEL,
+     '                var arm = _startWhenClientReady;',
+     '                Action<string> arm = null;'),
+    ("ai-row: one waiter per instance is not enforced", CSPANEL,
+     '                    if (!AiStartPendingFor(instanceId))',
+     '                    if (true)'),
+    ("ai-row: the armed start ignores the switch on later ticks", CMAINF,
+     '                        if (!_aiPanel.AiEnabledFor(instanceName))\n'
+     '                        {\n'
+     '                            Log("[AI] " + instanceName + ": switched off while its client was starting; no loop started");',
+     '                        if (false)\n'
+     '                        {\n'
+     '                            Log("[AI] " + instanceName + ": switched off while its client was starting; no loop started");'),
+    ("ai-row: an off press during startup re-arms the switch", CSPANEL,
+     '            if (AiEnabledFor(instanceId) && AiStartPendingFor(instanceId))',
+     '            if (false)'),
+    ("ai-row: the cell never paints the wait", CMAINF,
+     '                        btnText = "AI WAIT";',
+     '                        btnText = "AI OFF";'),
+    ("guest: the seeder presses playback with no guest stored", CWEB2,
+     "if (typeof window.__dfRegisterGuest === 'function')",
+     "if (typeof window.__dfRegisterGuest === 'undefined')"),
+    ("guest: the fresh guest is never accepted", PAGE,
+     '                    win._canceled = false;   // what the accept button sets before close()',
+     '                    win._canceled = true;    // mutated: the window closes as cancelled'),
+    ("guest: registration runs even when a guest is stored", PAGE,
+     '            if (stored && stored.login && stored.password) {',
+     '            if (false) {'),
+    ("guest: the OAuth popup throws its browser profile away", CWEB2,
+     'string oauthDataDir = Path.Combine(oauthProfileRoot, "oauth-profile");',
+     'string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));'),
 ]
 
 

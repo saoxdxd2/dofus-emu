@@ -1138,6 +1138,55 @@ namespace DofusFarm.Engine {
             try { lock (_accountPoolLock) { GetAccountForSlot(0); return _cachedAccountPool != null ? _cachedAccountPool.Length : 0; } } catch { return 0; }
         }
 
+        /// <summary>The pool index a slot name maps to: `dofus-02` -> 1, `dofus-01` -> 0.
+        ///
+        /// `accounts.txt` is read by position, so this number is the only thing that ties a
+        /// client to an account. -1 when the name carries no usable number.
+        /// </summary>
+        public static int AccountIndexOf(string instanceName) {
+            if (string.IsNullOrEmpty(instanceName)) return -1;
+            Match m = RxTrailingDigits.Match(instanceName);
+            int n;
+            if (!m.Success || !int.TryParse(m.Groups[1].Value, out n) || n <= 0) return -1;
+            return n - 1;
+        }
+
+        /// <summary>Replace the account one slot owns, without moving any other slot.
+        ///
+        /// Appending is what the page does when it registers a guest, and it is why a reset
+        /// slot kept being handed the guest it was reset to escape: the file is read by
+        /// position, so the new line landed at the end and index 1 still named
+        /// `[GUEST]29d3f5e3b27c3f83`. Rewriting the line the slot already owns makes a reset
+        /// slot behave like a new one -- its index points at the account it registered.
+        /// Blank lines and comments are skipped while counting, exactly as `EnsureFilePool`
+        /// skips them, so "index 1" means the same line to both readers. Returns false when
+        /// the pool has no such line, and the caller appends as before.
+        /// </summary>
+        public static bool ReplaceAccountAt(int index, string login, string password) {
+            if (index < 0 || string.IsNullOrEmpty(login)) return false;
+            try {
+                lock (_accountPoolLock) {
+                    string path = new[] { Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "accounts.txt"),
+                                          Path.Combine(Environment.CurrentDirectory, "accounts.txt") }
+                        .FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+                    if (path == null) return false;
+                    string[] lines = File.ReadAllLines(path);
+                    int seen = -1;
+                    for (int i = 0; i < lines.Length; i++) {
+                        string t = lines[i].Trim();
+                        if (t.Length == 0 || t.StartsWith("#") || t.StartsWith("//")) continue;
+                        seen++;
+                        if (seen != index) continue;
+                        lines[i] = login + ":" + password;
+                        File.WriteAllLines(path, lines);
+                        _cachedAccountPoolUtc = DateTime.MinValue;   // next read re-parses
+                        return true;
+                    }
+                    return false;
+                }
+            } catch { return false; }
+        }
+
         private static readonly ConcurrentDictionary<string, string> _activeAccountClaims = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public static string ClaimAccount(string instanceId, string login) {
@@ -1303,7 +1352,22 @@ namespace DofusFarm.Engine {
                 string currentUpstream;
                 bool upstreamChanged = !_proxyCurrentUpstream.TryGetValue(port, out currentUpstream) ||
                                        !string.Equals(currentUpstream, normalizedUpstream, StringComparison.OrdinalIgnoreCase);
-                if (!upstreamChanged && IsLocalPortOpen(port, 180)) {
+                // The device identity is part of the relay, not just the egress: the proxy
+                // stamps -serial/-uuid on every request, so a relay left running on the old
+                // pair keeps presenting the device the operator just reset away from. Only
+                // compared when this caller actually supplied one -- EnsureProxyRunning is
+                // also called without identity by the supervisor, and treating "not given"
+                // as "changed" would rebuild a healthy relay on every probe.
+                RelaySpec liveSpec = null;
+                bool identityKnown = !string.IsNullOrEmpty(serialNo) && !string.IsNullOrEmpty(androidId);
+                bool identityChanged = identityKnown
+                    && _relaySpecs.TryGetValue(port, out liveSpec) && liveSpec != null
+                    && (!string.Equals(liveSpec.Serial ?? "", serialNo, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(liveSpec.Uuid ?? "", androidId, StringComparison.OrdinalIgnoreCase));
+                if (identityChanged)
+                    Log(string.Format("[PROXY] relay {0}: device identity changed ({1} -> {2}); rebuilding it",
+                        port, liveSpec.Serial ?? "?", serialNo));
+                if (!upstreamChanged && !identityChanged && IsLocalPortOpen(port, 180)) {
                     if ((_proxyProcesses.TryGetValue(port, out existingProc) && !existingProc.HasExited) ||
                         (_inProcProxies.TryGetValue(port, out existingInProc) && existingInProc.IsRunning)) return true;
                     try {

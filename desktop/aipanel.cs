@@ -351,6 +351,12 @@ namespace DofusFarm.UI
         private bool _brainHadInstances;
         private static readonly int BrainPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRAIN_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 95);
 
+        // How long a stop may take to appear in the daemon's own active set before the
+        // host says so instead of pretending. A step is normally a second or three and a
+        // fight is longer, so this is a reporting deadline, not a kill deadline: what it
+        // protects is the caller that wipes a profile or starts a loop straight after.
+        private const int StopConfirmMs = 8000;
+
         public AiPanel(string baseDir, Func<int, string> instanceBySlot, Func<int> instanceCount, Action<string> log)
         {
             _baseDir = baseDir;
@@ -766,6 +772,16 @@ namespace DofusFarm.UI
 
         private void HarvestUiIntoSettings()
         {
+            // The row's AI cell now runs the toggle on a worker (a stop waits for the
+            // daemon to confirm it), and the toggle starts a loop -- which reads these
+            // three controls. Reading a control off the UI thread is undefined even when
+            // it does not throw, so the harvest marshals itself instead of trusting every
+            // caller to be the UI thread.
+            if (IsHandleCreated && InvokeRequired)
+            {
+                try { Invoke((MethodInvoker)HarvestUiIntoSettings); } catch { }
+                return;
+            }
             _settings.Mode = _cmbMode.SelectedIndex == 2 ? "auto" : (_cmbMode.SelectedIndex == 1 ? "order" : "off");
             _settings.DryRun = _chkDry.Checked;
             _settings.Goals = _txtGoals.Text;
@@ -850,6 +866,28 @@ namespace DofusFarm.UI
             SetAiEnabled(instanceId, true);
             if (!InstanceIsOpen(instanceId))
             {
+                // Not a refusal any more: arm the wait. Pending is set here, before the
+                // worker runs, so a second click on the cell already sees "start in
+                // flight" and cancels instead of arming a second waiter.
+                var arm = _startWhenClientReady;
+                if (arm != null)
+                {
+                    // One waiter per instance: if a start is already in flight the
+                    // worker that owns it will clear the flag when it gives up, so
+                    // arming a second one here would only double the log lines.
+                    if (!AiStartPendingFor(instanceId))
+                    {
+                        NoteAiStartPending(instanceId, true);
+                        Append("[ai] " + instanceId + ": no client window yet; the loop starts when it opens");
+                        try { arm(instanceId); }
+                        catch (Exception ex)
+                        {
+                            NoteAiStartPending(instanceId, false);
+                            Append("[ai] could not arm the start: " + ex.Message);
+                        }
+                    }
+                    return;
+                }
                 Append("[ai] " + instanceId + ": no client window; not starting a loop");
                 return;
             }
@@ -1127,6 +1165,33 @@ namespace DofusFarm.UI
             return true;
         }
 
+        /// <summary>A launch asked for this slot's loop and is still waiting for its client.
+        ///
+        /// The auto-start path waits up to 20 s for the window to register before it can
+        /// start anything. That window is exactly when an operator presses the cell to say
+        /// "not this one" -- and the wait only read the switch once, at its start, so the
+        /// press was ignored and the loop came up anyway. Measured 2026-11-12: "we cant
+        /// make it of or on on the startup from it".
+        /// </summary>
+        private readonly HashSet<string> _aiStartPending =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public void NoteAiStartPending(string instanceId, bool pending)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            lock (_aiStartPending)
+            {
+                if (pending) _aiStartPending.Add(instanceId);
+                else _aiStartPending.Remove(instanceId);
+            }
+        }
+
+        public bool AiStartPendingFor(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return false;
+            lock (_aiStartPending) return _aiStartPending.Contains(instanceId);
+        }
+
         /// <summary>Record the operator's intent for one slot and persist it.</summary>
         public void SetAiEnabled(string instanceId, bool on)
         {
@@ -1150,14 +1215,31 @@ namespace DofusFarm.UI
         /// Measured 2026-11-12: the row could only Launch (which also starts the loop) or
         /// Stop (which is the whole farm's Stop button), so "this client's AI off, the
         /// others keep playing" had no control at all.
+        ///
+        /// The branch is chosen from the daemon's own table, read now. From the cached one
+        /// the cell could not be switched off at all: within a second of a start the cache
+        /// still said "not running", so the click asked to start, StartInstance answered
+        /// "already running", and the cell did nothing -- the exact click an operator makes
+        /// when they want the AI gone.
         /// </summary>
         public void ToggleAi(string instanceId)
         {
             if (string.IsNullOrEmpty(instanceId)) return;
-            if (RunningInstanceOf(instanceId) != null)
+            if (IsRunningNow(instanceId, 1200))
             {
                 SetAiEnabled(instanceId, false);
                 StopInstance(instanceId, "AI switched off in the row");
+                return;
+            }
+            // A launch already asked for this slot's loop and is waiting for its client.
+            // Nothing is running yet, so the click means "not this one" -- it must cancel
+            // that wait, not start a second one. Without this the cell could not turn the
+            // AI off during startup at all: the click re-armed the switch and the pending
+            // worker started the loop the moment the window appeared.
+            if (AiEnabledFor(instanceId) && AiStartPendingFor(instanceId))
+            {
+                SetAiEnabled(instanceId, false);
+                Append("[ai] " + instanceId + ": start cancelled before its client was ready");
                 return;
             }
             SetAiEnabled(instanceId, true);
@@ -1254,15 +1336,37 @@ namespace DofusFarm.UI
         }
 
         /// <summary>
-        /// Stop one instance's loop. Nothing else is touched: no shared stop file is
-        /// written, so the other clients keep playing.
+        /// Stop one instance's loop and do not return until it is really gone.
+        ///
+        /// Nothing else is touched: no shared stop file is written, so the other clients
+        /// keep playing. Returns true when the slot has no live loop afterwards.
+        ///
+        /// The daemon is asked first and unconditionally. It used to be asked only when the
+        /// cached active set already named the slot, and that set is refreshed by a 1 s
+        /// timer: a loop started a moment ago was "not running", so the stop fell through to
+        /// the child path, found no child, and printed "has no loop to stop" while the loop
+        /// kept playing. The daemon's answer is not the end of it either -- `/brain/stop`
+        /// only marks the instance "stopping" and writes its stop file, and the loop notices
+        /// at its next step -- so the active set is polled until the slot leaves it.
         /// </summary>
-        public void StopInstance(string instanceId, string why)
+        public bool StopInstance(string instanceId, string why)
         {
-            if (BrainIsRunning(instanceId) && BrainStopOne(instanceId, why))
+            if (string.IsNullOrEmpty(instanceId)) return false;
+            bool brainStillListsIt = false;
+            if (BrainProcessAlive() || BrainAnswers())
             {
-                SetRunningUi(IsRunning);
-                return;
+                if (BrainStopOne(instanceId, why))
+                {
+                    if (WaitForBrainInactive(instanceId, StopConfirmMs))
+                    {
+                        Append("[ai] " + instanceId + ": stopped (" + why + ")");
+                        SetRunningUiSafe(IsRunning);
+                        return true;
+                    }
+                    brainStillListsIt = true;
+                    Append("[ai] " + instanceId + ": the daemon accepted the stop but still lists it after "
+                           + (StopConfirmMs / 1000).ToString() + "s; its current step has to end first");
+                }
             }
             Process target = null;
             lock (_procLock)
@@ -1284,20 +1388,23 @@ namespace DofusFarm.UI
             if (target == null)
             {
                 Append("[ai] " + instanceId + " has no loop to stop (" + why + ")");
-                return;
+                return !brainStillListsIt;
             }
             try { File.WriteAllText(StopFilePath(instanceId), why + " at " + DateTime.Now.ToString("HH:mm:ss")); }
             catch { }
             Append("[ai] " + instanceId + ": stop requested (" + why + "); waiting for its current step");
+            bool exited = false;
             try
             {
-                if (!target.WaitForExit(4000))
+                exited = target.WaitForExit(4000);
+                if (!exited)
                 {
                     Append("[ai] " + instanceId + ": child did not exit; killing it");
-                    try { target.Kill(); } catch { }
+                    try { target.Kill(); exited = target.WaitForExit(2000); } catch { }
                 }
             }
             catch { }
+            return exited;
         }
 
 
@@ -1406,6 +1513,22 @@ namespace DofusFarm.UI
         }
 
         private Func<string, bool> _clientIsOpen;
+
+        /// <summary>Set by the host: wait for this instance's client, then start it.
+        ///
+        /// An ON press that arrives while the client is still booting is the operator
+        /// saying "drive this slot", not a mistake. It used to be refused outright
+        /// ("no client window; not starting a loop"), so the switch went on, nothing
+        /// was armed, and the row kept reading AI OFF for the rest of the launch --
+        /// measured 2026-11-12, "we cant make it of or on on the startup from it".
+        /// The wait belongs to the host because the starter touches UI controls.
+        /// </summary>
+        public Action<string> StartWhenClientReady
+        {
+            set { _startWhenClientReady = value; }
+        }
+
+        private Action<string> _startWhenClientReady;
 
         /// <summary>Whether the host has a window for this instance. The loop
         /// starter needs this before StartInstance, which refuses a closed slot.</summary>
@@ -1805,6 +1928,53 @@ namespace DofusFarm.UI
             }
             _brainStatusAt = DateTime.MinValue;
             _brainHadInstances = true;
+            // `ok` from /brain/start means "the request was accepted", not "a loop is
+            // running": the daemon keeps an instance whose previous loop is still alive
+            // and starts nothing for it. Measured 2026-11-12 -- a reset relaunched while
+            // the old loop was still exiting, the host printed "started", and the client
+            // sat there with no AI. So the answer is checked against the daemon's table,
+            // and a slot that did not start is asked for once more after the exit lands.
+            var missing = new List<string>();
+            HashSet<string> active = BrainActiveNow(1500);
+            if (active != null)
+            {
+                foreach (string id in ids)
+                    if (!active.Contains(id)) missing.Add(id);
+                if (missing.Count > 0)
+                {
+                    Thread.Sleep(600);
+                    active = BrainActiveNow(1500);
+                    var still = new List<string>();
+                    foreach (string id in missing)
+                        if (active == null || !active.Contains(id)) still.Add(id);
+                    missing = still;
+                }
+            }
+            if (missing.Count > 0 && active != null)
+            {
+                // Everything after the instance list is the same request.
+                string tail = json.ToString();
+                int keep = tail.IndexOf("],\"goals\":", StringComparison.Ordinal);
+                if (keep > 0)
+                {
+                    var again = new StringBuilder();
+                    again.Append("{\"instances\":[");
+                    for (int i = 0; i < missing.Count; i++)
+                    {
+                        if (i > 0) again.Append(',');
+                        again.Append(JsonQuote(missing[i]));
+                    }
+                    again.Append(tail.Substring(keep));
+                    string retry = BrainRequest("POST", "/brain/start", again.ToString(), 15000);
+                    active = BrainActiveNow(1500);
+                    var lost = new List<string>();
+                    foreach (string id in missing)
+                        if (active == null || !active.Contains(id)) lost.Add(id);
+                    foreach (string id in lost)
+                        Append("[ai] " + id + ": the daemon accepted the start but is not running it"
+                               + (JsonOk(retry) ? " (its previous loop was still exiting)" : ""));
+                }
+            }
             RefreshBrainStatus();
             Append("[ai] " + mode + " started on the brain daemon ("
                   + ids.Count.ToString() + " instance(s), " + steps.ToString()
@@ -1917,6 +2087,92 @@ namespace DofusFarm.UI
                 }
                 TryIdleTraining();
                 try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
+            }
+        }
+
+        /// <summary>The daemon's active set, asked now. Null means "no answer, I do not know".
+        ///
+        /// The paint path reads the cached set instead, because this blocks. It exists for
+        /// the two places where the answer has to be true rather than cheap: a click on the
+        /// AI cell, and a reset that must not wipe a profile under a loop that is still
+        /// running. Measured 2026-11-12 in `DofusFarm.log`: a stop was requested at 7943 and
+        /// a start 0.3 s later answered "already running" from the cache, and a reset found
+        /// "no loop to stop" while one was driving -- the cache is refreshed by a 1 s timer,
+        /// so every decision made from it is a decision made from the past.
+        /// </summary>
+        private HashSet<string> BrainActiveNow(int timeoutMs)
+        {
+            if (!BrainProcessAlive() && !BrainAnswers()) return null;
+            string body = BrainRequest("GET", "/brain/status", null, timeoutMs);
+            if (body == null) return null;
+            Match list = Regex.Match(body, "\"active\"\\s*:\\s*\\[([^\\]]*)\\]");
+            if (!list.Success) return null;
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match item in Regex.Matches(list.Groups[1].Value, "\"([^\"]+)\""))
+                active.Add(item.Groups[1].Value);
+            // Publish the answer: the pill is painted from the cache, so a verified read
+            // that did not update it would leave the row lying for another tick.
+            lock (_brainLock)
+            {
+                _brainRunning.Clear();
+                foreach (string id in active) _brainRunning.Add(id);
+                _brainHadInstances = active.Count > 0;
+            }
+            return active;
+        }
+
+        /// <summary>Poll the daemon until the instance leaves its active set, or the deadline.
+        ///
+        /// `/brain/stop` answers before the loop ends: the daemon only marks the instance
+        /// "stopping" and writes its stop file, and the loop notices at its next step. A
+        /// caller that acts on the reply alone acts on a promise.
+        /// </summary>
+        private bool WaitForBrainInactive(string instanceId, int timeoutMs)
+        {
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (true)
+            {
+                HashSet<string> active = BrainActiveNow(600);
+                if (active == null) return false;
+                if (!active.Contains(instanceId)) return true;
+                if (DateTime.UtcNow >= deadline) return false;
+                Thread.Sleep(120);
+            }
+        }
+
+        /// <summary>Whether this instance has a live loop, asked rather than remembered.</summary>
+        public bool IsRunningNow(string instanceId, int timeoutMs)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return false;
+            HashSet<string> active = BrainActiveNow(timeoutMs);
+            if (active != null && active.Contains(instanceId)) return true;
+            lock (_procLock)
+            {
+                foreach (KeyValuePair<Process, string> kv in _instanceByProc)
+                {
+                    if (!string.Equals(kv.Value, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
+                    try { if (!kv.Key.HasExited) return true; } catch { }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Wait for one slot's loop to be gone, for callers that must act after it.
+        ///
+        /// A reset relaunches a client and the launch asks the daemon for a loop. The daemon
+        /// ignores a start for a slot whose previous loop is still in its table ("alive ->
+        /// keep it"), so a reset that relaunches before the old loop has left gets a client
+        /// with no AI and a log line that says it started one.
+        /// </summary>
+        public bool WaitForLoopGone(string instanceId, int timeoutMs)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return true;
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (true)
+            {
+                if (!IsRunningNow(instanceId, 600)) return true;
+                if (DateTime.UtcNow >= deadline) return false;
+                Thread.Sleep(150);
             }
         }
 
@@ -2167,6 +2423,22 @@ namespace DofusFarm.UI
             _btnSend.Enabled = !running;
             _lblState.Text = running ? "running" : (_cmbMode.SelectedIndex == 2 ? "auto" : "idle");
             _lblState.ForeColor = running ? Color.FromArgb(74, 222, 128) : Color.FromArgb(148, 163, 184);
+        }
+
+        /// <summary>SetRunningUi from any thread.
+        ///
+        /// A stop now waits for the daemon to confirm it, and a caller must not freeze the
+        /// window for that, so the stop runs on a worker. SetRunningUi touches three
+        /// controls, which is the same reason AutoStartAi marshals its start.
+        /// </summary>
+        private void SetRunningUiSafe(bool running)
+        {
+            if (IsHandleCreated && InvokeRequired)
+            {
+                try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(running); }); return; }
+                catch { return; }
+            }
+            SetRunningUi(running);
         }
 
         private string ResolvePython()

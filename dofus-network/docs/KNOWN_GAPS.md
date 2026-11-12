@@ -8803,7 +8803,332 @@ the switch, a reset that leaves the stop file, and a reset that leaves the slot 
 (`aipanel.cs`, `mainform.cs`, `runtimesettings.cs`) are type-checked on every gate run — 3 checks,
 0 failed, delegation `ran: True`. Compilation is not behaviour: nothing here has clicked the cell.
 
+### Second pass, after the operator clicked it (2026-11-12)
+
+The operator's report was exact: *"the ai off and on isnt working same for the reset"*. Five
+separate defects produced that one sentence, and they share a shape — **the host decided from a
+one-second-old cache, and believed every reply the daemon gave it**.
+
+1. **The toggle chose its branch from the cache.** `ToggleAi` asked `RunningInstanceOf`, which reads
+   `_brainRunning` — refreshed by a 1 s timer, and read *before* the pool thread that refreshes it
+   returns. Within a second of a start the cache still said "not running", so the click asked to
+   start, `StartInstance` answered "already running", and the cell did nothing. In `DofusFarm.log`
+   at 7943-7946: `stop requested (in-game badge)` then, 0.3 s later, `[ai] dofus-01 is already
+   running`. **Fix:** `IsRunningNow(id, ms)` / `BrainActiveNow(ms)` read `/brain/status`
+   synchronously and republish it; the click decides from that. The pill still paints from the
+   cache, because a probe per paint would block the window.
+
+2. **The stop was gated on the same cache and confirmed by nothing.** `if (BrainIsRunning(id) &&
+   BrainStopOne(...))` meant a slot the cache had not caught up with fell through to the child path,
+   found no child, and printed "has no loop to stop" while the loop kept playing. And `/brain/stop`
+   answers *before* the loop ends — it only marks the instance `stopping` and writes the stop file —
+   so the reply was treated as a fact. **Fix:** the daemon is asked unconditionally, then
+   `WaitForBrainInactive(id, 8 s)` polls the active set, and the host says so when it has not left
+   ("its current step has to end first") instead of pretending.
+
+3. **`/brain/start` answers `ok` without starting anything.** The daemon keeps an instance whose
+   previous loop is still alive (`if current.alive(): started.append(...); continue`). A relaunch
+   that raced the old loop's exit therefore logged `auto started on the brain daemon` and ran
+   nothing — a client with no AI and a log line claiming one. **Fix:** `BrainStart` checks the
+   ids against the active set, waits 600 ms, and re-asks for the ones that are missing.
+
+4. **The reset wiped the profile under a live loop.** It asked for the stop on the UI thread and
+   wiped 0 ms later: the old loop was still driving the client being closed and still appending to
+   the log being deleted. **Fix:** stop → close the client → `WaitForLoopGone(10 s)` → wipe →
+   clear the AI state. `ResetInstanceAiState` moved *after* the wipe and now refuses to delete the
+   stop file while a loop is alive — deleting the file the loop is obeying cancels the stop.
+
+5. **The reset handed the slot back the guest it was reset to escape.** `accounts.txt` is
+   positional, and `force_fresh_identity.flag` was honoured inside `WebView2ClientForm` but not at
+   the launch, which set `opts.AccountLogin` from the pool. Live, in this order:
+   `[RESET] dofus-02: profile wiped` → `assigned visitor/account from accounts.txt:
+   [GUEST]29d3f5e3b27c3f83` → `Your account has been permanently banned`. The "fresh" instance was
+   the banned one. **Fix:** the launch honours the flag, so a reset slot keeps the guest its own
+   profile registered.
+
+**Verified** (`MUT_ONLY="ai-row: the click decides,…,reset: the pool hands"`, 6 of 728 selected,
+`scratch/mut_toggle2.log`): **6 CAUGHT, 0 missed**, `restored: 0 failing checks, exit 0`. The six
+mutations are the six defects above, each re-introduced as a host that still compiles and still
+paints the same pill.
+
+**The environment was also banned, and no code change can fix that.** `haapi.ankama.com/json/
+Ankama/v5/Api/CreateApiKey -> 401 {"reason":"BAN"}` came back for a profile that had just been
+wiped, i.e. for a brand-new guest, so the ban is on the egress/device and not on the account. The
+loop's own answer is correct: it reads the popup, prints *"the login screen reports a permanent
+ban … reset this slot for a fresh guest"*, and ends in 8 s with `stopped while waiting for the
+world`. That end reason is what the row now reports; a slot that cannot log in will keep ending
+there until the egress is clean, and that is a fact about the network, not about the toggle.
+
 **Not fixed, named:** nothing restarts a loop that ended. The operator's rule is that the loop
 runs until the goals are done or they stop it, and a supervisor that restarts a "goals exhausted"
 loop would spin forever on a broken objective. What the operator needs instead -- and now has -- is
 to see which end it was and to bring one client back with one click.
+
+## G116. The reset was a wiped profile, not a new instance, and the row's pill was painted once *(measured 2026-11-12)*
+
+The operator's report, after G115 shipped: *"it still dont reset like a totaly new instance check how
+we creat new instance to understand the differance and the toogle is always on off while it most be
+sync with the on showing in the windows that have (at start auto) or stop"*. Two complaints, two
+different mistakes, and the second one explains why the first one looked like it had not been fixed.
+
+### What "a new instance" actually is
+
+`+ Add` runs `FarmEngine.ProvisionInstance`, and `Clone` ends its own log line with **"Unique hardware
+fingerprint applied"** (`farmengine.cs`; both call `NewRandomIds` + `WriteIdentity`). A WebView2 slot
+keeps one pair in `asset_cache/identity/<slot>.txt` (`serial|androidId`, e.g.
+`RZ8MBBE1F168|374838ea19824b8b`) so that one slot is one phone across launches, and
+`EnsureProxyRunning(..., serialNo, androidId, profile)` hands it to the relay, which stamps it on
+every request (`-serial`, `-uuid`). So a *new instance* is five things:
+
+| what a new slot has | reset before this |
+|---|---|
+| an empty `webview2_profiles/<slot>` | wiped and recreated — **same** |
+| a **new** `asset_cache/identity/<slot>.txt` | **kept**: same serial, same Android id |
+| no account at its pool index, so a guest registers | **handed `accounts.txt[index]`** (the banned guest) |
+| no `autopilot.<slot>.jsonl`, no stop file, no lock | cleared (G115) |
+| no `objectives.<slot>.json` | **kept** |
+
+Three of the five were wrong. The reset produced a clean *browser* on the same *phone*, logging in
+as the same *account*.
+
+### The four defects
+
+1. **The device was never rotated.** `ResetInstanceProfile` deleted the profile directory and nothing
+   else, so the "fresh" instance still presented the serial the server had already banned. This is
+   the difference the operator asked about: `+ Add` ends in a new fingerprint, reset ended in the old
+   one. **Fix:** `ResetInstanceDeviceIdentity(slot)` deletes `asset_cache/identity/<slot>.txt` (the
+   next launch regenerates through the same `LoadInstanceIdentity` a new instance uses) and
+   `objectives.<slot>.json`, and runs inside the wipe so the relaunch reads the new pair.
+
+2. **The relay kept the old serial.** `EnsureProxyRunning` returned early when the port was open and
+   the *upstream* had not changed — the identity was not part of "same relay". Rotating the file
+   would have changed nothing on the wire. **Fix:** the early return now also compares
+   `_relaySpecs[port].Serial/Uuid`, and only when the caller supplied an identity (the supervisor
+   calls it without one, and "not given" must not mean "changed"). It logs
+   `relay N: device identity changed (old -> new); rebuilding it`.
+
+3. **The new guest was appended behind the old one.** `SavePermanentAccount` appends, and
+   `accounts.txt` is read by position, so the fresh guest landed at the end while index 1 still named
+   `[GUEST]29d3f5e3b27c3f83`. **Fix:** in fresh-identity mode the slot rewrites its own line
+   (`FarmEngine.ReplaceAccountAt`, counting only the lines `EnsureFilePool` counts) and the flag is
+   dropped once it does, so the slot returns to normal seeding owning the guest it registered. An
+   OAuth login does not do this: `_freshIdentityMode` is set by the reset's flag only.
+
+4. **The pill was painted once and never repainted.** `IsRunningFor` is the right source, but the
+   grid repaints only when something calls `RefreshGrid`, and a loop that starts a beat after the
+   click (or ends while nobody is clicking) never triggers one. The 1 s `RefreshAiLive` tick knew the
+   new answer — it pushed it to the window badge — and left the cell alone. Live: the row read
+   `AI OFF` while the window read `AI: running`, so the cell the operator pressed to switch the AI
+   on was *stopping* a loop they believed was off. **Fix:** the tick repaints the AI column when the
+   answer changes (`RepaintAiColumn`), on the same tick that pushes the badge.
+
+   A second path could make the two disagree on its own: `PushAiStateAll` pushed the panel's own
+   `RunningNow` flag into **every** window, so a daemon that died while the flag was still set told
+   each badge "AI: running" while its row (per instance, correct) said OFF. A per-window badge has no
+   business receiving an aggregate answer, so it now re-pushes each window's own.
+
+### The host that was running predated all of it
+
+`DofusFarm.exe` on disk was from 15:27; the G115 source was in it, the five fixes of that session
+were not. The live log proves which build was running: `[RESET] dofus-02: profile wiped` followed by
+`assigned visitor/account from accounts.txt: [GUEST]29d3f5e3b27c3f83`, a line the current source can
+no longer print for a reset slot. **A fix that is not in the binary is not a fix.** The host is now
+compiled from this tree by the gate's own Roslyn invocation (the same 25-file list and references as
+`builder/build.cs`, plus `app_icon.ico`), installed as `DofusFarm.exe` (601,088 B), with the previous
+binary kept as `DofusFarm.exe.old-2026-11-12` (595,456 B). It passes
+`--ai-status-selftest dofus-02` (exit 0), which is a real load of the assembly, not a grep.
+
+### Verified
+
+- Gate suites, run standalone: `test_instance_reset` **23 checks, 0 failed** (was 16),
+  `test_the_row_can_turn_the_ai_on_and_off` **17** (was 15), `test_per_instance_ai` **27** (was 26),
+  `test_csharp_compile` **3, 0 failed**.
+- New mutation anchors: `reset: the new instance keeps the old device`, `reset: the slot's own
+  objectives survive the reset`, `reset: the relay keeps stamping the old serial`, `reset: the fresh
+  guest is appended behind the old one`, `reset: the slot never returns to normal seeding`,
+  `ai-row: the pill is painted once and never again`. Sweep of those six:
+  **6 CAUGHT, 0 missed**, `restored: 0 failing checks, exit 0` (`scratch/mut_newinst.log`).
+- Full gate: **2,388 checks, 3 failed** (`scratch/gate_2026-11-12_newinst.log`). The three are the
+  operator's 15:29 rebuild of `setup.exe` and are unchanged from the previous run: it ships
+  `dofus-network/.venv` (717.8 MB, 19,913 files) and `dofus-network/scratch` (261.8 MB), so it is
+  536,786,432 B against a 62,914,560 B budget, carries `bin/warp/wireproxy.log` and two `.tmp`
+  files, and the frozen planner corpus no longer byte-matches what the collector produces
+  (420 rows either way). `builder/build.cs`'s `SkipDevPayload` excludes neither tree; the artifact
+  cannot be rebuilt in this sandbox, so the two lines it needs (`/.venv/`, `/scratch/`) are named
+  here instead of applied.
+
+
+**Not fixed, named:** the egress is still banned (`haapi.ankama.com ... 401 {"reason":"BAN"}` on a
+profile wiped seconds earlier), so a freshly reset slot still ends at the login screen with
+`stopped while waiting for the world`. A new device may or may not outrun that; the row now says
+which end it was, and the reset no longer guarantees the same phone.
+
+
+## G117. The reset left the instance with no guest to replay, and the switch had no word for "asked for" *(measured 2026-11-12)*
+
+The next report after G116 shipped, from the same live run: *"creating a guest acount now its not
+working somewhy befor it was working and the ai toogle in the instance isnt linked yet to that in the
+window correctly and we cant make it of or on on the startup from it"*. Both are consequences of
+G116 being right: a reset profile has nothing in it, and the code that assumed a profile always has
+something kept assuming it.
+
+### A guest can be *played* or *created*, and only one of those was wired
+
+The client's own body, read out of the shipped bundle (`scratch/local_norm.js`, 4,994,657):
+
+```js
+playWithGuest: function () {
+    var e = this.getGuestAccount();
+    return e.login && e.password ? this._login({account: e.login, password: e.password})
+                                 : console.error(new Error("Can not play with a Guest Account that does not exist"));
+}
+```
+
+`getGuestAccount()` returns `null` when `localStorage['dofus.1']['all#guestAccount']` is absent, and
+`e.login` then throws before the guard is reached. The host seeder pressed exactly this, once per
+document, 800 ms after load:
+
+```
+[Auth] No stored guest identity; client will register a fresh one
+[AUTH] playWithGuest failed: "TypeError: Cannot read properties of null (reading 'login')"
+```
+
+The comment on that branch — *"client will register a fresh one"* — described something no code did.
+Registration lives one method further down and is a different thing:
+
+```js
+_createGuest: function () {
+    function e() { O.requestWebAuthGuestToken(function (err, token) {
+        return err ? (t.displayAppropriateForm(), window.gui.openSimplePopup(...))
+                   : O.requestWebAuthKey({guestToken: token});
+    }); }
+    g.open("legalAgreement", {onValidate: e, isModal: true});
+}
+```
+
+So creation is: a legal-agreement window, and *its own close handler* runs the token exchange —
+`this.on("close", function (e) { g.deactivate(); i._canceled || (setValue("guestAgreement", true),
+p(e), p = o); })`. The window is the gate, and its accept button only sets `_canceled = false` and
+closes. Nothing in the host ever opened it, because before G116 a profile always had a guest to
+replay (the pool's, the previous run's, or the one the client registered itself).
+
+**Fix, two halves:**
+
+- The page grows `window.__dfRegisterGuest()`: a stored guest is still replayed with
+  `playWithGuest()`; with none it calls the client's own `_createGuest()` and then presses accept the
+  way the button does (`win._canceled = false; win.close();`), polling for the window for 10 s. The
+  client's own `requestWebAuthKey` stores `guestAccount`, which the existing `localStorage.setItem`
+  hook turns into `GUEST_ACCOUNT_PERSIST` → `SavePermanentAccount` → the slot's own line in
+  `accounts.txt` (the G116 path). One registration, no new persistence code.
+- The seeder stops pressing blind: it reads `getGuestAccount()` first and routes — replay, else
+  `__dfRegisterGuest()`, else the bare `_createGuest()` if the page is older than this patch. The
+  call that produced the `TypeError` is gone from the file (`window.gui.loginScreen.playWithGuest();`
+  no longer appears in it).
+
+**Risk named, not hidden:** the accept press is made on the operator's behalf, because the farm has
+no human at the keyboard and the alternative is a client that cannot create the account it needs. It
+is logged — `[Auth] guest registration: accepted the legal-agreement window for this profile` — so it
+is never silent. And the registration path is only reached when the profile has no guest at all: a
+profile that has one is still played, never re-registered.
+
+### The switch had two positions for three states
+
+`ToggleAi` could already cancel a pending start, and `AutoStartAi` already re-read the switch on
+every tick of its 20 s wait (both from G116). What was still wrong:
+
+1. **The window badge was never told about the wait.** `PushAiState` sent `(running, status)` — two
+   answers for a switch with three — so during startup the row painted `AI WAIT` (amber) and the
+   in-window badge painted `AI: start`, offering a press for a start that had already been asked for.
+   That is the operator's *"the ai toogle in the instance isnt linked yet to that in the window
+   correctly"*, exactly. **Fix:** `PushAiState` now sends a third argument, the same pair of facts
+   the cell reads (`AiEnabledFor` + `AiStartPendingFor`), the 1 s tick diffs it per instance in
+   `_aiPushedWaiting`, and the badge paints `AI: waiting` / `⏳ Auto` from it. A click while waiting
+   travels as `stop_one`, so it is the cancel it looks like.
+
+2. **An ON press before the client window existed was refused.** `StartInstance` answered
+   *"no client window; not starting a loop"* and returned. The switch was already on by then
+   (`SetAiEnabled(instanceId, true)` runs first), so the row kept reading `AI OFF` with the intent
+   stored as ON, and nothing was ever armed — the operator's *"we cant make it of or on on the
+   startup from it"*. Only `AutoStartAi` had a wait, and it is gated on `RuntimeSettings.AutoAi`,
+   which is off whenever the operator has turned the launch-time auto-start off. **Fix:** the wait is
+   its own method, `ArmInstanceStart`, owned by the host (the starter touches UI controls), wired
+   into the panel as `StartWhenClientReady`. `StartInstance` arms it when a window is missing and
+   returns; the wait re-reads the switch every tick and one waiter per instance is enforced by the
+   pending flag itself, so a second click cancels rather than doubling the wait.
+
+### Verified
+
+- `test_guest_registration` — **7 checks, 0 failed**, new suite, and it is in the mutation
+  `SNIPPET` list (a suite that is not listed is a suite the sweep never runs: that mistake cost
+  G112 a full pass, and it cost this batch one too — the first sweep of the three guest anchors read
+  `MISSED ... 0 failing checks` until the entry was added).
+- Standalone: `test_login_cooldown_guard` 14, `test_per_instance_ai` **32** (was 27),
+  `test_instance_reset` 23, `test_the_row_can_turn_the_ai_on_and_off` **22** (was 17),
+  `test_no_loop_without_client` 5, `test_csharp_compile` 3 — all 0 failed.
+- New mutation anchors, all **CAUGHT**: `badge: the pending start is never sent to the page`,
+  `badge: the page badge has only two states`, `badge: a repaint drops the pending flag`,
+  `badge: the tick does not diff the pending answer`, `ai-row: an ON press before the window exists
+  is refused`, `ai-row: one waiter per instance is not enforced`, `ai-row: the armed start ignores
+  the switch on later ticks`, `ai-row: an off press during startup re-arms the switch`,
+  `ai-row: the cell never paints the wait`, `guest: the seeder presses playback with no guest
+  stored`, `guest: the fresh guest is never accepted`, `guest: registration runs even when a guest
+  is stored` (`scratch/mut_badge.log`, `mut_airow.log`, `mut_guest2.log`, `mut_onpress.log`,
+  `mut_armtick.log`).
+- Two anchors read `MISSED` on the first pass for the same reason, and both were the *check* being
+  weak rather than the code: `ai-row: a launch ignores the operator's switch` and `ai-row: the armed
+  start ignores the switch on later ticks` both asserted a line that now exists **twice** (the
+  launch's check and the wait's), so mutating the first copy left the second green. Both checks now
+  slice the body they mean (`auto_body`, `arm_body`) instead of searching the whole file.
+
+
+## G118. The OAuth popup threw its cookie jar away, so every attempt looked like a new device *(measured 2026-11-12)*
+
+The third item in the same report: *"Verify some info before creating an account. Google needs to
+verify some info about your device or phone number… Scan the QR code with your phone… how to fix
+this?"*
+
+**What the popup does.** A Google signup inside the client is not the client's own flow. The guest
+path completes server-side (`/token/create-guest` 200, `/login/ankama-guest`), and *then* the page
+posts `open_oauth` for `/login/google`; the host opens `OAuthLoginForm`, a separate WebView2 window
+that walks `accounts.google.com/v3/signin/identifier` → `lifecycle/flows/signup` →
+`lifecycle/steps/signup/name` → the QR/phone step. Everything after `signup/name` is Google deciding
+whether this signup is a person.
+
+**What the host was doing to itself.** That popup created its environment like this:
+
+```csharp
+string oauthDataDir = Path.Combine(Path.GetTempPath(),
+                                   "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));
+```
+
+A **new profile per popup** — empty cookie jar, empty history, no Google session, behind the relay's
+egress. To an identity provider that is a browser it has never seen, on a network no person uses, and
+the verification wall is the standard answer. So the wall was not bad luck: the popup was rebuilt
+into a stranger every time it opened, which makes the QR step the *expected* outcome rather than a
+possible one.
+
+**Fix.** The popup keeps one profile per instance, beside the client's own:
+`<profile>/oauth-profile` (`WebView2ClientForm.ProfileDir` → `OAuthLoginForm`), created if missing.
+It cannot share the client's folder — WebView2 refuses one user data folder across two live browser
+processes — so it is a subdirectory, and it survives the popup closing, which is what makes the
+second sign-in from the same slot a *known* browser.
+
+**Not fixed, and it cannot be from here:** the egress is a datacenter IP, and Google scores the
+network as well as the browser. A persistent profile removes the "brand-new device" half of that
+judgement; it does not remove the IP half. The honest answer to "how to fix this" is therefore:
+create the Google account by hand once (or use the guest path, which needs no Google account at
+all), and let the popup *sign in* afterwards — a sign-in from a known profile is not the flow Google
+guards with a QR code. Automating the *creation* of Google accounts from a relay egress is the part
+that has no host-side fix.
+
+### Verified
+
+- `test_guest_registration` grew a seventh check: `the OAuth popup keeps one browser profile per
+  instance` (asserts the profile path, the `ProfileDir` accessor, and that `DofusFarm_OAuth_` no
+  longer appears in the file).
+- New anchor `guest: the OAuth popup throws its browser profile away` — **CAUGHT**
+  (`scratch/mut_oauth.log`).
+- The finding itself is from the live log, not from reading: `[OAUTH-POPUP] Navigating:` reached
+  `lifecycle/steps/signup/name` and then the verification page, on a slot whose profile was created
+  minutes earlier.
+

@@ -4893,6 +4893,56 @@ def test_login_cooldown_guard() -> None:
           "a native alert blocks every directive until a person dismisses it")
 
 
+def test_guest_registration() -> None:
+    section("Guest registration (a reset profile has no guest to replay)")
+    # Live 2026-11-12, dofus-02 immediately after a reset: the host seeder pressed
+    # playWithGuest() on a profile whose localStorage holds no guest at all, and the
+    # client threw inside its own body --
+    #     [Auth] No stored guest identity; client will register a fresh one
+    #     [Auth] playWithGuest failed: TypeError ... (reading 'login')
+    # -- because the bundle's playWithGuest reads `.login` off getGuestAccount()
+    # without checking it for null. Nothing registered a guest: the seeder had one
+    # press and that press could only *replay*. The window then sat on the login
+    # screen until the 5-attempt budget ran out.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    form = code_only((ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    check("the page exposes a registration path, not just playback",
+          "window.__dfRegisterGuest = _agentGuestRegister;" in page,
+          "the seeder had no way to create the guest it could not replay")
+    check("registration replays a stored guest when there is one",
+          "if (stored && stored.login && stored.password) {" in page
+          and "ls.playWithGuest();" in page,
+          "a profile that already has a guest must not be registered twice")
+    check("registration uses the client's own _createGuest",
+          "ls._createGuest();" in page,
+          "hand-rolling requestWebAuthGuestToken would drift from the bundle")
+    check("the legal-agreement window is accepted, once",
+          "mgr.getWindow('legalAgreement')" in page
+          and "win._canceled = false;" in page
+          and "win.close();" in page,
+          "the window only runs onValidate from its own close handler")
+    check("the seeder routes the press instead of calling playWithGuest blind",
+          "_ls.playWithGuest();" in form
+          and "typeof window.__dfRegisterGuest === 'function'" in form
+          and "_ls._createGuest();" in form,
+          "one press, and it could only replay")
+    check("the blind playWithGuest press is gone from the seeder",
+          "window.gui.loginScreen.playWithGuest();" not in form,
+          "that exact call is the TypeError the live log shows")
+    # The OAuth popup is the other way an account comes into existence, and it threw its
+    # browser profile away on every open (%TEMP%\DofusFarm_OAuth_<guid>). Google reads a
+    # browser with no cookies, no history and a relay egress as a new device and answers
+    # the signup with "Verify some info ... Scan the QR code with your phone" -- measured
+    # live 2026-11-12 on every attempt. The egress is not ours to fix; the cookie jar is.
+    check("the OAuth popup keeps one browser profile per instance",
+          'Path.Combine(oauthProfileRoot, "oauth-profile")' in form
+          and "public string ProfileDir { get { return _userDataDir; } }" in form
+          and "DofusFarm_OAuth_" not in form,
+          "a fresh profile per popup is a brand-new device to every identity provider")
+
+
 def test_board_pca_signature() -> None:
     section("Board PCA signature (compression measured before it is wired)")
     import numpy as np
@@ -6017,9 +6067,22 @@ def test_per_instance_ai() -> None:
           and "ReadLastStepLine(StepLogFor(instanceId))" in panel,
           "one client's step count was shown on all of them")
     check("stopping one loop writes only that loop's stop file",
-          "public void StopInstance(string instanceId, string why)" in panel
+          "public bool StopInstance(string instanceId, string why)" in panel
           and "File.WriteAllText(StopFilePath(instanceId)" in panel,
           "the shared AUTOPILOT_STOP would stop every client")
+    # The stop was decided from the cached active set and confirmed by nothing: the
+    # daemon answers /brain/stop before the loop ends, and the cache is a second old.
+    # Measured 2026-11-12 in DofusFarm.log: a stop at 7943, a start 0.3 s later answered
+    # "already running" from the cache, and a reset that found "no loop to stop" while
+    # one was driving. The decision is now asked for, and the stop is waited out.
+    check("the stop is asked for whether or not the cache agrees",
+          "if (BrainProcessAlive() || BrainAnswers())" in panel
+          and "BrainIsRunning(instanceId) && BrainStopOne" not in panel,
+          "a loop started a second ago was 'not running', so OFF printed 'has no loop to stop'")
+    check("the stop waits until the daemon drops the instance",
+          "WaitForBrainInactive(instanceId, StopConfirmMs)" in panel
+          and "the daemon accepted the stop but still lists it after" in panel,
+          "/brain/stop answers before the loop ends, so the reply is a promise, not a fact")
     check("each child watches its own stop file",
           'sb.Append(" --stop-file \\"")' not in panel
           and '+ " --stop-file \\"" + childStop' in panel,
@@ -6032,6 +6095,18 @@ def test_per_instance_ai() -> None:
           "_aiPanel.IsRunningFor(instanceId)" in form
           and "_aiPanel.LiveStatusFor(instanceId)" in form,
           "PushAiState read the farm-wide flag")
+    # ... and the farm-wide push that ran beside it undid that. Measured 2026-11-12: the
+    # window badge read "AI: running" while the row for the same client read AI OFF,
+    # because PushAiStateAll pushed the panel's own `RunningNow` flag into every window.
+    # A per-window badge has no business receiving an aggregate answer.
+    push_all = form.find("private void PushAiStateAll()")
+    push_all_body = form[push_all:push_all + 700] if push_all >= 0 else ""
+    check("no window is ever told the farm-wide answer",
+          push_all_body != ""
+          and "_aiPanel.RunningNow" not in push_all_body
+          and "ExecuteScriptOnAllInstances" not in push_all_body
+          and "PushAiState(id);" in push_all_body,
+          "a per-window badge told the panel's flag, which is not a loop's liveness")
     check("the badge diff is tracked per instance",
           "Dictionary<string, bool> _aiPushedByInstance" in form
           and "_aiPushedByInstance[id] = mine;" in form,
@@ -6040,9 +6115,33 @@ def test_per_instance_ai() -> None:
           '"start_one"' in form and '"stop_one"' in form,
           "an unknown action logs and does nothing")
     check("the in-game pill acts on its own instance, not on all",
-          "action: this.aiRunning ? 'stop_one' : 'start_one'" in page
-          and "action: this.aiRunning ? 'stop_all' : 'start_auto'" not in page,
+          "action: (running || waiting) ? 'stop_one' : 'start_one'" in page
+          and "'stop_all' : 'start_auto'" not in page,
           "pressing AI in one window stopped every loop")
+    # A start that was asked for and has not landed yet is ON-with-no-loop: the row
+    # paints it AI WAIT. A two-state badge showed "AI: start" for that whole window,
+    # so the row and the window disagreed from the click until the loop existed --
+    # the operator's "the ai toogle in the instance isnt linked yet to that in the
+    # window correctly". Same pair of facts, three answers, both places.
+    check("the badge is told the pending state, not only on/off",
+          "_aiPanel.AiStartPendingFor(instanceId)" in form
+          and '(waiting ? "true" : "false")' in form,
+          "PushAiState sent two answers for a three-state switch")
+    check("the badge paints the third state",
+          "this.aiWaiting = !!waiting && !this.aiRunning;" in page
+          and "label.textContent = 'AI: waiting';" in page,
+          "a pending start rendered as an off badge")
+    check("a pending start survives a badge repaint",
+          "this.setAiState(this.aiRunning, null, this.aiWaiting);" in page,
+          "updateHud dropped the pending flag on the next repaint")
+    check("a pill press while a start is pending cancels it",
+          "var waiting = !!self.aiWaiting && !running;" in page
+          and "cancelling" in page,
+          "the pending state was invisible to the pill, so its click re-armed the start")
+    check("the tick diffs the pending answer per instance",
+          "Dictionary<string, bool> _aiPushedWaiting" in form
+          and "_aiPushedWaiting[id] = waitingMine;" in form,
+          "a pending start that became a loop would never be pushed twice")
     # The keep-alive was gated on a host-pushed flag, and a page reload resets the
     # page's copy while the loop keeps driving -- measured as a live run losing its
     # session to dofus.disconnect("INACTIVITY") ten minutes in (the client's own
@@ -6121,6 +6220,8 @@ def test_instance_reset() -> None:
     # directory per slot, nothing copied in.
     form = code_only((ROOT / "desktop" / "mainform.cs").read_text(encoding="utf-8", errors="replace"))
     installer = code_only((ROOT / "desktop" / "installer.cs").read_text(encoding="utf-8", errors="replace"))
+    engine = code_only((ROOT / "desktop" / "farmengine.cs").read_text(encoding="utf-8", errors="replace"))
+    client = code_only((ROOT / "desktop" / "WebView2ClientForm.cs").read_text(encoding="utf-8", errors="replace"))
 
     start = form.find("private void PromptAndResetInstance(InstanceModel inst)")
     end = form.find("private void PromptAndDeleteAllInstances()", start)
@@ -6183,6 +6284,76 @@ def test_instance_reset() -> None:
     check("a reset puts the slot's AI back on",
           "_aiPanel.SetAiEnabled(slot, true);" in wipe_body,
           "the operator reset the slot to get it driven again, not to leave it idle")
+    # A reset used to wipe 0 ms after asking for the stop. The loop was still alive: it
+    # drives the client being closed and appends to the log being deleted, and the
+    # relaunch's start was silently dropped because the daemon still held the old loop
+    # ("alive -> keep it"). Measured 2026-11-12 in DofusFarm.log: "[RESET] dofus-02:
+    # relaunched" one second before "[ai] auto started", and the loop ended 8 s later
+    # having taken no step.
+    check("the reset waits for the loop to leave before it wipes",
+          '_aiPanel.StopInstance(inst.Name, "instance reset: client closed")' in reset
+          and "_aiPanel.WaitForLoopGone(inst.Name, 10000)" in reset,
+          "the old loop outlived the wipe and the relaunch's start was silently refused")
+    check("the AI state is cleared after the profile, not before it",
+          reset.find("ResetInstanceAiState(inst.Name);") > reset.find("profile wiped"),
+          "deleting the stop file first could un-stop a loop that had not polled yet")
+    check("a wipe does not delete the stop file under a live loop",
+          "_aiPanel.IsRunningNow(slot, 600)" in wipe_body
+          and "leaving its stop file and log alone" in wipe_body,
+          "deleting the file the loop is obeying cancels the stop")
+    # The deepest layer: the reset wiped the profile and then handed the slot the same
+    # guest out of accounts.txt, which is positional. Live 2026-11-12, DofusFarm.log:
+    # "[RESET] dofus-02: profile wiped" -> "assigned visitor/account from accounts.txt:
+    # [GUEST]29d3f5e3b27c3f83" -> "Your account has been permanently banned". The form
+    # already honoured the flag; the launch did not.
+    check("a reset slot is not handed back the pool account it was reset to escape",
+          "bool freshIdentity = false;" in form
+          and '"force_fresh_identity.flag"' in form
+          and "if (!manualLogin && !freshIdentity) acc = FarmEngine.GetAccountForSlot(slot);" in form
+          and "no account assigned from accounts.txt (the slot keeps the guest it registered)" in form,
+          "the fresh profile logged in as the banned guest on the very next launch")
+
+    # A new instance gets a NEW device. `+ Add` provisions one and Clone ends in "Unique
+    # hardware fingerprint applied": a fresh serial and Android id, which the relay stamps
+    # on every request. The reset kept the old pair, so the "new" instance reached the
+    # server as the same phone -- and measured 2026-11-12 the ban followed the device, not
+    # the guest (`haapi.ankama.com ... 401 {"reason":"BAN"}` on a profile wiped seconds
+    # earlier). Comparing a reset to `+ Add` is the whole point: they must leave the slot
+    # in the same state.
+    device = form.find("private void ResetInstanceDeviceIdentity(string slot)")
+    device_end = form.find("private void PromptAndDeleteAllInstances()", device)
+    device_body = form[device:device_end] if device >= 0 and device_end > device else ""
+    check("a reset gives the slot a new device, the way adding an instance does",
+          "ResetInstanceDeviceIdentity(inst.Name);" in reset
+          and '"asset_cache", "identity", slot + ".txt"' in device_body,
+          "the 'new' instance still arrived as the same phone")
+    check("the slot's own objective belief goes with the profile",
+          '"objectives." + slot + ".json"' in device_body,
+          "a new instance inherited the old one's goals")
+    prof = form.find("private bool ResetInstanceProfile(InstanceModel inst)")
+    prof_end = form.find("private void ResetInstanceAiState(string slot)", prof)
+    prof_body = form[prof:prof_end] if prof >= 0 and prof_end > prof else ""
+    check("the new identity is rotated inside the wipe, before the caller relaunches",
+          "ResetInstanceDeviceIdentity(inst.Name);" in prof_body
+          and prof_body.find("ResetInstanceDeviceIdentity(inst.Name);") < prof_body.find("return true;"),
+          "rotating after the launch would apply to the next launch, not this one")
+    check("the relay is rebuilt when the identity changes",
+          "bool identityChanged" in engine
+          and "if (!upstreamChanged && !identityChanged && IsLocalPortOpen(port, 180))" in engine,
+          "the proxy kept stamping the old serial on a relay that was already up")
+    check("the fresh guest owns the slot's line in accounts.txt",
+          "FarmEngine.ReplaceAccountAt(slotIdx, login, password)" in client
+          and "int slotIdx = _freshIdentityMode ? FarmEngine.AccountIndexOf(_instanceId) : -1;" in client
+          and "public static bool ReplaceAccountAt(int index, string login, string password)" in engine
+          and "public static int AccountIndexOf(string instanceName)" in engine,
+          "the new guest was appended while the slot still pointed at the banned one")
+    check("only the reset's flag opens fresh-identity mode",
+          client.count("_freshIdentityMode = true;") == 1
+          and "if (oauthLogin) _skipPoolSeed = true;" in client,
+          "an OAuth login would rewrite the slot's pool entry with the operator's account")
+    check("the slot returns to normal seeding once it owns an identity",
+          'File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag"));' in client,
+          "the flag would keep the slot out of the pool forever")
 
 
 def test_the_row_can_turn_the_ai_on_and_off() -> None:
@@ -6214,6 +6385,19 @@ def test_the_row_can_turn_the_ai_on_and_off() -> None:
           and 'btnText = aiOn ? "AI ON" : "AI OFF";' in form
           and "BrushPillRunBg" in form,
           "a loop that ended on its own kept reading ON")
+    # Reading the live answer is not enough: the grid repaints only when something calls
+    # RefreshGrid, which is driven by client-state events and clicks. Measured 2026-11-12:
+    # the row read AI OFF for a whole run while the in-window badge read "AI: running", so
+    # the cell the operator pressed to switch the AI on was stopping a loop they believed
+    # was off. The tick that tells the badge now repaints the one column.
+    check("the pill is repainted when the tick learns a different answer",
+          "if (aiStateChanged) RepaintAiColumn();" in form
+          and "private void RepaintAiColumn()" in form
+          and "_grid.InvalidateColumn(col.Index);" in form,
+          "the cell kept the answer it had when the grid was last refreshed")
+    check("the same tick that tells the badge repaints the row",
+          "PushAiState(id);" in form and "aiStateChanged = true;" in form,
+          "the window badge and the row pill could show different answers")
     check("clicking it goes through the panel's toggle",
           "case \"Ai\":" in form and "_aiPanel.ToggleAi(aiSlot);" in form,
           "the cell painted but did nothing")
@@ -6231,6 +6415,26 @@ def test_the_row_can_turn_the_ai_on_and_off() -> None:
     check("and one click starts only that instance",
           "StartInstance(instanceId, true);" in toggle_body,
           "the cell could not bring one client's loop back")
+    # The branch used to be chosen from the cached active set, which a 1 s timer refreshes.
+    # Within a second of a start the cache still says "not running", so the click asked to
+    # start, StartInstance answered "already running", and the cell did nothing -- measured
+    # 2026-11-12 at DofusFarm.log:7943-7946.
+    check("the click asks which way to go instead of remembering",
+          "if (IsRunningNow(instanceId, 1200))" in toggle_body
+          and "RunningInstanceOf(instanceId) != null" not in toggle_body,
+          "a click within a second of a start could never switch the AI off")
+    check("the verified read exists and is not the paint path",
+          "public bool IsRunningNow(string instanceId, int timeoutMs)" in panel
+          and "private HashSet<string> BrainActiveNow(int timeoutMs)" in panel
+          and "RefreshBrainStatus();\n            lock (_brainLock) return _brainRunning.Contains(instance);" in panel,
+          "the pill must stay cheap; only the decisions pay for a probe")
+    check("the click does not freeze the window while the stop is confirmed",
+          "ThreadPool.QueueUserWorkItem(delegate\n                    {\n                        try { _aiPanel.ToggleAi(aiSlot); }" in form,
+          "an 8 s confirmation wait on the UI thread looks like the crash it prevents")
+    check("the panel marshals its own controls when the click runs on a worker",
+          "private void SetRunningUiSafe(bool running)" in panel
+          and "BeginInvoke((MethodInvoker)delegate { SetRunningUi(running); })" in panel,
+          "SetRunningUi touches three controls from a pool thread")
 
     start = panel.find("public void StartInstance(string instanceId, bool force)")
     start_end = panel.find("public void SendOrder()", start)
@@ -6245,10 +6449,46 @@ def test_the_row_can_turn_the_ai_on_and_off() -> None:
           and "public bool AiEnabledFor(string instanceId)" in panel
           and "public void SetAiEnabled(string instanceId, bool on)" in panel,
           "the toggle was forgotten at the next launch")
+    # Read the launch's own body: the switch is consulted in two places now, so against
+    # the whole file this stayed green while the launch had stopped honouring it (MISSED,
+    # 2026-11-12 -- the second copy of the same `if` kept the first clause true).
+    auto_at = form.find("private void AutoStartAi(string instanceName)")
+    auto_end = form.find("private void ArmInstanceStart(string instanceName)", auto_at)
+    auto_body = form[auto_at:auto_end] if auto_at >= 0 and auto_end > auto_at else ""
     check("a launch honours a slot that is switched off",
-          "if (!_aiPanel.AiEnabledFor(instanceName))" in form
-          and "AI is switched off for this instance; not starting" in form,
+          "if (!_aiPanel.AiEnabledFor(instanceName))" in auto_body
+          and "AI is switched off for this instance; not starting" in auto_body,
           "AutoStartAi restarted a loop the operator had switched off")
+    # "we cant make it of or on on the startup from it": an ON press during startup was
+    # refused outright ("no client window; not starting a loop"), so the switch went on,
+    # nothing was armed, and the cell kept reading AI OFF for the rest of the launch.
+    check("an ON press before the window exists arms the start instead of refusing",
+          "public Action<string> StartWhenClientReady" in panel
+          and "no client window yet; the loop starts when it opens" in start_body
+          and "var arm = _startWhenClientReady;" in start_body,
+          "the row could not switch the AI on while the client was booting")
+    check("the host owns that wait, and there is one waiter per instance",
+          "_aiPanel.StartWhenClientReady = ArmInstanceStart;" in form
+          and "private void ArmInstanceStart(string instanceName)" in form
+          and "if (!AiStartPendingFor(instanceId))" in start_body,
+          "a second arm per click doubles every waiter")
+    # The switch is read twice now -- once at the launch and once per tick of the wait --
+    # so this reads the wait's own body. Against the whole file the launch's copy kept
+    # the check green while the wait had stopped re-reading anything (MISSED, 2026-11-12).
+    arm_at = form.find("private void ArmInstanceStart(string instanceName)")
+    arm_end = form.find("private void LaunchSelectedInWebView2()", arm_at)
+    arm_body = form[arm_at:arm_end] if arm_at >= 0 and arm_end > arm_at else ""
+    check("the armed start re-reads the switch on every tick",
+          "if (!_aiPanel.AiEnabledFor(instanceName))" in arm_body
+          and "switched off while its client was starting; no loop started" in arm_body,
+          "reading the switch once made the off press a no-op")
+    check("an off press during startup cancels the armed start",
+          "if (AiEnabledFor(instanceId) && AiStartPendingFor(instanceId))" in toggle_body
+          and "start cancelled before its client was ready" in toggle_body,
+          "the click re-armed the switch and the loop came up anyway")
+    check("the cell paints the wait as its own state",
+          'btnText = "AI WAIT";' in form and "AiStartPendingFor(inst.Name)" in form,
+          "a start in flight read as AI OFF")
 
     # The reason a loop ended was invisible: every end read "loop finished (exit 0)".
     check("the end reason is read from that instance's own log",
@@ -6285,8 +6525,11 @@ def test_no_loop_without_client() -> None:
           "no open client to drive; launch an instance first" in panel
           and "if (_clientIsOpen != null)" in panel,
           "the shared null target let the bridge fallback pick any client")
-    check("a per-instance start refuses a closed slot",
-          "no client window; not starting a loop" in panel,
+    # With no host attached (tests, CLI) a closed slot is still a refusal -- there is
+    # nobody to wait for the window. With a host, it is a wait: see the row test.
+    check("a per-instance start refuses a closed slot when no host can wait",
+          "no client window; not starting a loop" in panel
+          and "var arm = _startWhenClientReady;" in panel,
           "StartInstance could be pointed at an instance with no window")
     check("the host probe reports a starting or open WebView2 form",
           "_aiPanel.ClientIsOpen = delegate(string instanceId)" in form
@@ -18536,6 +18779,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_no_call_is_explained)
     _run_test(test_ready_set_ranking)
     _run_test(test_login_cooldown_guard)
+    _run_test(test_guest_registration)
     _run_test(test_board_pca_signature)
     _run_test(test_one_driver_per_instance)
     _run_test(test_boss_benchmark_runs)

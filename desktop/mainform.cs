@@ -230,6 +230,11 @@ namespace DofusFarm.UI
         // Per-instance badge state: the id is the client, the bool is whether ITS
         // loop was running the last time we told it.
         private readonly Dictionary<string, bool> _aiPushedByInstance = new Dictionary<string, bool>();
+        // Same, for the third answer: a start was asked for and has not landed yet.
+        // Kept apart from the running flag so the two can be diffed separately -- a
+        // pending start that becomes a real loop must push twice, and only a
+        // separate map can see that.
+        private readonly Dictionary<string, bool> _aiPushedWaiting = new Dictionary<string, bool>();
 
         private ShortcutsPage _pageShortcuts;
 
@@ -1124,6 +1129,11 @@ namespace DofusFarm.UI
                 var form = _webViewBackend.GetForm(instanceId);
                 return form != null && !form.IsDisposed;
             };
+            // An ON press that arrives before the client window exists is not a
+            // mistake to refuse: the operator wants this slot driven and the window
+            // is seconds away. The panel cannot wait on it itself (the starter must
+            // run on the UI thread), so the host owns the wait.
+            _aiPanel.StartWhenClientReady = ArmInstanceStart;
             // Shortcuts must work while the game has focus, so they are registered
             // with the OS rather than handled as ordinary keys.
             try { RegisterGlobalShortcuts(); } catch (Exception ex) { Log("[AI] shortcut registration failed: " + ex.Message); }
@@ -1253,9 +1263,18 @@ namespace DofusFarm.UI
             try
             {
                 bool running = _aiPanel != null && _aiPanel.IsRunningFor(instanceId);
+                // "Asked for, not up yet" is a third answer, and the badge has to be
+                // able to say it. The row shows AI WAIT from the same pair of facts
+                // (switch on + a start in flight); a badge that only knew on/off
+                // showed "AI: start" for that whole window, so pressing the row's
+                // toggle at launch left the two disagreeing until the loop existed.
+                bool waiting = !running && _aiPanel != null
+                    && _aiPanel.AiEnabledFor(instanceId)
+                    && _aiPanel.AiStartPendingFor(instanceId);
                 string status = _aiPanel != null ? _aiPanel.LiveStatusFor(instanceId) : "";
                 string js = "window.__aiState && window.__aiState("
-                    + (running ? "true" : "false") + ", " + JsQuote(status) + ")";
+                    + (running ? "true" : "false") + ", " + JsQuote(status)
+                    + ", " + (waiting ? "true" : "false") + ")";
                 if (!string.IsNullOrEmpty(instanceId)) _webViewBackend.ExecuteScriptOnInstance(instanceId, js);
             }
             catch (Exception ex)
@@ -1264,15 +1283,22 @@ namespace DofusFarm.UI
             }
         }
 
+        /// <summary>Re-tell every open window its OWN state.
+        ///
+        /// This used to push the panel's single "a loop is running" flag to all of them,
+        /// and a per-window badge can only misread that: `RunningNow` is the panel's flag,
+        /// not a loop's liveness, so a daemon that died while the flag was still set told
+        /// every window "AI: running" while the row for that client said AI OFF --
+        /// measured 2026-11-12, and the operator's report was exactly that disagreement.
+        /// The row and the badge now read one answer: that instance's own loop.
+        /// </summary>
         private void PushAiStateAll()
         {
             try
             {
-                bool running = _aiPanel != null && _aiPanel.RunningNow;
-                string status = _aiPanel != null ? _aiPanel.LiveStatusText() : "";
-                _webViewBackend.ExecuteScriptOnAllInstances(
-                    "window.__aiState && window.__aiState("
-                    + (running ? "true" : "false") + ", " + JsQuote(status) + ")");
+                List<string> ids = new List<string>(_webViewBackend.GetActiveInstanceIds());
+                foreach (string id in ids)
+                    if (!string.IsNullOrEmpty(id)) PushAiState(id);
             }
             catch { }
         }
@@ -1304,6 +1330,16 @@ namespace DofusFarm.UI
             {
                 if (_aiPanel == null || _aiLive == null || _aiLive.IsDisposed) return;
 
+                // The row's AI pill reads the same answer as the badge, but the grid
+                // only repaints when something calls RefreshGrid -- and a loop that
+                // starts after the click, or dies on its own, leaves the cell reading
+                // "AI OFF" until an unrelated event repaints it. Measured 2026-11-12:
+                // the row said AI OFF for a whole run while the window badge said
+                // "AI: running", so the cell the operator clicked to turn the AI ON
+                // was in fact stopping a loop they believed was off. Repaint the one
+                // column whenever this tick learns a different answer.
+                bool aiStateChanged = false;
+
                 // Per instance, not per farm: each open window is told whether ITS
                 // loop is running, and only when that answer changed.
                 List<string> active = null;
@@ -1314,24 +1350,34 @@ namespace DofusFarm.UI
                     {
                         if (string.IsNullOrEmpty(id)) continue;
                         bool mine = _aiPanel.IsRunningFor(id);
+                        bool waitingMine = !mine && _aiPanel.AiEnabledFor(id) && _aiPanel.AiStartPendingFor(id);
                         bool previous;
                         bool known = _aiPushedByInstance.TryGetValue(id, out previous);
-                        if (!known || previous != mine)
+                        bool previousWaiting;
+                        bool waitingKnown = _aiPushedWaiting.TryGetValue(id, out previousWaiting);
+                        if (!known || previous != mine || !waitingKnown || previousWaiting != waitingMine)
                         {
                             _aiPushedByInstance[id] = mine;
+                            _aiPushedWaiting[id] = waitingMine;
                             PushAiState(id);
+                            aiStateChanged = true;
                         }
                     }
                 }
                 // A client that just closed keeps a stale entry; forget any id that is
                 // no longer active so a relaunch re-pushes from scratch.
                 if (_aiPushedByInstance.Count > 0 && active != null && active.Count == 0)
+                {
                     _aiPushedByInstance.Clear();
+                    _aiPushedWaiting.Clear();
+                }
 
                 bool running = _aiPanel.RunningNow;
                 bool anyNamed = _aiPanel.RunningInstances().Count > 0;
                 if (running != _aiPushedRunning && !anyNamed) { _aiPushedRunning = running; PushAiStateAll(); }
                 else if (running) _aiPushedRunning = running;
+
+                if (aiStateChanged) RepaintAiColumn();
 
                 string text = anyNamed ? AggregateAiStatus() : _aiPanel.LiveStatusText();
                 if (_aiLive.Text != text) _aiLive.Text = text;
@@ -1345,6 +1391,26 @@ namespace DofusFarm.UI
                     _navButtons[1].ForeColor = running ? Color.FromArgb(74, 222, 128)
                                                        : Color.FromArgb(203, 213, 225);
                 }
+            }
+            catch { }
+        }
+
+        /// <summary>Repaint the AI column alone.
+        ///
+        /// The pill is painted from the live loop (`IsRunningFor`), not from the stored
+        /// intent, so it has to be repainted when that answer changes -- the grid only
+        /// repaints on RefreshGrid, which is driven by client-state events and clicks.
+        /// A loop that starts a beat after the click, or ends while nobody is clicking,
+        /// therefore left the cell showing the opposite of the truth. One column, and
+        /// only when the tick actually saw a different answer.
+        /// </summary>
+        private void RepaintAiColumn()
+        {
+            try
+            {
+                if (_grid == null || _grid.IsDisposed) return;
+                DataGridViewColumn col = _grid.Columns["Ai"];
+                if (col != null) _grid.InvalidateColumn(col.Index);
             }
             catch { }
         }
@@ -1641,6 +1707,22 @@ namespace DofusFarm.UI
                     // keep showing ON while nothing drives the client.
                     bool aiOn = _aiPanel != null && inst != null
                                 && _aiPanel.IsRunningFor(inst.Name);
+                    // A third state, because two would lie: a launch has asked for this
+                    // slot's loop and is waiting for the client window to register, so
+                    // nothing is running yet but a start is in flight. The cell says so,
+                    // and one click cancels it -- otherwise "off at startup" is a press
+                    // that re-arms the switch and the loop comes up anyway.
+                    bool aiPending = !aiOn && _aiPanel != null && inst != null
+                                     && _aiPanel.AiEnabledFor(inst.Name)
+                                     && _aiPanel.AiStartPendingFor(inst.Name);
+                    if (aiPending)
+                    {
+                        bg = BrushBtnDefaultBg;
+                        pen = PenBtnDefault;
+                        fg = ColAmberText;
+                        btnText = "AI WAIT";
+                        break;
+                    }
                     bg = aiOn ? BrushPillRunBg : BrushBtnDefaultBg;
                     pen = aiOn ? PenBtnLaunch : PenBtnDefault;
                     fg = aiOn ? ColGreen : ColMuted;
@@ -1947,13 +2029,13 @@ namespace DofusFarm.UI
                     return;
                 }
                 if (!TryBeginOp(inst.Name)) return;
-                if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
                 string slot = inst.Name;
                 Log("[CLI] reset " + slot + ": wiping the profile for a fresh guest");
                 ThreadPool.QueueUserWorkItem(delegate
                 {
                     try
                     {
+                        if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
                         bool relaunch = ResetInstanceProfile(inst);
                         Thread.Sleep(400);
                         if (relaunch && !_isClosing)
@@ -2040,32 +2122,65 @@ namespace DofusFarm.UI
                     Log("[AI] " + instanceName + ": AI is switched off for this instance; not starting");
                     return;
                 }
-                // The client window registers a beat after LaunchInstance returns.
-                // Starting the loop before that is refused as "no client window",
-                // and the launch then looks like the AI never started at all:
-                // every --launch ended at the login screen with no loop. Wait for
-                // the window, bounded, on a worker so the UI thread is free.
-                ThreadPool.QueueUserWorkItem(delegate
+                ArmInstanceStart(instanceName);
+            }
+            catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
+        }
+
+        /// <summary>Wait for this instance's client window, then start its loop.
+        ///
+        /// The client window registers a beat after LaunchInstance returns. Starting
+        /// the loop before that is refused as "no client window", and the launch then
+        /// looks like the AI never started at all: every --launch ended at the login
+        /// screen with no loop. The wait is bounded and runs on a worker so the UI
+        /// thread is free.
+        ///
+        /// Two callers, and both need it: the auto-start at launch, and the row's own
+        /// toggle. An ON press during startup used to be a flat refusal, so the switch
+        /// went on, no loop was ever armed, and the cell kept reading AI OFF --
+        /// measured 2026-11-12, "we cant make it of or on on the startup from it".
+        /// </summary>
+        private void ArmInstanceStart(string instanceName)
+        {
+            if (_aiPanel == null || string.IsNullOrEmpty(instanceName)) return;
+            if (_aiPanel.IsRunningFor(instanceName)) return;
+            // Say that a start is in flight, so the row's cell can cancel it. The
+            // switch is also re-read on every tick: the wait can last 20 s, and an
+            // operator who turns the AI off while the client is still booting means
+            // it. Reading it once, before the wait, made that press a no-op and the
+            // loop came up anyway -- measured 2026-11-12.
+            _aiPanel.NoteAiStartPending(instanceName, true);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
                 {
                     for (int i = 0; i < 20; i++)
                     {
                         if (_isClosing) return;
                         if (_aiPanel == null || _aiPanel.IsRunningFor(instanceName)) return;
+                        if (!_aiPanel.AiEnabledFor(instanceName))
+                        {
+                            Log("[AI] " + instanceName + ": switched off while its client was starting; no loop started");
+                            return;
+                        }
                         if (_aiPanel.HasClientWindow(instanceName))
                         {
                             SafeInvoke(delegate
                             {
                                 try { _aiPanel.StartInstance(instanceName, true); }
-                                catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
+                                catch (Exception ex) { Log("[AI] start failed: " + ex.Message); }
                             });
                             return;
                         }
                         Thread.Sleep(1000);
                     }
                     Log("[AI] " + instanceName + ": client window never registered; AI not started");
-                });
-            }
-            catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
+                }
+                finally
+                {
+                    if (_aiPanel != null) _aiPanel.NoteAiStartPending(instanceName, false);
+                }
+            });
         }
 
         private void LaunchSelectedInWebView2()
@@ -3517,8 +3632,9 @@ namespace DofusFarm.UI
 
             if (!TryBeginOp(inst.Name)) return;
 
-            if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
-
+            // Asked on the worker, not here: the stop now waits for the daemon to confirm
+            // it, and a step can be a fight. On the UI thread that wait would freeze the
+            // manager for as long as the loop takes to notice.
             string slot = inst.Name;
 
             ThreadPool.QueueUserWorkItem(delegate
@@ -3530,6 +3646,8 @@ namespace DofusFarm.UI
                 {
 
                     if (_isClosing) return;
+
+                    if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
 
                     bool relaunch = ResetInstanceProfile(inst);
 
@@ -3595,9 +3713,22 @@ namespace DofusFarm.UI
 
             }
 
-            FarmEngine.ReleaseAccount(inst.Name);
+            // The loop had to end before the profile goes: it drives the client that is
+            // being closed and writes the log this reset deletes. Closing the client is
+            // itself the strongest stop signal (a loop with no snapshot cannot step), so
+            // the second wait is the one that normally succeeds. Measured 2026-11-12:
+            // the old order wiped the profile 0 ms after asking for the stop, and the
+            // relaunch then asked the daemon for a loop it silently refused, because the
+            // previous one was still in its table.
+            if (_aiPanel != null)
+            {
+                if (!_aiPanel.StopInstance(inst.Name, "instance reset: client closed"))
+                    Log(string.Format("[RESET] {0}: its loop has not left yet; wiping anyway, the closed client ends it", inst.Name));
+                if (!_aiPanel.WaitForLoopGone(inst.Name, 10000))
+                    Log(string.Format("[RESET] {0}: its loop is still listed after the client closed; the relaunch may not start one", inst.Name));
+            }
 
-            ResetInstanceAiState(inst.Name);
+            FarmEngine.ReleaseAccount(inst.Name);
 
 
 
@@ -3662,7 +3793,16 @@ namespace DofusFarm.UI
 
             }
 
+            // A new device, the way `+ Add` and Clone end in "Unique hardware fingerprint
+            // applied". Without this the "new" instance still arrived as the same phone.
+            ResetInstanceDeviceIdentity(inst.Name);
+
             Log(string.Format("[RESET] {0}: profile wiped ({1}); old guest identity and session are gone", inst.Name, dir));
+
+            // After the wipe, not before it: the old loop appends to this log and honours
+            // this stop file while it is still alive, so clearing them first could either
+            // fail on a held handle or, worse, un-stop a loop that had not polled yet.
+            ResetInstanceAiState(inst.Name);
 
             return true;
 
@@ -3684,6 +3824,14 @@ namespace DofusFarm.UI
             // The new instance is meant to be driven, so the operator's "off" does not
             // carry over a reset: the row comes back with the AI switched on.
             if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, true);
+            // A loop that is still alive is polling the stop file we are about to delete,
+            // and deleting it would cancel the stop it is obeying. It gets to finish its
+            // step instead; its own start clears the file (`_make_pilot` unlinks it).
+            if (_aiPanel != null && _aiPanel.IsRunningNow(slot, 600))
+            {
+                Log("[RESET] " + slot + ": its loop is still alive; leaving its stop file and log alone");
+                return;
+            }
             string own = Path.Combine(NetworkSettings.AppDataRoot, "autopilot." + slot + ".jsonl");
             string[] paths = new string[]
             {
@@ -3704,6 +3852,44 @@ namespace DofusFarm.UI
                     // A held lock or a log another writer still has open is not fatal:
                     // the new loop appends to a fresh file only when this one is gone,
                     // and the operator sees why if it is not.
+                    Log(string.Format("[RESET] {0}: could not clear {1}: {2}",
+                                      slot, Path.GetFileName(path), ex.Message));
+                }
+            }
+        }
+
+        /// <summary>Give the slot a new device, the way adding an instance does.
+        ///
+        /// `+ Add` provisions a fresh instance and Clone ends in "Unique hardware
+        /// fingerprint applied": a new serial and Android id, which the relay stamps on
+        /// every request. A reset kept the old pair, so the "new" instance still reached
+        /// the server as the same phone -- and measured 2026-11-12 the ban followed the
+        /// device rather than the guest (`haapi.ankama.com ... 401 {"reason":"BAN"}` on a
+        /// profile wiped seconds earlier). Deleting the file makes the next launch go
+        /// through the same `LoadInstanceIdentity` a new instance goes through, and the
+        /// relay rebuilds on the new pair (`EnsureProxyRunning` compares the spec).
+        ///
+        /// The per-slot objective ledger goes with it: it is this instance's belief about
+        /// its own goals, and a new instance starts without one.
+        /// </summary>
+        private void ResetInstanceDeviceIdentity(string slot)
+        {
+            if (string.IsNullOrEmpty(slot)) return;
+            string[] paths = new string[]
+            {
+                Path.Combine(NetworkSettings.AppBase, "asset_cache", "identity", slot + ".txt"),
+                Path.Combine(NetworkSettings.AppDataRoot, "objectives." + slot + ".json"),
+            };
+            foreach (string path in paths)
+            {
+                try
+                {
+                    if (!File.Exists(path)) continue;
+                    File.Delete(path);
+                    Log("[RESET] " + slot + ": cleared " + Path.GetFileName(path));
+                }
+                catch (Exception ex)
+                {
                     Log(string.Format("[RESET] {0}: could not clear {1}: {2}",
                                       slot, Path.GetFileName(path), ex.Message));
                 }
@@ -3968,17 +4154,18 @@ namespace DofusFarm.UI
                     // One cell, one instance: on starts this client's loop, off stops
                     // only this one. The Launch cell next to it drives the client
                     // process; this one drives the AI, and they are not the same thing.
-                    // It runs on the UI thread because the panel's start/stop paths touch
-                    // its own controls (SetRunningUi) -- the same reason AutoStartAi
-                    // marshals StartInstance instead of calling it from its worker.
+                    // It runs on a worker rather than on the UI thread: the panel now
+                    // waits for the daemon to confirm a stop (a step can be a fight), and
+                    // a click that froze the window for that long would look like the
+                    // crash this cell exists to fix. The panel marshals its own controls.
                     if (_aiPanel == null) return;
                     string aiSlot = inst.Name;
-                    SafeInvoke(delegate
+                    ThreadPool.QueueUserWorkItem(delegate
                     {
                         try { _aiPanel.ToggleAi(aiSlot); }
                         catch (Exception ex) { Log(string.Format("[AI] {0}: toggle failed: {1}", aiSlot, ex.Message)); }
+                        finally { try { SafeBeginInvoke(delegate { RefreshGrid(true); }); } catch { } }
                     });
-                    RefreshGrid(true);
                     break;
                 }
 
@@ -4200,9 +4387,33 @@ namespace DofusFarm.UI
                 }
                 catch { }
 
+                // A slot the operator reset must not be handed the pool entry it was reset
+                // to escape. `accounts.txt` is positional, so the banned guest came back on
+                // the very next launch and the "fresh" instance was the old one -- measured
+                // 2026-11-12 in DofusFarm.log: "[RESET] dofus-02: profile wiped" followed by
+                // "assigned visitor/account from accounts.txt: [GUEST]29d3f5e3b27c3f83" and a
+                // login popup reading "Your account has been permanently banned". The flag is
+                // written by the reset and already honoured inside the form; this is the other
+                // half of the same contract. The slot keeps the guest its own profile
+                // registered, which is what makes a reset a new instance.
+                bool freshIdentity = false;
+                try
+                {
+                    freshIdentity = System.IO.File.Exists(
+                        System.IO.Path.Combine(WebView2ProfileDir(inst.Name), "force_fresh_identity.flag"));
+                }
+                catch { }
+
                 System.Collections.Generic.KeyValuePair<string, string>? acc = null;
-                if (!manualLogin) acc = FarmEngine.GetAccountForSlot(slot);
-                if (manualLogin)
+                if (!manualLogin && !freshIdentity) acc = FarmEngine.GetAccountForSlot(slot);
+                if (freshIdentity)
+                {
+                    Log(string.Format("WebView2 {0}: this profile was reset - no account assigned from accounts.txt (the slot keeps the guest it registered)",
+                        inst.Name));
+                    opts.AccountLogin = null;
+                    opts.AccountPassword = null;
+                }
+                else if (manualLogin)
                 {
                     Log(string.Format("WebView2 {0}: manual-login.flag present - no account assigned from accounts.txt (sign in by hand)",
                         inst.Name));

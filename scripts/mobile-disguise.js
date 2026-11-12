@@ -1586,6 +1586,9 @@
 
             // -- the badge is the AI button -------------------------------------
             aiRunning: false,
+            // Switch on, loop not up yet. The host pushes this from the same pair of
+            // facts the row's toggle cell reads, so the two can never disagree.
+            aiWaiting: false,
 
             aiToggle: function() {
                 var self = this;
@@ -1629,13 +1632,21 @@
                 this.aiPending = true;
             },
 
-            setAiState: function(running, text) {
+            setAiState: function(running, text, waiting) {
                 this.aiRunning = !!running;
+                // The switch can be ON while no loop exists yet: the host starts a
+                // client, and the loop only exists once that client's window is up.
+                // That is a real state, not an off state -- the row paints it
+                // "AI WAIT" -- so the badge must say the same thing instead of
+                // offering "AI: start" for a press that already happened.
+                this.aiWaiting = !!waiting && !this.aiRunning;
                 this.aiPending = false;
                 if (this._ackTimer) { clearTimeout(this._ackTimer); this._ackTimer = null; }
                 var hud = document.getElementById('__farmbot_hud');
                 var label = document.getElementById('__farmbot_hud_label');
-                if (hud) hud.title = text || (running ? 'AI running' : 'Start the AI');
+                if (hud) hud.title = text || (running ? 'AI running'
+                    : (this.aiWaiting ? 'AI on, waiting for this client to be ready'
+                                      : 'Start the AI'));
                 if (!hud || !label) return;
                 if (running) {
                     label.textContent = 'AI: running';
@@ -1643,6 +1654,12 @@
                     hud.style.color = '#ffffff';
                     hud.style.border = '1px solid #34d399';
                     hud.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
+                } else if (this.aiWaiting) {
+                    label.textContent = 'AI: waiting';
+                    hud.style.backgroundColor = 'rgba(120, 53, 15, 0.9)';
+                    hud.style.color = '#fbbf24';
+                    hud.style.border = '1px solid rgba(251, 191, 36, 0.55)';
+                    hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
                 } else {
                     label.textContent = 'AI: start';
                     hud.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
@@ -1726,20 +1743,29 @@
 
                     function paintPill() {
                         var running = !!self.aiRunning;
-                        auto.textContent = running ? '■ Auto' : '▶ Auto';
+                        var waiting = !!self.aiWaiting && !running;
+                        auto.textContent = running ? '■ Auto' : (waiting ? '⏳ Auto' : '▶ Auto');
                         auto.style.background = running ? 'rgba(220,38,38,0.9)'
-                                                        : 'rgba(37,99,235,0.9)';
+                                            : (waiting ? 'rgba(180,83,9,0.9)'
+                                                       : 'rgba(37,99,235,0.9)');
                         auto.title = running ? 'Stop the autonomous AI loop for this client'
-                                             : 'Start the autonomous AI loop for this client';
+                                    : (waiting ? 'AI is on; the loop starts once this client is ready'
+                                               : 'Start the autonomous AI loop for this client');
                     }
                     paintPill();
                     auto.onclick = function(e) {
                         e.stopPropagation();
                         var running = !!self.aiRunning;
-                        auto.textContent = running ? '…stopping' : '…starting';
+                        // Waiting is an ON switch with no loop yet: the click is a
+                        // cancel, so it has to travel as stop_one. Sending start_one
+                        // again asked for a loop that was already asked for, and the
+                        // host's own cancel branch (ToggleAi) was never reached.
+                        var waiting = !!self.aiWaiting && !running;
+                        auto.textContent = running ? '…stopping'
+                                         : (waiting ? '…cancelling' : '…starting');
                         try {
                             window.chrome.webview.postMessage({
-                                type: 'AI_REQUEST', action: running ? 'stop_one' : 'start_one'
+                                type: 'AI_REQUEST', action: (running || waiting) ? 'stop_one' : 'start_one'
                             });
                         } catch (err) {
                             auto.textContent = 'no host';
@@ -1836,7 +1862,9 @@
             updateHud: function() {
                 // The badge shows the AI loop's state. The farm bot has its own state
                 // and no badge: a control labelled "AI" must control the AI.
-                this.setAiState(this.aiRunning, null);
+                // `aiWaiting` has to survive a repaint -- a bare two-argument call
+                // here was how a pending start turned back into "AI: start".
+                this.setAiState(this.aiRunning, null, this.aiWaiting);
             },
 
             bindKeyListeners: function() {
@@ -3568,6 +3596,78 @@
         // A wrapped screen that is replaced by a re-render must not lose the guard;
         // the flag lives on the screen object, so a new one is wrapped again.
         setInterval(function() { try { _guardLoginScreen(); } catch (e) {} }, 5000);
+
+        // Guest *registration*, not just guest playback.
+        //
+        // playWithGuest() only replays a guest that is already stored. The bundle's
+        // own body is:
+        //     playWithGuest: function () {
+        //         var e = this.getGuestAccount();
+        //         return e.login && e.password ? this._login({account:e.login,password:e.password})
+        //                                      : console.error(...);
+        //     }
+        // so on a profile with no stored guest `e` is null and the first property
+        // read throws `TypeError: Cannot read properties of null (reading 'login')`.
+        // That is exactly what a reset profile is, and what any slot with no pool
+        // account is. Measured 2026-11-12 on dofus-02 after a reset:
+        //     [Auth] No stored guest identity; client will register a fresh one
+        //     [Auth] playWithGuest failed: TypeError ... (reading 'login')
+        // and the window then sat on the login screen for the whole retry budget.
+        //
+        // The client's own registration is _createGuest(): it opens the
+        // legal-agreement window and, when that window closes as *accepted*, runs
+        //     requestWebAuthGuestToken -> requestWebAuthKey({guestToken})
+        // which stores `guestAccount` and logs in. Nothing else in the bundle
+        // creates a guest, and the window only needs one press -- so press it the
+        // way the accept button does: `_canceled = false` then `close()`, which
+        // runs the same close handler (setValue('guestAgreement', ...) + onValidate).
+        // The host's localStorage hook then posts GUEST_ACCOUNT_PERSIST, so the new
+        // login reaches accounts.txt for this slot with nothing else changed.
+        var _agentGuestRegister = function() {
+            var ls = null;
+            try { ls = window.gui && window.gui.loginScreen; } catch (e) { ls = null; }
+            if (!ls) return { ok: false, why: 'no login screen yet' };
+
+            var stored = null;
+            try { stored = typeof ls.getGuestAccount === 'function' ? ls.getGuestAccount() : null; }
+            catch (eStored) { stored = null; }
+            if (stored && stored.login && stored.password) {
+                // A guest exists: this is playback, which is what the seeder
+                // always meant to do.
+                try { ls.playWithGuest(); return { ok: true, why: 'played the stored guest ' + stored.login }; }
+                catch (ePlay) { return { ok: false, why: 'playWithGuest threw: ' + ePlay }; }
+            }
+
+            var accept = function() {
+                var win = null;
+                try {
+                    var mgr = _agentWindowManager();
+                    win = mgr && typeof mgr.getWindow === 'function' ? mgr.getWindow('legalAgreement') : null;
+                } catch (eWin) { win = null; }
+                if (!win || !win.openState) return false;
+                try {
+                    win._canceled = false;   // what the accept button sets before close()
+                    win.close();             // runs the window's own close handler
+                    console.log('[Auth] guest registration: accepted the legal-agreement'
+                                + ' window for this profile');
+                    return true;
+                } catch (eClose) { return false; }
+            };
+            if (accept()) return { ok: true, why: 'accepted an already-open legal agreement' };
+
+            try { ls._createGuest(); }
+            catch (eCreate) { return { ok: false, why: '_createGuest threw: ' + eCreate }; }
+            console.log('[Auth] no stored guest on this profile; registering a new one through the client');
+
+            // The window opens on the next frame; press accept as soon as it is up.
+            var tries = 0;
+            var timer = setInterval(function() {
+                tries++;
+                if (accept() || tries > 40) clearInterval(timer);   // 40 x 250ms = 10s
+            }, 250);
+            return { ok: true, why: 'registering a fresh guest' };
+        };
+        try { window.__dfRegisterGuest = _agentGuestRegister; } catch (eReg) {}
 
         // Send a protocol message through the game's own connection manager.
         //
@@ -12333,11 +12433,13 @@
             return JSON.stringify(envelope);
         };
         // The host pushes the AI loop's state here so the badge reflects reality
-        // rather than whatever the page last assumed.
+        // rather than whatever the page last assumed. Three answers, not two: on,
+        // waiting for the client to be ready, off -- the same three the row's
+        // toggle cell paints, from the same host-side pair of facts.
         try {
-            window.__aiState = function(running, text) {
+            window.__aiState = function(running, text, waiting) {
                 if (window.__FarmBot && window.__FarmBot.setAiState) {
-                    window.__FarmBot.setAiState(running, text);
+                    window.__FarmBot.setAiState(running, text, waiting);
                 }
             };
         } catch (e) {}

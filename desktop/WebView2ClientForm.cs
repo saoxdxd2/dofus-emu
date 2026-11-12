@@ -43,6 +43,12 @@ namespace DofusFarm.Engine
         private string _lastGuestTokensRaw;
         private readonly string _displayName;
         private readonly string _userDataDir;
+
+        /// <summary>This instance's own profile folder, so the OAuth popup can keep a
+        /// cookie jar of its own beside it instead of a throwaway temp directory.
+        /// Read-only: the popup must never choose a profile the client also uses, because
+        /// WebView2 refuses to share one user data folder between two live processes.</summary>
+        public string ProfileDir { get { return _userDataDir; } }
         private readonly string _entryUrl;
         private readonly Action<string> _logCallback;
 
@@ -590,6 +596,10 @@ namespace DofusFarm.Engine
 })();";
 
         private bool _skipPoolSeed;
+        // Set only by the reset's flag, never by an OAuth login: an OAuth account is the
+        // operator's own and must not overwrite the slot's pool entry, while a guest
+        // registered on a wiped profile IS the slot's new identity and has to own it.
+        private bool _freshIdentityMode;
         private bool _explicitAccount;
         private string _claimedLogin;
 
@@ -615,6 +625,7 @@ namespace DofusFarm.Engine
                 string flag = Path.Combine(_userDataDir, "force_fresh_identity.flag");
                 if (!File.Exists(flag)) return;
                 _skipPoolSeed = true;
+                _freshIdentityMode = true;
                 string cleared = Path.Combine(_userDataDir, "fresh_identity.cleared");
                 if (!File.Exists(cleared))
                 {
@@ -912,7 +923,27 @@ namespace DofusFarm.Engine
                     "                    sessionStorage.setItem('dfGuestLastAt', String(Date.now()));\n" +
                     "                }} catch(e) {{}}\n" +
                     "                console.log('[Auth] Automatically initiating direct guest socket login (attempt ' + (attempts + 1) + '/5)');\n" +
-                    "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{ console.error('[Auth] playWithGuest failed:', e); }} }}, 800);\n" +
+                    "                // Pressing playWithGuest on a profile with no stored guest\n" +
+                    "                // throws inside the client (getGuestAccount() is null and the\n" +
+                    "                // bundle reads .login off it), so the press has to be routed:\n" +
+                    "                // stored guest -> play it; none -> register one. Measured\n" +
+                    "                // 2026-11-12 on a just-reset dofus-02, which sat on the login\n" +
+                    "                // screen with that TypeError for its whole retry budget.\n" +
+                    "                setTimeout(function() {{\n" +
+                    "                    var _ls = window.gui.loginScreen;\n" +
+                    "                    var _stored = null;\n" +
+                    "                    try {{ _stored = _ls.getGuestAccount ? _ls.getGuestAccount() : null; }} catch(eStored) {{}}\n" +
+                    "                    if (_stored && _stored.login && _stored.password) {{\n" +
+                    "                        try {{ _ls.playWithGuest(); }} catch(ePlay) {{ console.error('[Auth] playWithGuest failed:', ePlay); }}\n" +
+                    "                        return;\n" +
+                    "                    }}\n" +
+                    "                    if (typeof window.__dfRegisterGuest === 'function') {{\n" +
+                    "                        try {{ var _reg = window.__dfRegisterGuest(); console.log('[Auth] guest registration: ' + (_reg && _reg.why)); }}\n" +
+                    "                        catch(eReg) {{ console.error('[Auth] guest registration failed:', eReg); }}\n" +
+                    "                        return;\n" +
+                    "                    }}\n" +
+                    "                    try {{ _ls._createGuest(); }} catch(eCreate) {{ console.error('[Auth] _createGuest failed:', eCreate); }}\n" +
+                    "                }}, 800);\n" +
                 "                var _watchTicks = 0;\n" +
                 "                var _watch = setInterval(function() {{\n" +
                 "                    try {{\n" +
@@ -1762,12 +1793,30 @@ namespace DofusFarm.Engine
                 lock (KnownAccountLogins) { alreadyExists = KnownAccountLogins.Contains(login); }
                 if (!alreadyExists)
                 {
-                    File.AppendAllText(path, line + "\r\n");
+                    // A reset slot must own the guest it just registered. Appending put the
+                    // new line at the end while the slot's positional index still named the
+                    // account it was reset to escape -- so the "fresh" instance was handed
+                    // the banned guest on the next launch. In fresh-identity mode the slot
+                    // rewrites its own line and no other slot's index moves; every other
+                    // profile keeps appending exactly as before.
+                    int slotIdx = _freshIdentityMode ? FarmEngine.AccountIndexOf(_instanceId) : -1;
+                    bool replaced = slotIdx >= 0 && FarmEngine.ReplaceAccountAt(slotIdx, login, password);
+                    if (!replaced) File.AppendAllText(path, line + "\r\n");
                     lock (KnownAccountLogins) { KnownAccountLogins.Add(login); }
                     // Own the timestamp we just caused, or the next post reloads the file it
                     // already has an answer for.
                     try { _knownAccountsStamp = File.GetLastWriteTimeUtc(path); } catch { }
-                    _logCallback?.Invoke(string.Format("[{0}] Auto-harvested visitor credentials into accounts.txt: {1}", _instanceId, login));
+                    // The slot owns a real identity again, so the reset's flag has done its
+                    // job: leaving it would keep the slot out of the pool forever, which is
+                    // not what a new instance looks like after its first guest registers.
+                    if (replaced)
+                    {
+                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch { }
+                    }
+                    _logCallback?.Invoke(string.Format(
+                        "[{0}] Auto-harvested visitor credentials into accounts.txt: {1}{2}",
+                        _instanceId, login,
+                        replaced ? string.Format(" (slot index {0} now owns this guest)", slotIdx) : ""));
                 }
             }
             catch (Exception ex)
@@ -2876,7 +2925,24 @@ namespace DofusFarm.Engine
                     args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-features=WebRtcHideLocalIpsWithMdns ");
                     envOptions.AdditionalBrowserArguments = args.ToString().Trim();
 
-                    string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));
+                    // A profile per instance, not a profile per popup. This was
+                    //     Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid()...)
+                    // so every popup opened a browser that had never been seen: no cookies,
+                    // no history, no Google session. To an identity provider that is a
+                    // brand-new device, and Google answers a signup from one with
+                    // "Verify some info ... Scan the QR code with your phone" -- measured
+                    // live 2026-11-12, on every attempt, from the relay's egress. The IP is
+                    // not ours to fix; the device identity is, and throwing the cookie jar
+                    // away each time guaranteed the worst answer.
+                    //
+                    // It stays a subdirectory of the instance's own user data folder: WebView2
+                    // refuses to share one folder between two live browser processes, and the
+                    // main client already owns _userDataDir.
+                    string oauthProfileRoot = _parentForm != null ? _parentForm.ProfileDir : null;
+                    if (string.IsNullOrEmpty(oauthProfileRoot))
+                        oauthProfileRoot = Path.Combine(Path.GetTempPath(), "DofusFarm_Profile");
+                    string oauthDataDir = Path.Combine(oauthProfileRoot, "oauth-profile");
+                    try { Directory.CreateDirectory(oauthDataDir); } catch { }
                     var env = await CoreWebView2Environment.CreateAsync(null, oauthDataDir, envOptions);
                     await _webView.EnsureCoreWebView2Async(env);
                 }
