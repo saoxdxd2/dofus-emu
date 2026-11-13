@@ -2060,7 +2060,7 @@ namespace DofusFarm.UI
             // with a working stdout -- the exact thing a daemon with a dead pipe has
             // lost. Only when NONE of the requested slots came up: a partial success
             // would otherwise be driven twice.
-            if (false)
+            if (failed.Count >= ids.Count && ids.Count > 0)
             {
                 Append("[ai] the daemon started none of the " + ids.Count.ToString()
                        + " requested instance(s); falling back to per-instance children");

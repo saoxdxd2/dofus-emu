@@ -504,7 +504,28 @@ namespace DofusBuild
                 || p.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
                 || p.IndexOf(".tmp-", StringComparison.OrdinalIgnoreCase) >= 0
+                // A virtualenv and the scratch bench are this machine's toolchain, not the
+                // app. Measured 2026-11-13 on the shipped artifact: dofus-network/.venv was
+                // 19,913 entries / 752.7 MB unpacked / 200.1 MiB compressed, and
+                // dofus-network/scratch was 242.2 MiB compressed -- 217.6 MiB of that being
+                // two copies of the JAX combat_grid weights that FORBIDDEN already refuses
+                // under models/. Together 442.3 of 507.9 MiB: 87% of a 537,758,208-byte
+                // setup.exe whose budget is 62,914,560. The comment further down already
+                // claimed "site-packages never crosses the installer"; it was true of
+                // runtimes/ and false of dofus-network/, which is how the venv got in.
+                || p.IndexOf("/.venv/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith("/.venv", StringComparison.OrdinalIgnoreCase)
+                || p.IndexOf("/scratch/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith("/scratch", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith("_selftest.txt", StringComparison.OrdinalIgnoreCase)
+                // `.bak` as an infix, not only as a suffix. `payload_audit.py` refuses any name
+                // that *contains* ".bak", while this predicate only refused names that *ended*
+                // with it, so the two disagreed about `models/backups/foresight_v1.bak.json`
+                // and `tool_stack.gbdt.bak.json`: the builder shipped them, the gate rejected
+                // the artifact. Both are this box's pre-edit copies, written by a weight-space
+                // run on 2026-11-13, and untracked -- exactly the local state the suffix rule
+                // meant to keep out. The infix form keeps `script.js.bak` covered too.
+                || p.IndexOf(".bak.", StringComparison.OrdinalIgnoreCase) >= 0
                 || p.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith(".orig", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith("gate_run.json", StringComparison.OrdinalIgnoreCase)
@@ -559,6 +580,45 @@ namespace DofusBuild
                               StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith("/models/tool_policy.onnx", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith("/models/verifier_head.onnx", StringComparison.OrdinalIgnoreCase)
+                // Retired artifacts, kept so `agent/weight_space.py restore` can put one back.
+                // Measured 2026-11-13: models/backups was 8 files / 1.05 MiB compressed (retired
+                // tool_policy.<sha12>.onnx triples plus two .bak.json manifests). `restore` is a
+                // command-line experiment run against the repo, not a tool the shipped agent can
+                // call -- it reads sys.argv and prints JSON -- so an installed machine carries
+                // weights it will never restore. The repo keeps the whole directory.
+                || p.IndexOf("/models/backups/", StringComparison.OrdinalIgnoreCase) >= 0
+                // Ablation families from the mechanistic-alignment work (ARCH_REASSESSMENT
+                // N-series and XIV): each directory is one experimental variant of the same
+                // tool_policy graph, written by a fit script and read by nothing the installed
+                // agent can reach. Measured 2026-11-13 in-zip: d_obs 0.294 MB, d_obs2 0.296,
+                // d_obs_s11 0.294, d_obs_s23 0.294, d_cila 0.290, d_seqhard 0.290,
+                // dedicated_seq 0.290, d_flat 0.182, dedicated_flat 0.182, cw_none/cw_sqrt/
+                // cw_inv 0.175 each, and sweet_layer.candidate.onnx 0.320 -- 3.4 MB of variants
+                // behind no shipped default. `grep -rl <stem> --include=*.py` over agent/, ai/
+                // and combat/ returns only the script that fits them, or nothing.
+                // models/d_seq/ stays: ai/fit_consult_gate.py defaults --model to it, and that
+                // script ships.
+                || p.IndexOf("/models/d_obs", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/d_cila/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/d_seqhard/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/d_flat/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/dedicated_seq/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/dedicated_flat/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/cw_none/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/cw_sqrt/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/cw_inv/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith("/models/sweet_layer.candidate.onnx",
+                              StringComparison.OrdinalIgnoreCase)
+                // The updater's own rollback archives. `script.js.bak` is the current build's
+                // original, and when the client updates itself (3.3.11 -> the next build) the
+                // displaced bytes are kept beside it as `script.js.vendor-<version>`; the patch
+                // engine writes `script.js.patched-<version>` the same way. Measured 2026-11-13:
+                // both were 1.2 MiB compressed each -- 2.4 MiB of a 62.2 MiB artifact -- and
+                // agent/regression.py itself calls them "runtime state the updater leaves behind
+                // and `.gitignore` covers, so a fresh clone has neither", skipping its own check
+                // when they are absent. An installed machine generates its own on first patch.
+                || p.IndexOf("/build/script.js.vendor-", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/build/script.js.patched-", StringComparison.OrdinalIgnoreCase) >= 0
                 // Two contradictory requirements.txt files shipped: the root one is what
                 // setup.exe and install-python-ai.bat install, `dofus-network/requirements.txt`
                 // listed only numpy+requests under a stale "this machine runs Python 3.15, use
@@ -645,6 +705,14 @@ namespace DofusBuild
                         // of dead payload. It remains in the repo.
                         string leafName = Path.GetFileName(wf);
                         if (string.Equals(leafName, "warp-plus.exe", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        // wireproxy.log is this box's tunnel log (118,043 B measured
+                        // 2026-11-13) and it was the only .log the payload audit still
+                        // found in the artifact. The bin/ tree was the one staging loop
+                        // that never consulted SkipDevPayload, so the suffix rules that
+                        // keep dev droppings out everywhere else did not apply here.
+                        if (leafName.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+                            || leafName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
                             continue;
                         if (string.Equals(leafName, "wgcf-account.toml", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(leafName, "wgcf-profile.conf", StringComparison.OrdinalIgnoreCase)

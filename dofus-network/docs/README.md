@@ -1,6 +1,8 @@
 # Docs map
 
-Twenty documents in `dofus-network/docs/` besides this map. The benchmark/eval JSON the
+Twenty documents in `dofus-network/docs/` besides this map, plus `docs/archive/` — one file holding
+the thirteen `KNOWN_GAPS.md` entries whose own heading said `(fixed ...)`, moved verbatim on
+2026-11-13 when the register gained its index. The benchmark/eval JSON the
 architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data, not documentation.
 
 **New session? Read `HANDOFF.md` first.** It is the only document written to be sufficient on its
@@ -23,10 +25,10 @@ in the same table.
 |---|---|---|
 | **`HANDOFF.md`** | Onboarding: what this is, what state it is in, how to verify, the vocabulary, the traps | **yes — read first (2026-11-11)** |
 | **`CURRENT.md`** | How to run it: services/ports, the 7-stage loop, think-token pacing, policy modes, model inventory, combat pipeline, the 28 tools | **yes — the running-system map** |
-| **`KNOWN_GAPS.md`** | What is *not* true yet, each with evidence (forecaster dark, no vision, live fight, test-gate history) | **yes — honest limits** |
+| **`KNOWN_GAPS.md`** | What is *not* true yet, each with evidence (forecaster dark, no vision, live fight, test-gate history). Opens with a 121-row index so a reader can jump to one entry instead of reading the file | **yes — honest limits** |
 | **`AI_ARCHITECTURE.md`** | What the AI is: what a default run loads (§A), the opt-in lanes (§B), and the frozen research that can be ignored (§C) | **yes — live/opt-in/frozen map (2026-11-07)** |
 | **`COMBAT_POLICY_PLAN.md`** | What to do next about the per-turn planner: five established facts, what is ruled out *with the number that rules it out*, and the one remaining lever with a mechanism (policy iteration), plus six measurement rules | **yes — the only plan with an acceptance criterion (2026-11-11)** |
-| `ARCH_REASSESSMENT.md` | The architectural argument: evidence, sections A–XIII plus subsections L.1–L.43, ordered work list | reasoning; its status column is superseded by `CURRENT.md` |
+| `ARCH_REASSESSMENT.md` | The architectural argument: evidence, 35 sections (`0`, `A`–`K`, `L`–`XIV`, `N.8`–`N.13`), ordered work list. Opens with a section index | reasoning; its status column is superseded by `CURRENT.md` |
 | `BASELINE.md` | The recorded live baseline required by criterion (5) of Full Auto | yes — a measurement, not status |
 | `BRAIN_DAEMON.md` | One Python process for all instances: `/brain/*` API, per-instance threads, locks, host integration | yes — implemented 2026-10-27 |
 | `PLANNING.md` | **How the agent is meant to think** — planner tiers and the RAM budget, then the strategist plan (two brains, many heads), economy and the strategy bandit. Two documents merged 2026-11-07 | design, not shipped — read `CURRENT.md` for what runs; the `hdv.buy` example predates the 28-tool vocabulary |

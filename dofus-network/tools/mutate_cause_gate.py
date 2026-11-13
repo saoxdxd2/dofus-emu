@@ -3107,7 +3107,7 @@ MUTATIONS = [
      'if (ids != null && ids.Count == 1) target = ids[0];',
      'if (ids != null && ids.Count > 0) target = ids[0];'),
     ("oauth: the system browser is never used", CWEB2,
-     'if (RuntimeSettings.Current.OauthBrowser\n                && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))\n                return;',
+     'if ((guestGrant || RuntimeSettings.Current.OauthBrowser)\n                && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))\n                return;',
      'if (false)\n                return;'),
     ("oauth: the handler is left behind on uninstall", CUNINST,
      r'Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false);',
@@ -3165,6 +3165,22 @@ MUTATIONS = [
     ("console: a start that landed on nothing is reported as a start", CSPANEL,
      "            if (failed.Count >= ids.Count && ids.Count > 0)",
      "            if (false)"),
+    # ---- the guest grant goes where it can finish (2026-11-13). The popup has never
+    # reached `dofustouch://authorized` in 2.8 MB of log; the system browser, the same
+    # Edge engine, did it on the first try with a real code. These mutations put the
+    # grant back in the container that cannot complete it.
+    ("guest: the grant is sent back to the popup the challenge kills", CWEB2,
+     "if ((guestGrant || RuntimeSettings.Current.OauthBrowser)",
+     "if ((RuntimeSettings.Current.OauthBrowser"),
+    ("guest: a browser that cannot launch dead-ends the sign-in", CWEB2,
+     "&& OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))",
+     "&& false)"),
+    ("guest: the guest URL is fetched with a mobile UA again", CWEB2,
+     "if (guestUrl && !string.IsNullOrEmpty(cleanUa))",
+     "if (false)"),
+    ("guest: Google's UA is changed while fixing the guest one", CWEB2,
+     "                        s.UserAgent = mobileUa;",
+     "                        s.UserAgent = cleanUa;"),
 ]
 
 

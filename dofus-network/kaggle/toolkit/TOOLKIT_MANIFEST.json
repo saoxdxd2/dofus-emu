@@ -149,9 +149,9 @@
       "missing": false,
       "path": "agent/autopilot.py",
       "source": "agent/autopilot.py",
-      "source_sha256": "ec6c34a2bc079ed7369f90c2bb5c00f0bce26a55debe04008b87fd3653355606",
+      "source_sha256": "a4bb6c34b22b5829d4e9ad2d2c207d51fe7e28716b7251954b9e5564f44c7af8",
       "status": "sync",
-      "toolkit_sha256": "ec6c34a2bc079ed7369f90c2bb5c00f0bce26a55debe04008b87fd3653355606"
+      "toolkit_sha256": "a4bb6c34b22b5829d4e9ad2d2c207d51fe7e28716b7251954b9e5564f44c7af8"
     },
     {
       "drift": false,
@@ -167,9 +167,9 @@
       "missing": false,
       "path": "agent/brain_daemon.py",
       "source": "agent/brain_daemon.py",
-      "source_sha256": "17630f557bdd8169f897cf63aa751968538ff714deaf82510738ad290e02e0ee",
+      "source_sha256": "4f6f04a2b1c3ad8f2d522c412e3712821eda12231fe0048813bb06aab4c4ec7d",
       "status": "sync",
-      "toolkit_sha256": "17630f557bdd8169f897cf63aa751968538ff714deaf82510738ad290e02e0ee"
+      "toolkit_sha256": "4f6f04a2b1c3ad8f2d522c412e3712821eda12231fe0048813bb06aab4c4ec7d"
     },
     {
       "drift": false,
@@ -206,6 +206,15 @@
       "source_sha256": "19ffb84579fb57a805b1c1642d409e663449f92ffb7ad2222daf54e0dba49dff",
       "status": "sync",
       "toolkit_sha256": "19ffb84579fb57a805b1c1642d409e663449f92ffb7ad2222daf54e0dba49dff"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "agent/console_guard.py",
+      "source": "agent/console_guard.py",
+      "source_sha256": "738629477b9998c2ec83af04cac5991a862750102ebe70d84df4d354dbe97817",
+      "status": "sync",
+      "toolkit_sha256": "738629477b9998c2ec83af04cac5991a862750102ebe70d84df4d354dbe97817"
     },
     {
       "drift": false,
@@ -401,9 +410,9 @@
       "missing": false,
       "path": "agent/planner_nn.py",
       "source": "agent/planner_nn.py",
-      "source_sha256": "7076e7f28d3678b05a32ff5873a9f885ddc767ce83faf97e9d6d124de7edd41f",
+      "source_sha256": "c84867bba6ed1f052b9fe2debd80a4b9f304457c0d8e68be35fcc2ad67b685df",
       "status": "sync",
-      "toolkit_sha256": "7076e7f28d3678b05a32ff5873a9f885ddc767ce83faf97e9d6d124de7edd41f"
+      "toolkit_sha256": "c84867bba6ed1f052b9fe2debd80a4b9f304457c0d8e68be35fcc2ad67b685df"
     },
     {
       "drift": false,
@@ -437,9 +446,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "3564877debd428ac70317550c4725c4050363009ca5cbbf903b9a2559580fa70",
+      "source_sha256": "d783aaa013ee25eb68b2e8ca3ebb4b047ccd93d651edf2a45ad9f5cf9be4d3d0",
       "status": "sync",
-      "toolkit_sha256": "3564877debd428ac70317550c4725c4050363009ca5cbbf903b9a2559580fa70"
+      "toolkit_sha256": "d783aaa013ee25eb68b2e8ca3ebb4b047ccd93d651edf2a45ad9f5cf9be4d3d0"
     },
     {
       "drift": false,
@@ -473,9 +482,9 @@
       "missing": false,
       "path": "agent/serve.py",
       "source": "agent/serve.py",
-      "source_sha256": "c73285c085fa1c018360219706afe246e47353fb8cc8a159e6afeffdaca47c13",
+      "source_sha256": "7148fb19ed8f1e467c5f0124409726364ae340b5c85f59c75a30a658c212275b",
       "status": "sync",
-      "toolkit_sha256": "c73285c085fa1c018360219706afe246e47353fb8cc8a159e6afeffdaca47c13"
+      "toolkit_sha256": "7148fb19ed8f1e467c5f0124409726364ae340b5c85f59c75a30a658c212275b"
     },
     {
       "drift": false,
@@ -554,9 +563,9 @@
       "missing": false,
       "path": "agent/test_history_block.py",
       "source": "agent/test_history_block.py",
-      "source_sha256": "5c87eaf6e8e7dbe667e816d78116a0ca94baa2fb315eb9faff814b9ece913fef",
+      "source_sha256": "41f8e5d49e866e5e3a4df49049d0e3a2efc6c601fd5da7d178de3fd6cd3dbb28",
       "status": "sync",
-      "toolkit_sha256": "5c87eaf6e8e7dbe667e816d78116a0ca94baa2fb315eb9faff814b9ece913fef"
+      "toolkit_sha256": "41f8e5d49e866e5e3a4df49049d0e3a2efc6c601fd5da7d178de3fd6cd3dbb28"
     },
     {
       "drift": false,
@@ -1049,9 +1058,9 @@
       "missing": false,
       "path": "ai/train_stacker.py",
       "source": "ai/train_stacker.py",
-      "source_sha256": "0c7d18a8f51d43704a79fc5072fb3185bc01659332323ee5f1e1d324fc1c76a2",
+      "source_sha256": "3724c1e69df9bb6e38ed29503389a6aee422b759e4c4ffda93669ac1b39b0e12",
       "status": "sync",
-      "toolkit_sha256": "0c7d18a8f51d43704a79fc5072fb3185bc01659332323ee5f1e1d324fc1c76a2"
+      "toolkit_sha256": "3724c1e69df9bb6e38ed29503389a6aee422b759e4c4ffda93669ac1b39b0e12"
     },
     {
       "drift": false,
@@ -1895,9 +1904,9 @@
       "missing": false,
       "path": "run_brain.py",
       "source": "run_brain.py",
-      "source_sha256": "46b0d25c83af2e43b27c3b038a8224133d23ee8921720ae76ca75bec71dc3b0f",
+      "source_sha256": "fe84c665f99c42f876e5cb23dc95318c6f26dae42492f1b7e05d17a0f889bf28",
       "status": "sync",
-      "toolkit_sha256": "46b0d25c83af2e43b27c3b038a8224133d23ee8921720ae76ca75bec71dc3b0f"
+      "toolkit_sha256": "fe84c665f99c42f876e5cb23dc95318c6f26dae42492f1b7e05d17a0f889bf28"
     },
     {
       "drift": false,
@@ -2120,9 +2129,18 @@
       "missing": false,
       "path": "tools/doc_facts.py",
       "source": "tools/doc_facts.py",
-      "source_sha256": "8de72ca51647a73cb1387c05e94d88ac1da58d9fe277bc5b6ee4d3cb0fb5c49d",
+      "source_sha256": "8f2fbd46de7295d754a5ec706894e230998eda009897296f734872b5b202ad25",
       "status": "sync",
-      "toolkit_sha256": "8de72ca51647a73cb1387c05e94d88ac1da58d9fe277bc5b6ee4d3cb0fb5c49d"
+      "toolkit_sha256": "8f2fbd46de7295d754a5ec706894e230998eda009897296f734872b5b202ad25"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "tools/docs_navigable.py",
+      "source": "tools/docs_navigable.py",
+      "source_sha256": "5fabd397f5c890538d2ba44c7c6bc382abb730141d659e14a56c35cfedefef78",
+      "status": "sync",
+      "toolkit_sha256": "5fabd397f5c890538d2ba44c7c6bc382abb730141d659e14a56c35cfedefef78"
     },
     {
       "drift": false,
@@ -2141,6 +2159,15 @@
       "source_sha256": "ca1ba0895a5123b60cbe6a85f36f029d49f786d5b57823f8115e1db329e28865",
       "status": "sync",
       "toolkit_sha256": "ca1ba0895a5123b60cbe6a85f36f029d49f786d5b57823f8115e1db329e28865"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "tools/export_goodfire_vector.py",
+      "source": "tools/export_goodfire_vector.py",
+      "source_sha256": "cedbb82ec49c799542d462cd899dc65b059adb56eccb9849009b82324e2e381c",
+      "status": "sync",
+      "toolkit_sha256": "cedbb82ec49c799542d462cd899dc65b059adb56eccb9849009b82324e2e381c"
     },
     {
       "drift": false,
@@ -2354,9 +2381,9 @@
       "missing": false,
       "path": "tools/mutate_cause_gate.py",
       "source": "tools/mutate_cause_gate.py",
-      "source_sha256": "3bda9cf5a14610a40033ae6a75b40b11e2cf42c0a8563f55e547864b574d4cf9",
+      "source_sha256": "eedddf649c4790911edf531a0bebfa9cc537cb0ab1d6c8a505f9c53209d6e6c1",
       "status": "sync",
-      "toolkit_sha256": "3bda9cf5a14610a40033ae6a75b40b11e2cf42c0a8563f55e547864b574d4cf9"
+      "toolkit_sha256": "eedddf649c4790911edf531a0bebfa9cc537cb0ab1d6c8a505f9c53209d6e6c1"
     },
     {
       "drift": false,
@@ -2667,6 +2694,24 @@
     {
       "drift": false,
       "missing": false,
+      "path": "tools/train_causal_foresight.py",
+      "source": "tools/train_causal_foresight.py",
+      "source_sha256": "4bf311df76539cec186b5e194a6b674589ada29f54a057bf151e8d00bfc3b20b",
+      "status": "sync",
+      "toolkit_sha256": "4bf311df76539cec186b5e194a6b674589ada29f54a057bf151e8d00bfc3b20b"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "tools/train_sweet_layer.py",
+      "source": "tools/train_sweet_layer.py",
+      "source_sha256": "95fba413ccdb0482bf4d4ca6eddfeeda15ce0cdf5b7cca91806fb8782478055f",
+      "status": "sync",
+      "toolkit_sha256": "95fba413ccdb0482bf4d4ca6eddfeeda15ce0cdf5b7cca91806fb8782478055f"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "tools/train_veto_shadow.py",
       "source": "tools/train_veto_shadow.py",
       "source_sha256": "cb39d54aa4ae55abdd477e4316e31774b350ed0de67e7887082b2e9280c99387",
@@ -2701,7 +2746,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-12T23:51:26.851694+00:00",
+  "generated_at": "2026-11-13T02:46:23.506780+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

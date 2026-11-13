@@ -4,9 +4,11 @@
 re-deriving this project from 20,000 lines of prose.
 
 This document exists because the repository's knowledge is real but scattered across `resume.md`
-(≈5,850 lines), `docs/KNOWN_GAPS.md` (8,253), `docs/ARCH_REASSESSMENT.md` (6,630) and five daily
-memory logs — and a new reader cannot tell which of those is authoritative for which question, nor
-what the private vocabulary means. Read this file first; it routes, it does not replace.
+(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (7,776<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
+(6,768<!--f:arch_lines-->) and five daily memory logs — and a new reader cannot tell which of those is
+authoritative for which question, nor what the private vocabulary means. Read this file first; it
+routes, it does not replace. The three sizes are rendered from the files themselves
+(`tools/doc_facts.py`), because the hand-typed versions had all drifted by 2026-11-13.
 
 ---
 
@@ -54,7 +56,7 @@ facts. Expected output is stated so a mismatch is visible.
 
 ```bash
 cd dofus-network
-python -m agent.regression                      # the gate: 2,220 checks, exit 0 = green
+python -m agent.regression                      # the gate: 2,443<!--f:gate_checks--> checks, exit 0 = green
 python scratch/chain_reachability.py            # which rankers are actually reached
 python tools/sync_kaggle_toolkit.py             # 288 sync, 8 pinned, 0 drift/missing
 python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200
@@ -67,7 +69,7 @@ teaching the rule an exception.
 
 | # | command | expect |
 |---|---|---|
-| 1 | `python -m agent.regression` | **2,220 checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
+| 1 | `python -m agent.regression` | **2,443<!--f:gate_checks--> checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
 | 2 | `python -m unittest combat.test_live_policy` | 36 tests, OK (~0.3 s) |
 | 3 | `python -m unittest combat.test_duel_value combat.test_battle_solver combat.test_side_swap` | 102 tests, OK (~38 s) |
 | 4 | `python scratch/chain_reachability.py` | `hp_choice_stats {'asked': 1}` on the adjacent board — proves the shipped ranker is reached |
@@ -98,7 +100,7 @@ The five failures of the first run, and what each actually was:
 measures*, not the code being wrong. A gate whose failures are stale tests is worse than no gate,
 because it trains the reader to ignore red.
 
-**2,220 is a tagged number.** If you change the gate, re-run it and update every
+**2,443<!--f:gate_checks--> is a tagged number.** If you change the gate, re-run it and update every
 `<!--f:gate_checks-->` site; `test_docs_quote_measurements_by_tag` will tell you which ones drifted,
 by file and line. Do not type the number by hand anywhere else.
 
@@ -117,7 +119,7 @@ by file and line. Do not type the number by hand anywhere else.
 | **`boards_differed`** | How many boards the two policies actually disagreed on. **Ties are not evidence**; a p-value over 600 boards of which 121 differed is a statement about 121. | `duel_value.evaluate` |
 | **G-numbers** | Entries in `docs/KNOWN_GAPS.md`. `G98`/`G99`/`G100` are each used **twice**; quote the date with the number. | `KNOWN_GAPS.md` |
 | **§L.x** | Subsections of **section L** in `ARCH_REASSESSMENT.md` (L.1–L.43). `§XI`/`§XII`/`§XIII` are top-level roman sections of the same file. Two numbering schemes, one file. | `ARCH_REASSESSMENT.md` |
-| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,220-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
+| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,443<!--f:gate_checks-->-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
 | **the ladder** | `agent/hunting.py`'s engagement ladder: `join` → `travel`, gated by a *learned risk budget* (total monster level ÷ own level, raised by wins, lowered by losses). | `hunting.py` |
 | **toolkit mirror** | `kaggle/toolkit/` — a byte-copy of selected files for Kaggle. Editing a mirrored file without re-running the sync leaves the copy stale; `test_kaggle_toolkit_sync` catches it. | `tools/sync_kaggle_toolkit.py` |
 | **`<!--f:name-->`** | A **fact tag**. The number immediately before it is machine-checked against a named measurement, e.g. `2,220<!--f:gate_checks-->` is verified against `data/last_gate_run.json`. ~55 tags exist (`tools`, `gate_checks`, `live_steps`, `fight_head_wins`, …). `test_docs_quote_measurements_by_tag` reports any drift **by file and line**. Never type such a number without its tag, and never edit the number without re-running the measurement. | `agent/regression.py` |
@@ -150,6 +152,27 @@ written down.
 "still current?" column. It is the second read, not the first: it assumes the vocabulary in §3.
 It was brought up to date on 2026-11-11 (three documents had been added without a row, and its
 "sixteen documents" count said sixteen where there are twenty).
+
+### 4.1 How to read a document that is longer than you want to read
+
+None of the big three is meant to be read end to end, and on 2026-11-13 each gained a generated
+index so that it does not have to be:
+
+| document | how to enter it | what the index gives you |
+|---|---|---|
+| `docs/KNOWN_GAPS.md` | its `## Index` table, 121 rows | every entry's claim and the verdict its heading records; `—` means no verdict was recorded. Jump to the entry, ignore the rest. |
+| `docs/ARCH_REASSESSMENT.md` | its `## Index of sections`, 35 rows | one line per section, in the file's own two numbering schemes (`A`–`K`, `N.8`, `XIII`). |
+| `resume.md` | its `## Contents` table, 25 rows | one line per section; §21 is a dated amendment log, newest near its top. |
+
+The indexes are generated from the headings by `dofus-network/tools/docs_navigable.py`, so they
+cannot drift from the sections below them. Closed gaps whose own heading said `(fixed ...)` moved,
+verbatim, to `docs/archive/KNOWN_GAPS_closed.md` — a gap register's job is what is *not* true yet,
+and the register keeps a one-line row for each closed one so the pointer survives.
+
+**The read budget, stated so it can be checked:** a session that reads HANDOFF plus the three
+indexes has read about 600 lines and knows what each document contains. Reading the three
+documents whole is 6,005<!--f:resume_lines--> + 7,776<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
+correct when the task is to audit one of them.
 
 ---
 

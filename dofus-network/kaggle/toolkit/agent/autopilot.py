@@ -2471,6 +2471,8 @@ class Autopilot:
                         "policy": stack_record.get("policy"),
                         "stack": stack_record.get("stack"),
                         "chosen": stack_record.get("chosen"),
+                        "preempted": bool(stack_record.get("preempted")),
+                        "all_inert": bool(stack_record.get("all_inert")),
                         "scores": [
                             {"tool": row.get("tool"),
                              "score": round(float(row.get("score") or 0.0), 6)}

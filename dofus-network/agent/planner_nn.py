@@ -143,21 +143,45 @@ class NNPlanner(QuestPlanner):
                      self.foresight.rank(x_state, self.tools)}
             if len(cells) < 2:
                 return None
-            context = self.stack.context(x_state) if hasattr(self.stack, "context") else None
+            context = self.stack.context(x) if hasattr(self.stack, "context") else None
             ranked = self.stack.rank(logits, cells, self.tools, context=context)
             if not ranked:
                 return None
             for row in ranked:
                 row["score"] -= float(self.tool_penalty.get(row["tool"], 0.0))
             ranked.sort(key=lambda row: row["score"], reverse=True)
+            chosen = ranked[0]
+            streak = getattr(self.tracker, "streak", 0)
+            preempted = False
+            top_tool = ranked[0]["tool"]
+            top_p = cells.get(top_tool, {}).get("move_prob", 1.0)
+            max_p = max((cells.get(r["tool"], {}).get("move_prob", 0.0) for r in ranked), default=0.0)
+            all_inert = (max_p < 0.20)
+            if streak >= 1:
+                if top_p < 0.20:
+                    for alt in ranked[1:]:
+                        alt_tool = alt["tool"]
+                        alt_p = cells.get(alt_tool, {}).get("move_prob", 0.0)
+                        if alt_p >= 0.25:
+                            chosen = alt
+                            preempted = True
+                            break
+                    if not preempted and all_inert:
+                        last_tool = getattr(self.tracker, "last_tool", None)
+                        if last_tool != "state.snapshot":
+                            chosen = {"tool": "state.snapshot", "score": 0.0}
+                            preempted = True
             self.last_stack = {
                 "mode": self.stack_mode,
                 "active": bool(self.stack.active),
-                "stack": ranked[0]["tool"],
+                "stack": chosen["tool"],
+                "preempted": preempted,
+                "all_inert": all_inert,
+                "max_move_prob": round(float(max_p), 4),
                 "scores": [{key: row[key] for key in ("tool", "score")}
                            for row in ranked[:5]],
             }
-            return ranked[0]
+            return chosen
         except Exception as exc:  # noqa: BLE001 - stacking must fail open
             self.stack_note = "stack failed open: %s: %s" % (type(exc).__name__, exc)
             return None

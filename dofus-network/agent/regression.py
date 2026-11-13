@@ -5083,6 +5083,28 @@ def test_oauth_system_browser() -> None:
           and "int q = url.IndexOf('?');" in form,
           "the query string holds a live guest token")
 
+    # G122: the guest grant is a machine hand-off, and the popup cannot finish it.
+    # Measured 2026-11-13 with scratch/prove_guest_browser.py: the same authorize
+    # URL in the system browser -- the SAME Edge engine -- solved the CloudFront
+    # challenge and returned `dofustouch://authorized?code=qhbwxQhdzM...` on the
+    # first try, while the popup has never once produced that redirect in 2.8 MB
+    # of log. Picking the container that cannot finish is not a preference.
+    check("a guest grant goes to the system browser without asking the setting",
+          'bool guestGrant = url.IndexOf("ankama-guest", StringComparison.OrdinalIgnoreCase) >= 0;' in form
+          and "if ((guestGrant || RuntimeSettings.Current.OauthBrowser)" in form,
+          "the popup was chosen for the one URL it provably cannot complete")
+    check("a machine with no browser still falls back to the popup",
+          "&& OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))\n                return;" in form,
+          "Open() returning false must fall through, not dead-end the sign-in")
+    check("the guest URL is fetched with the engine's own UA, not a mobile one",
+          'bool guestUrl = !string.IsNullOrEmpty(_initialUrl)' in form
+          and "if (guestUrl && !string.IsNullOrEmpty(cleanUa))" in form
+          and 'else if (u.IndexOf("ankama-guest", StringComparison.OrdinalIgnoreCase) >= 0)' in form,
+          "a mobile UA on a desktop engine is the fingerprint a bot challenge rejects")
+    check("Google keeps the UA it has always had",
+          'else if (u.Contains("ankama"))\n                    {\n                        s.UserAgent = mobileUa;' in form,
+          "the working Google path must not be changed while fixing the guest one")
+
 
 def test_console_guard() -> None:
     section("A diagnostic print cannot stop a loop (dead stdout pipe)")
@@ -5400,6 +5422,51 @@ def _have_node() -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def test_docs_indexes_match_their_headings() -> None:
+    """The generated index in each big document must still describe that document.
+
+    The three documents a session is told to read are 16,000 lines together and none of them
+    is read end to end; on 2026-11-13 each gained a table at the top (121 gap rows, 35 section
+    rows, 25 resume rows) generated from the headings by `tools/docs_navigable.py`. A generated
+    table that nobody re-generates drifts exactly like a hand-typed one -- `docs/README.md`
+    already demonstrated it, claiming "sixteen documents" where there were twenty -- so the
+    table is checked rather than trusted: a heading added without its row, or a row left
+    behind by a renamed section, fails here by number.
+    """
+    section("Documentation indexes (can a reader jump instead of reading?)")
+    import subprocess
+
+    tool = REPO_ROOT / "tools" / "docs_navigable.py"
+    check("the index generator exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    proc = subprocess.run([sys.executable, str(tool), "--check"], cwd=str(REPO_ROOT),
+                          capture_output=True, text=True, timeout=120)
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    check("every index row still has its heading, and every heading its row",
+          proc.returncode == 0, out[-600:])
+    check("all three indexed documents were found and checked",
+          out.count("index matches") == 3, out[-600:])
+
+
+def _gap_text() -> str:
+    """Every gap entry, whether it sits in the register or in the archive.
+
+    On 2026-11-13 the register was split: `docs/KNOWN_GAPS.md` keeps the entries that are
+    still open plus a generated index, and the entries whose own heading says `(fixed ...)`
+    moved to `docs/archive/KNOWN_GAPS_closed.md` verbatim. A check that asserted an archived
+    entry's text against the register alone would have started failing for a reason that is
+    not a defect -- so the checks read the union and keep asserting the same thing: the
+    corrected arithmetic is still in the documentation, wherever the documentation lives.
+    """
+    parts = []
+    for path in [REPO_ROOT / "docs" / "KNOWN_GAPS.md"] + sorted(
+            (REPO_ROOT / "docs" / "archive").glob("*.md")):
+        if path.exists():
+            parts.append(path.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(parts)
 
 
 def test_intervention_instrument() -> None:
@@ -9928,7 +9995,11 @@ def test_docs_command_blocks_state_their_directory() -> None:
             # new session runs, so its six commands are the ones most likely to be copied
             # by someone with no cwd of reference -- exactly the failure this rule was
             # written for. It is a fenced block, not prose, for that reason.
-            REPO_ROOT / "docs" / "HANDOFF.md"]
+            REPO_ROOT / "docs" / "HANDOFF.md"] + sorted(
+            # The archive holds entries removed from the register on 2026-11-13, including
+            # their fenced commands. Leaving them out would silently stop checking the very
+            # blocks most likely to be copied by someone reading a closed gap's evidence.
+            (REPO_ROOT / "docs" / "archive").glob("*.md"))
     module_re = re.compile(r"python(?:3)?\s+(?:-\w+\s+)*-m\s+([A-Za-z0-9_.]+)")
     file_re = re.compile(r"(?:python(?:3)?|node|bash|sh)\s+(?:-\w+\s+)*([\w./-]+\.(?:py|js))")
     cd_re = re.compile(r"^\s*(?:cd|pushd)\s+(\S+)")
@@ -17824,8 +17895,7 @@ def test_quest_advance_shapes() -> None:
     # The documents must carry the corrected arithmetic, not the retired claim.
     baseline = (REPO_ROOT / "docs" / "BASELINE.md").read_text(encoding="utf-8",
                                                               errors="replace")
-    gaps = (REPO_ROOT / "docs" / "KNOWN_GAPS.md").read_text(encoding="utf-8",
-                                                            errors="replace")
+    gaps = _gap_text()
     check("the baseline witness asks for a start-shaped row",
           "Start-shaped means the arguments are a quest id and nothing else" in baseline)
     check("the retired 462-of-1,145 claim is gone from the witness",
@@ -18940,6 +19010,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_the_witness_instrument_sees_what_a_test_touches)
     _run_test(test_live_evidence_lands_in_the_repository)
     _run_test(test_docs_command_blocks_state_their_directory)
+    _run_test(test_docs_indexes_match_their_headings)
     _run_test(test_damage_calibration_sees_the_recorded_fights)
     _run_test(test_cross_file_counts_agree)
     _run_test(test_stall_retirement_is_bounded)
@@ -20652,7 +20723,13 @@ def test_fork_carries_the_planner_state() -> None:
     rows = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()
             if line.strip()]
     tapped = 0
-    for row in rows[:120]:
+    # The window was `rows[:120]`, and that was a coverage assumption wearing the costume of
+    # an optimisation: the corpus was re-frozen on 2026-11-13 from sessions that ordered the
+    # tap turns later, so the three rows that plan `tap.interactive` landed at 195, 262 and
+    # 409 and this check reported "no free-form turn to fork on" about a corpus that had
+    # three. The loop breaks at the first tap, so searching the whole corpus costs one pass
+    # of planner calls in the worst case and nothing in the common one.
+    for row in rows:
         planner = QuestPlanner()
         call = planner.choose(row.get("goal") or "do all the quests", row["obs"], None)
         if call is None or call.tool != "tap.interactive":

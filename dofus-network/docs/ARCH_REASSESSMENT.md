@@ -19,6 +19,87 @@ do not agree with a proposal merely because it was proposed.**
 
 ---
 
+## Index of sections
+
+Generated from the headings. The project's precedence rule is that the newest
+section wins, so a section's conclusion is only current until a later one speaks to
+the same question — read the date in each heading.
+
+| § | what it settles |
+|---|---|
+| **0** | The measurement that reframes everything — and what has changed since |
+| **A** | Reconstructed existing plan |
+| **B** | Shared weights vs per-instance KV caches |
+| **C** | Persistent quest objectives |
+| **D** | Quest IDs and internal action representations |
+| **E** | Compact tool protocol |
+| **F** | External knowledge validation |
+| **G** | What to train vs keep deterministic |
+| **H** | Click and navigation accuracy |
+| **I** | Validation plan |
+| **J** | Minimal changes — the actual diff |
+| **K** | The first unseen-language holdout — 95 hand-labelled novel frames, three arms |
+| **L** | What the installer actually shipped, and what it ships now (2026-11-03) |
+| **M** | Why the head loses to its own fallback, and what will be done about it |
+| **N** | Weight-space programming, done at the scale the logits actually live at |
+| **N.8** | Replication on fresh populations, and the corrected ceiling |
+| **N.9** | Three silent-corruption defects, each now refused by construction |
+| **N.10** | The Kaggle teacher, and what the full chain actually bought |
+| **N.11** | Real boss boards: the bench, the missing opponent arm, and what weight-space bought |
+| **N.12** | Is the deficit in the weights or in the layers? Measured, because the claim is testable |
+| **N.13** | The economy objective the user asked for is not groundable yet, and what is instead |
+| **O** | The network mess had one root: nobody could tell its processes from this run's |
+| **P** | The black screen's actual root, and why only a browser-shaped probe can see it |
+| **Q** | The instruments that could not be wrong, and the ones that replaced them (2026-11-04) |
+| **R** | The AI plays the live client, and the daemon now says whether it is current (2026-11-04) |
+| **S** | The session that bounced on one border, and what bounding it took (2026-11-04) |
+| **T** | The promotion gate that nothing ever opened (2026-11-04) |
+| **U** | What the log said back when it was asked honestly (2026-11-04) |
+| **V** | What the loop does with its time, measured from the record (2026-11-04) |
+| **W** | The action weights are not the ceiling; the value read is (measured 2026-11-05) |
+| **X** | Mechanics reach the network, and the two numbers that bound what weights can buy (measured 2026… |
+| **XI** | The party stops being an abstraction, and the ruler that was hiding it (measured 2026-11-06) |
+| **XII** | The boss can finally summon, and summoning is worth less than an attack (measured 2026-11-06) |
+| **XIII** | The turn planner had no improvement operator, and the instrument that would have said so was br… |
+| **XIV** | Mechanistic Alignment, SAE Disentanglement, and Weight-Space Programming for Unresolved Bottlen… |
+
+| **A** | Reconstructed existing plan |
+| **B** | Shared weights vs per-instance KV caches |
+| **C** | Persistent quest objectives |
+| **D** | Quest IDs and internal action representations |
+| **E** | Compact tool protocol |
+| **F** | External knowledge validation |
+| **G** | What to train vs keep deterministic |
+| **H** | Click and navigation accuracy |
+| **I** | Validation plan |
+| **J** | Minimal changes — the actual diff |
+| **K** | The first unseen-language holdout — 95 hand-labelled novel frames, three arms |
+| **L** | What the installer actually shipped, and what it ships now (2026-11-03) |
+| **M** | Why the head loses to its own fallback, and what will be done about it |
+| **N** | Weight-space programming, done at the scale the logits actually live at |
+| **N** | 8 Replication on fresh populations, and the corrected ceiling |
+| **N** | 9 Three silent-corruption defects, each now refused by construction |
+| **N** | 10 The Kaggle teacher, and what the full chain actually bought |
+| **N** | 11 Real boss boards: the bench, the missing opponent arm, and what weight-space bought |
+| **N** | 12 Is the deficit in the weights or in the layers? Measured, because the claim is testable |
+| **N** | 13 The economy objective the user asked for is not groundable yet, and what is instead |
+| **O** | The network mess had one root: nobody could tell its processes from this run's |
+| **P** | The black screen's actual root, and why only a browser-shaped probe can see it |
+| **Q** | The instruments that could not be wrong, and the ones that replaced them (2026-11-04) |
+| **R** | The AI plays the live client, and the daemon now says whether it is current (2026-11-04) |
+| **S** | The session that bounced on one border, and what bounding it took (2026-11-04) |
+| **T** | The promotion gate that nothing ever opened (2026-11-04) |
+| **U** | What the log said back when it was asked honestly (2026-11-04) |
+| **V** | What the loop does with its time, measured from the record (2026-11-04) |
+| **W** | The action weights are not the ceiling; the value read is (measured 2026-11-05) |
+| **X** | Mechanics reach the network, and the two numbers that bound what weights can buy (measured 2… |
+| **XI** | The party stops being an abstraction, and the ruler that was hiding it (measured 2026-11-06) |
+| **XII** | The boss can finally summon, and summoning is worth less than an attack (measured 2026-11-… |
+| **XIII** | The turn planner had no improvement operator, and the instrument that would have said so… |
+| **XIV** | Mechanistic Alignment, SAE Disentanglement, and Weight-Space Programming for Unresolved Bo… |
+
+---
+
 ## 0. The measurement that reframes everything — and what has changed since
 
 Before any architectural argument, the number has to be honest. **A number quoted  

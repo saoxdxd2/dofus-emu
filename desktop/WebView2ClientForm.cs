@@ -2598,7 +2598,19 @@ namespace DofusFarm.Engine
 
             // The container is a host decision, exactly as `browsertab` is on Android.
             // The page reports the URL either way; only where it opens changes.
-            if (RuntimeSettings.Current.OauthBrowser
+            //
+            // A guest grant goes to the browser whether or not the operator turned
+            // that setting on. It is a machine hand-off with no human step, and it is
+            // the one URL CloudFront puts an AWS WAF challenge in front of. Measured
+            // 2026-11-13: the popup has never once reached `dofustouch://authorized`
+            // (0 hits in 2.8 MB of log, every attempt), while the same URL in the
+            // system browser -- the SAME Edge engine -- solved the challenge and
+            // returned `dofustouch://authorized?code=qhbwxQhdzM...` on the first try
+            // (`scratch/prove_guest_browser.py`). Choosing the container that cannot
+            // finish is not a preference, it is a bug. The popup stays as the
+            // fallback for a machine with no browser to launch.
+            bool guestGrant = url.IndexOf("ankama-guest", StringComparison.OrdinalIgnoreCase) >= 0;
+            if ((guestGrant || RuntimeSettings.Current.OauthBrowser)
                 && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))
                 return;
 
@@ -2970,7 +2982,20 @@ namespace DofusFarm.Engine
                 s.AreDefaultContextMenusEnabled = true;
 
                 string mobileUa = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
-                if (!string.IsNullOrEmpty(_initialUrl) && _initialUrl.Contains("ankama"))
+                // The guest grant gets the honest UA of the engine that is running.
+                // This popup is the DESKTOP WebView2, and a mobile UA on a desktop
+                // engine is an inconsistent fingerprint -- precisely what a bot
+                // challenge inspects. The system browser, which is the same engine
+                // with a consistent one, solves the same challenge first try
+                // (measured 2026-11-13). Google's pages keep the mobile UA they have
+                // always had: that path works and is not being changed here.
+                bool guestUrl = !string.IsNullOrEmpty(_initialUrl)
+                    && _initialUrl.IndexOf("ankama-guest", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (guestUrl && !string.IsNullOrEmpty(cleanUa))
+                {
+                    s.UserAgent = cleanUa;
+                }
+                else if (!string.IsNullOrEmpty(_initialUrl) && _initialUrl.Contains("ankama"))
                 {
                     s.UserAgent = mobileUa;
                 }
@@ -2987,6 +3012,12 @@ namespace DofusFarm.Engine
                     if (u.Contains("accounts.google.com"))
                     {
                         s.UserAgent = cleanUa;
+                    }
+                    else if (u.IndexOf("ankama-guest", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        // Same rule as the initial navigation: the engine is the
+                        // desktop one, so the UA says so. See the comment there.
+                        if (!string.IsNullOrEmpty(cleanUa)) s.UserAgent = cleanUa;
                     }
                     else if (u.Contains("ankama"))
                     {
@@ -3241,7 +3272,7 @@ namespace DofusFarm.Engine
                 {
                     _wafGaveUp = true;
                     _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] Ankama's challenge did not "
-                        + "complete after " + MaxWafAttempts.ToString() + " attempts on "
+                        + "complete after " + _wafAttempts.ToString() + " attempts on "
                         + WafHostOf(_wafUrl) + ". The guest grant cannot be issued from this "
                         + "browser profile. Google sign-in is unaffected; for a guest account, "
                         + "Settings > sign in with the system browser lets a real Chrome solve it.");

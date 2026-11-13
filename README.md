@@ -52,7 +52,7 @@ Edge renders it, and a shim makes the browser look like an Android phone.
 
 ### Install (end user)
 
-1. Run `setup.exe` (537,758,208<!--f:setup_bytes--> B, measured 2026-11-12). It unpacks the
+1. Run `setup.exe` (62,793,216<!--f:setup_bytes--> B, measured 2026-11-12). It unpacks the
    runtime, the client bundle, the relay, the proxy binaries, a standalone Edge
    WebView2 payload and the Python agent into the install folder.
    The pip step installs `requirements.txt` only -- numpy and requests, ~32 MB installed. It does
@@ -135,7 +135,7 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 /
 ├─ DofusFarm.exe              host (built)
 ├─ dofus-net-proxy.exe        relay (built from scripts/dofus-net-proxy.go)
-├─ setup.exe                  installer (537,758,208<!--f:setup_bytes--> B, measured 2026-11-12)
+├─ setup.exe                  installer (62,793,216<!--f:setup_bytes--> B, measured 2026-11-12)
 ├─ uninstall.exe
 ├─ compile.bat                one-click build
 ├─ network.ini                egress configuration (see §13)
@@ -815,7 +815,7 @@ rule/model/human disagreement is a training sample.
 
 ```bash
 cd dofus-network
-python -m agent.regression                         # 2,415<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
+python -m agent.regression                         # 2,443<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
 python -m advisor selftest                         # 91 check sites, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
@@ -862,8 +862,8 @@ created — because the policy has to learn from play, not from descriptions of 
 
 **Payload** — read out of the built artifact with `python tools/payload_audit.py setup.exe`, which
 parses the central directory of the zip embedded in the binary rather than trusting the staging
-source: `setup.exe` = 537,758,208<!--f:setup_bytes--> B, all but the self-extractor stub being
-archive payload: 20,682<!--f:payload_files--> files and 1,255,610,878<!--f:payload_unpacked--> B unpacked, measured
+source: `setup.exe` = 62,793,216<!--f:setup_bytes--> B, all but the self-extractor stub being
+archive payload: 682<!--f:payload_files--> files and 216,694,449<!--f:payload_unpacked--> B unpacked, measured
 2026-11-12 -- all three tags are re-read from the binary, because the previous sentence carried a
 hand-typed file count that had drifted by 110. Largest contributors: `dofus-network/models` 47.5 MB
 (two INT8 graphs + the lexical policy), `dofus-network/data` 21.2 MB (knowledge sqlite 10.9 +

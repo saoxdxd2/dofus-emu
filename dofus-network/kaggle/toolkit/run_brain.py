@@ -14,6 +14,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# Before ANY import that prints: the host starts this process with a redirected
+# stdout and then may exit while the daemon keeps running. After that the pipe is
+# closed and every write raises OSError(EINVAL), which used to abort a start
+# inside `_base_policy`'s startup print. Measured 2026-11-13 -- see
+# agent/console_guard.py for the traceback and the symptom it produced.
+from agent.console_guard import install as _install_console_guard  # noqa: E402
+
+_install_console_guard()
+
 # Mint this session's run token before anything is spawned, so every child inherits it and the
 # network pipeline can tell this run's helpers from a leftover that outlived its parent
 # (net/orchestrator.py; the 2026-11-04 incident was a 50-minute-old brain answering :8891).

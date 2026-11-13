@@ -57,6 +57,13 @@ DOCS = [
     REPO / "README.md",
     REPO / "rules.md",
     BRAIN / "docs" / "CURRENT.md",
+    # The onboarding router quotes the size of every document it routes to, and quoted all
+    # four of them by hand: on 2026-11-13 it said "resume.md (≈5,850 lines)",
+    # "KNOWN_GAPS.md (8,253)" and "ARCH_REASSESSMENT.md (6,630)" while the tree held 5,969,
+    # 9,398 and 6,687, and it called the gate "2,220 checks" when it was 2,439. A map that
+    # lies about its own contents is worse than no map, which is the failure mode this tool
+    # exists to remove -- so the router is now checked like every other document.
+    BRAIN / "docs" / "HANDOFF.md",
 ]
 
 
@@ -469,6 +476,7 @@ FACTS: Dict[str, Tuple[object, str, Tuple[str, ...]]] = {
     "bundle_chars": (patched_bundle_chars, "UTF-16 chars of build/script.js, what --bundle-selftest prints", (r"script\.js", r"bundle", r"chars")),
     "gaps_max": (gaps_max, "highest `# G<n>` heading in docs/KNOWN_GAPS.md", ()),
     "known_gaps_lines": (lambda: doc_lines("KNOWN_GAPS.md"), "line count of docs/KNOWN_GAPS.md", (r"KNOWN_GAPS\.md",)),
+    "arch_lines": (lambda: doc_lines("ARCH_REASSESSMENT.md"), "line count of docs/ARCH_REASSESSMENT.md", (r"ARCH_REASSESSMENT\.md",)),
     "resume_lines": (lambda: doc_lines("resume.md"), "line count of resume.md", (r"resume\.md",)),
     "readme_lines": (lambda: doc_lines("README.md"), "line count of README.md", (r"README\.md",)),
     "trajectory_files": (lambda: (trajectory_rows() or (None, None))[0], "count of trajectories/**/*.jsonl", (r"trajector",)),
