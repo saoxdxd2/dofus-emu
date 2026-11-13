@@ -27,6 +27,8 @@ from combat.metrics import auc as _auc, ece as _ece
 from combat.duel import (FEATURE_NAMES, load_map,
                          make_duel, make_two_ply_policy, play_game,
                          random_policy, solver_policy, value_policy)
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA = REPO_ROOT / "kaggle" / "tpu_selfplay" / "dataset" / "encounters.npz"
@@ -34,7 +36,7 @@ DEFAULT_MODEL = REPO_ROOT / "models" / "duel_value_v4_0.pkl"
 DEFAULT_OUT = REPO_ROOT / "benchmarks" / "duel_v4_0.json"
 
 
-def load_data(path: Path):
+def load_data(path: Path) -> tuple[Any, Any]:
     data = np.load(path, allow_pickle=True)
     levels = np.asarray(data["level"])[:, 0]
     return data, levels
@@ -57,7 +59,7 @@ def _brier(y: np.ndarray, p: np.ndarray) -> float:
     return float(np.mean((p - y) ** 2))
 
 
-def fit_value(records: List[Dict[str, Any]], seed: int = 7):
+def fit_value(records: List[Dict[str, Any]], seed: int = 7) -> dict[str, Any]:
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.model_selection import train_test_split
 
@@ -197,15 +199,15 @@ def run(args: argparse.Namespace) -> int:
     if not eval_rows:
         eval_rows = train_rows
 
-    print(f"generating {args.train_games} training games...")
+    logger.debug(f"generating {args.train_games} training games...")
     records = generate_games(data, levels, cells, train_rows,
                              args.train_games, solver, rng,
                              solver_prob=args.solver_prob,
                              max_rounds=args.max_rounds)
     labelled = [row for row in records if row.get("label") is not None]
-    print(f"states {len(records)}, labelled {len(labelled)}")
+    logger.debug(f"states {len(records)}, labelled {len(labelled)}")
     model, train_metrics = fit_value(labelled, seed=args.seed)
-    print("value model:", json.dumps(train_metrics, sort_keys=True))
+    logger.debug("value model:", json.dumps(train_metrics, sort_keys=True))
 
     two_ply = make_two_ply_policy(solver, opponent_k=args.max_actions)
     matchups = {}
@@ -224,7 +226,7 @@ def run(args: argparse.Namespace) -> int:
             name, data, levels, cells, eval_rows, args.eval_games, solver,
             random.Random(args.seed + hash(name) % 100000), model,
             pol_a, pol_b, capture=capture)
-        print(name, json.dumps(matchups[name], sort_keys=True))
+        logger.debug(name, json.dumps(matchups[name], sort_keys=True))
 
     model_path = Path(args.model_out)
     model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,7 +254,7 @@ def run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    print(f"wrote {out} and {model_path}")
+    logger.debug(f"wrote {out} and {model_path}")
     return 0
 
 
@@ -276,7 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     return run_main(build_parser, run, argv)
 
 

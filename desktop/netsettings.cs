@@ -23,6 +23,7 @@
 // Kept C# 5 compatible: no string interpolation, no expression-bodied members.
 
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -234,7 +235,7 @@ namespace DofusFarm.Engine
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] netsettings: " + ex.Message); }
             return s;
         }
 
@@ -268,7 +269,7 @@ namespace DofusFarm.Engine
                 // line into a key it cannot match.
                 File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] netsettings: " + ex.Message); }
             Invalidate();
         }
 
@@ -366,3 +367,4 @@ namespace DofusFarm.Engine
         }
     }
 }
+

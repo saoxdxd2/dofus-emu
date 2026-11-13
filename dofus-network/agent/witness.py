@@ -46,7 +46,7 @@ _MONITORING = False
 _ERROR: Optional[str] = None
 
 
-def _on_start(code, offset):  # noqa: ARG001 - the event's signature
+def _on_start(code, offset) -> None:  # noqa: ARG001 - the event's signature
     """PY_START: one Python frame began executing in `code`'s file.
 
     The only work done here is a set insert of the raw filename. Anything more expensive

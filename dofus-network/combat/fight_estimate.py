@@ -35,6 +35,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STORE = REPO_ROOT / "data" / "knowledge" / "dofus_knowledge.sqlite"
@@ -799,7 +801,7 @@ def _spellbook() -> Tuple[Dict[int, Any], Dict[int, List[Any]]]:
     return _SPELLBOOK
 
 
-def _store(path: Path = DEFAULT_STORE):
+def _store(path: Path = DEFAULT_STORE) -> Any:
     from knowledge.store import CanonicalStore
 
     return CanonicalStore(path)
@@ -1717,7 +1719,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     passed = report["ece"] is not None and float(report["ece"]) <= args.max_ece
     model.metrics = {**report, "max_ece": args.max_ece,
                      "gate_passed": passed, "forced": bool(not passed and args.force)}
-    print("outcomes: %d (wins %d, losses %d), ECE %s, Brier %s, accuracy %s"
+    logger.debug("outcomes: %d (wins %d, losses %d), ECE %s, Brier %s, accuracy %s"
           % (report["n"], report["wins"], report["losses"],
              report["ece"], report["brier"], report["accuracy"]))
     if not passed and not args.force:
@@ -1730,7 +1732,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(model.to_dict(), indent=1), encoding="utf-8")
-    print("calibrated on %d outcomes -> %s" % (model.n, out))
+    logger.debug("calibrated on %d outcomes -> %s" % (model.n, out))
     return 0
 
 

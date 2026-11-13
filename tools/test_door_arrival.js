@@ -20,10 +20,27 @@ function check(name, ok, detail) {
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
 const start = src.indexOf("var _DOOR_STORE = 'dofusFarm.doorCells';");
-const endMarker = 'try { window.setInterval(_agentDoorTick, 400); } catch (e) {}';
-const end = endMarker ? src.indexOf(endMarker) : -1;
+// The page moved to one shared periodic ticker (2026-11-13): the old one-line
+// `setInterval(_agentDoorTick, 400)` became a registration with a fallback. The
+// extracted chunk has to end after that whole try/catch, whichever form ships,
+// or `new Function` below sees an unclosed block.
+const legacyMarker = 'try { window.setInterval(_agentDoorTick, 400); } catch (e) {}';
+const sharedMarker = 'window.__agentRegisterPeriodicTick(_agentDoorTick);';
+const closing = '} catch (e) {}';
+const sharedAt = src.indexOf(sharedMarker, start);
+const legacyAt = src.indexOf(legacyMarker, start);
+let end = -1;
+if (sharedAt > start) {
+    const close = src.indexOf(closing, sharedAt);
+    end = close > sharedAt ? close + closing.length : -1;
+} else if (legacyAt > start) {
+    end = legacyAt + legacyMarker.length;
+}
 check('the door store is present in the page', start >= 0 && end > start);
-const chunk = start >= 0 && end > start ? src.slice(start, end + endMarker.length) : '';
+const chunk = start >= 0 && end > start ? src.slice(start, end) : '';
+check('the door sampler registers through the shared ticker with a fallback',
+      chunk.indexOf(sharedMarker) >= 0 && chunk.indexOf('window.setInterval(_agentDoorTick, 500)') >= 0);
+check('the extracted chunk closes its try/catch', chunk.trimEnd().endsWith(closing));
 
 function makeWorld(opts) {
     const store = {};

@@ -63,7 +63,7 @@ namespace DofusFarm.Engine
             Enabled = false;
             if (_timer != null)
             {
-                try { _timer.Dispose(); } catch { }
+                try { _timer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                 _timer = null;
             }
             lock (_pinnedPids) { _pinnedPids.Clear(); }
@@ -86,7 +86,7 @@ namespace DofusFarm.Engine
                     && (now - _parentsCacheUtc).TotalSeconds < ParentCacheSeconds)
                     return _parentsCache;
                 Dictionary<int, List<int>> fresh = null;
-                try { fresh = Win32.SnapshotParentMap(); } catch { }
+                try { fresh = Win32.SnapshotParentMap(); } catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                 if (fresh != null)
                 {
                     _parentsCache = fresh;
@@ -119,7 +119,7 @@ namespace DofusFarm.Engine
                 {
                     handler(string.Format("[{0:HH:mm:ss}] [GOVERNOR] {1}", DateTime.Now, message));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
             }
         }
 
@@ -157,7 +157,7 @@ namespace DofusFarm.Engine
                 if (Engine != null) running = Math.Max(1, Engine.ActiveInstanceCount());
                 else running = Math.Max(1, Process.GetProcessesByName("qemu-system-x86_64").Length);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
 
             int share = Math.Max(1, totalCores) / Math.Max(1, running);
             return Math.Max(1, Math.Min(4, share));
@@ -219,7 +219,7 @@ namespace DofusFarm.Engine
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
 
             lock (_slotCache)
             {
@@ -363,7 +363,7 @@ namespace DofusFarm.Engine
                     GovernQemuProcesses(hFg, fgPid, parents);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
             finally
             {
                 Interlocked.Exchange(ref _runningState, 0);
@@ -403,7 +403,7 @@ namespace DofusFarm.Engine
                 for (int i = 0; i < wvProcs.Length; i++)
                 {
                     if (keep.Contains(wvProcs[i].Id)) { owned.Add(wvProcs[i]); continue; }
-                    try { wvProcs[i].Dispose(); } catch { }
+                    try { wvProcs[i].Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                 }
                 wvProcs = owned.ToArray();
                 if (wvProcs.Length == 0)
@@ -495,19 +495,19 @@ namespace DofusFarm.Engine
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                 }
                 lock (_throttleState) { PrunePids(_throttleState, live); }
                 lock (_priorityState) { PrunePids(_priorityState, live); }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
             finally
             {
                 if (wvProcs != null)
                 {
                     for (int i = 0; i < wvProcs.Length; i++)
                     {
-                        try { wvProcs[i].Dispose(); } catch { }
+                        try { wvProcs[i].Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                     }
                 }
             }
@@ -554,7 +554,7 @@ namespace DofusFarm.Engine
                                     _pinnedPids.Add(p.Id);
                                     Log(string.Format("Governor pinned PID {0} (Slot #{1}, {2} threads) to Affinity Mask 0x{3:X}.", p.Id, slot + 1, Math.Max(1, instCores), mask));
                                 }
-                                catch { }
+                                catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                             }
                         }
                         _pinnedPids.RemoveWhere(pid => !livePids.Contains(pid));
@@ -601,7 +601,7 @@ namespace DofusFarm.Engine
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                 }
 
                 if (isQemuActive && activeTargetPid > 0)
@@ -624,7 +624,7 @@ namespace DofusFarm.Engine
                                         p.PriorityClass = ProcessPriorityClass.Normal;
                                 }
                             }
-                            catch { }
+                            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                         }
                         Log(string.Format("Foreground instance prioritized (PID: {0} -> AboveNormal). Background instances balanced at Normal.", activeTargetPid));
                     }
@@ -642,12 +642,12 @@ namespace DofusFarm.Engine
                                 if (p.PriorityClass != ProcessPriorityClass.Normal)
                                     p.PriorityClass = ProcessPriorityClass.Normal;
                             }
-                            catch { }
+                            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                         }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
             finally
             {
                 if (qemuProcs != null)
@@ -656,7 +656,7 @@ namespace DofusFarm.Engine
                     {
                         if (qemuProcs[i] != null)
                         {
-                            try { qemuProcs[i].Dispose(); } catch { }
+                            try { qemuProcs[i].Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] prioritygovernor: " + ex.Message); }
                         }
                     }
                 }
@@ -664,3 +664,5 @@ namespace DofusFarm.Engine
         }
     }
 }
+
+

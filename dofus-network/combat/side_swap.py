@@ -40,6 +40,8 @@ from combat.duel import (DuelState, load_map, make_residual_policy,
                          make_two_ply_policy, play_game, random_policy,
                          solver_policy, value_policy)
 from combat.normal_build_duel import DEFAULT_MAP, make_normal_duel
+import logging
+logger = logging.getLogger(__name__)
 
 SEAT_DOMINANCE = 0.8
 ALPHA = 0.05
@@ -291,35 +293,35 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     if args.json:
-        print(json.dumps({k: v for k, v in report.items() if k != "games"},
+        logger.debug(json.dumps({k: v for k, v in report.items() if k != "games"},
                          indent=1, sort_keys=True))
     else:
         score = report["score"]
-        print("%s vs %s on %s, seats swapped (%d boards -> %d games, %.1fs)"
+        logger.debug("%s vs %s on %s, seats swapped (%d boards -> %d games, %.1fs)"
               % (args.a, args.b, args.mirror, args.games, score["games"],
                  report["elapsed_s"]))
-        print("  a as seat 1: %s   a as seat 2: %s   seat 1 wins: %s"
+        logger.debug("  a as seat 1: %s   a as seat 2: %s   seat 1 wins: %s"
               % (score["a_seat1_win"], score["a_seat2_win"], score["seat1_win"]))
-        print("  a %d - b %d, two-sided p %s -> %s"
+        logger.debug("  a %d - b %d, two-sided p %s -> %s"
               % (score["wins_a"], score["wins_b"], score["p_value"],
                  score["verdict"]))
         if score["verdict"] == "seat_dominated":
-            print("  this build pair cannot judge a decision: one seat wins "
+            logger.debug("  this build pair cannot judge a decision: one seat wins "
                   "%.0f%% of the decided games regardless of policy"
                   % (100.0 * max(score["seat1_win"], 1.0 - score["seat1_win"])))
         eff = report["efficiency"]
         if eff["boards"]:
-            print("  damage/turn  a %s  b %s  diff %+.2f  "
+            logger.debug("  damage/turn  a %s  b %s  diff %+.2f  "
                   "(boards a %d - b %d, p %s)"
                   % (eff["a_damage_per_turn"], eff["b_damage_per_turn"],
                      eff["diff"], eff["boards_favouring_a"],
                      eff["boards_favouring_b"], eff["p_value"]))
         for label, spread in report["value_head_spread"].items():
             if spread is None:
-                print("  value head %s: could not be evaluated; the arm is the "
+                logger.debug("  value head %s: could not be evaluated; the arm is the "
                       "solver" % label)
             elif spread <= 0.0:
-                print("  value head %s: INERT (prediction spread %.6f) -- this "
+                logger.debug("  value head %s: INERT (prediction spread %.6f) -- this "
                       "arm is the solver, not a learned policy" % (label, spread))
     return 0
 

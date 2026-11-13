@@ -33,7 +33,7 @@
     // client's own adjacency form refuses, and the `door_step_off` marker. Unverified on
     // a live client -- the injected script is replaced only by a full app restart, so a
     // session reporting 2026-11-10a is still running the previous page.
-    var AGENT_BUILD = '2026-11-11a';
+    const AGENT_BUILD = '2026-11-11a';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -62,10 +62,10 @@
     // method the client's tap handler and chat box already call.
     (function () {
         try {
-            var rawSetInterval = window.setInterval;
+            const rawSetInterval = window.setInterval;
             window.setInterval = function () {
-                for (var a = 2; a < arguments.length; a++) {
-                    var cand = arguments[a];
+                for (let a = 2; a < arguments.length; a++) {
+                    const cand = arguments[a];
                     try {
                         if (cand && typeof cand.recordActivity === 'function'
                             && typeof cand._checkActivity === 'function'
@@ -79,14 +79,14 @@
         } catch (e) {}
     })();
 
-    var _activityTracker = null;
+    let _activityTracker = null;
     function _isActivityTracker(o) {
         return !!o && typeof o.recordActivity === 'function'
             && typeof o.isActiveSince === 'function';
     }
     window.__agentActivityTracker = function () {
         if (_activityTracker) return _activityTracker;
-        var captured = window.__agentActivityTimerOwner;
+        const captured = window.__agentActivityTimerOwner;
         if (_isActivityTracker(captured)) {
             _activityTracker = { target: captured, via: 'setInterval-owner' };
             return _activityTracker;
@@ -95,12 +95,12 @@
             _activityTracker = { target: window.dofus.connectionManager, via: 'connectionManager' };
             return _activityTracker;
         }
-        var roots = [['dofus', window.dofus], ['gui', window.gui]];
-        for (var r = 0; r < roots.length; r++) {
-            var owner = roots[r][1];
+        const roots = [['dofus', window.dofus], ['gui', window.gui]];
+        for (let r = 0; r < roots.length; r++) {
+            const owner = roots[r][1];
             if (!owner) continue;
-            for (var k in owner) {
-                var v = null;
+            for (const k in owner) {
+                let v = null;
                 try { v = owner[k]; } catch (eProp) { continue; }
                 if (_isActivityTracker(v)) {
                     _activityTracker = { target: v, via: roots[r][0] + '.' + k };
@@ -112,10 +112,10 @@
     };
 
     window.__agentMarkActivity = function (source) {
-        var rec = window.__agentActivity || (window.__agentActivity =
+        const rec = window.__agentActivity || (window.__agentActivity =
             { marks: 0, failed: 0, last_ts: 0, present: false, via: null });
         try {
-            var found = window.__agentActivityTracker();
+            const found = window.__agentActivityTracker();
             if (found) {
                 found.target.recordActivity();
                 rec.marks += 1;
@@ -136,11 +136,11 @@
     // Is this client actually in the game world? Cheap identity check used where a
     // missing position is meaningful (the keep-alive must not fire at the login
     // screen). The same shape the snapshot reads: playerData.position.mapId.
-    var _agentInWorld = function () {
+    const _agentInWorld = function () {
         try {
-            var pd = window.gui && window.gui.playerData;
-            var pos = pd && pd.position;
-            var mapId = pos && Number(pos.mapId);
+            const pd = window.gui && window.gui.playerData;
+            const pos = pd && pd.position;
+            const mapId = pos && Number(pos.mapId);
             return !!(isFinite(mapId) && mapId > 0);
         } catch (e) {
             return false;
@@ -159,8 +159,8 @@
     // do that here, but only while there is no character: a reload in-world would be
     // a self-inflicted disconnect, and the game re-fits itself once it is running.
     (function () {
-        var boot = { w: window.innerWidth | 0, h: window.innerHeight | 0 };
-        var timer = null;
+        const boot = { w: window.innerWidth | 0, h: window.innerHeight | 0 };
+        let timer = null;
 
         window.__agentGeometryBoot = boot;
 
@@ -168,8 +168,8 @@
         // recovery, and a recovery that drops a live session is worse than no recovery.
         function _inWorld() {
             try {
-                var pd = window.gui && window.gui.playerData;
-                var chId = (pd && pd.characterBaseInformations && pd.characterBaseInformations.id)
+                const pd = window.gui && window.gui.playerData;
+                const chId = (pd && pd.characterBaseInformations && pd.characterBaseInformations.id)
                     || (pd && pd.characters && pd.characters.controlledCharacterId)
                     || (pd && pd.id)
                     || (pd && pd.character && pd.character.id);
@@ -188,16 +188,16 @@
         }
 
         function _budget() {
-            var cut = Date.now() - 120000, kept = [];
+            const cut = Date.now() - 120000, kept = [];
             try {
-                var rows = JSON.parse(sessionStorage.getItem('dfGeomReloads') || '[]');
-                for (var i = 0; i < rows.length; i++) if (rows[i] > cut) kept.push(rows[i]);
+                const rows = JSON.parse(sessionStorage.getItem('dfGeomReloads') || '[]');
+                for (let i = 0; i < rows.length; i++) if (rows[i] > cut) kept.push(rows[i]);
             } catch (e) {}
             return kept;
         }
 
         window.__agentGeometry = function () {
-            var v = _now();
+            const v = _now();
             return { boot: { w: boot.w, h: boot.h }, now: v, dpr: window.devicePixelRatio || 1,
                      drifted: _drifted(v), in_world: _inWorld(), pending: !!timer,
                      reloads_last_2min: _budget().length };
@@ -218,9 +218,9 @@
                 if (!_drifted(_now()) || _inWorld()) return false;
                 timer = setTimeout(function () {
                     timer = null;
-                    var v = _now();
+                    const v = _now();
                     if (!_drifted(v) || _inWorld()) return;
-                    var kept = _budget();
+                    const kept = _budget();
                     if (kept.length >= 2) return;
                     kept.push(Date.now());
                     try { sessionStorage.setItem('dfGeomReloads', JSON.stringify(kept)); } catch (e) {}
@@ -260,14 +260,14 @@
     (function () {
         if (window.__dofusFarmBootAlertGuard) return;
         window.__dofusFarmBootAlertGuard = true;
-        var nativeAlert = window.alert;
-        var maxRetries = 3;
+        const nativeAlert = window.alert;
+        const maxRetries = 3;
 
         function recent() {
-            var cut = Date.now() - 120000, kept = [];
+            const cut = Date.now() - 120000, kept = [];
             try {
-                var rows = JSON.parse(sessionStorage.getItem('dfBusyReloads') || '[]');
-                for (var i = 0; i < rows.length; i++) {
+                const rows = JSON.parse(sessionStorage.getItem('dfBusyReloads') || '[]');
+                for (let i = 0; i < rows.length; i++) {
                     if (rows[i] > cut) kept.push(rows[i]);
                 }
             } catch (e) {}
@@ -275,11 +275,11 @@
         }
 
         window.alert = function (message) {
-            var text = String(message == null ? '' : message);
+            const text = String(message == null ? '' : message);
             if (!/^\s*server busy\s*$/i.test(text)) {
                 return nativeAlert.apply(window, arguments);
             }
-            var kept = recent();
+            const kept = recent();
             if (kept.length >= maxRetries) {
                 console.error('[AgentGuard] Server busy persisted through ' + kept.length
                     + ' retries; letting the client show its alert');
@@ -304,29 +304,29 @@
     // config file is retried: every other request in the game has its own retry semantics
     // that a blind replay could break.
     (function () {
-        var proto = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+        const proto = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
         if (!proto || proto.__dofusFarmConfigRetry) return;
-        var rawOpen = proto.open;
-        var rawSend = proto.send;
-        var configName = /(?:^|\/)config\.json(?:\?|$)/;
-        var maxRetries = 2;
+        const rawOpen = proto.open;
+        const rawSend = proto.send;
+        const configName = /(?:^|\/)config\.json(?:\?|$)/;
+        const maxRetries = 2;
         proto.open = function (method, url) {
-            var retryable = String(method || '').toUpperCase() === 'GET' &&
+            const retryable = String(method || '').toUpperCase() === 'GET' &&
                 configName.test(String(url || ''));
             this.__dofusFarmRetry = retryable ? { method: method, url: url, attempt: 0 } : null;
             return rawOpen.apply(this, arguments);
         };
         proto.send = function (body) {
-            var state = this.__dofusFarmRetry;
+            const state = this.__dofusFarmRetry;
             if (!state) return rawSend.apply(this, arguments);
-            var xhr = this;
-            var gameHandler = xhr.onreadystatechange;
-            var deliver = function (ev) {
+            const xhr = this;
+            const gameHandler = xhr.onreadystatechange;
+            const deliver = function (ev) {
                 if (xhr.readyState !== 4) {
                     if (gameHandler) return gameHandler.call(xhr, ev);
                     return;
                 }
-                var status = 0;
+                let status = 0;
                 try { status = Number(xhr.status) || 0; } catch (e) {}
                 if ((status === 0 || status >= 500) && state.attempt < maxRetries) {
                     state.attempt += 1;
@@ -355,26 +355,26 @@
     }
     function deriveFromPort(mult, prefix, fallback) {
         try {
-            var p = (typeof location !== 'undefined' && location.port) ? parseInt(location.port, 10) : 0;
+            const p = (typeof location !== 'undefined' && location.port) ? parseInt(location.port, 10) : 0;
             if (p > 0) return prefix + ((p * mult) >>> 0).toString(16).padStart(8, '0');
         } catch (e) {}
         return fallback;
     }
 
-    var MOBILE_UA = cfg('__DEVICE_UA__', 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36').replace(/;\s*wv/i, '').replace(/Version\/[0-9.]+\s*/i, '');
-    var MOBILE_APP_VERSION = MOBILE_UA.replace(/^Mozilla\//, '');
-    var MOBILE_PLATFORM = 'Linux armv8l';
-    var _deviceModel = cfg('__DEVICE_MODEL__', 'SM-A515F');
-    var _deviceManufacturer = cfg('__DEVICE_MANUFACTURER__', 'samsung');
-    var GL_VENDOR = cfg('__DEVICE_GL_VENDOR__', 'ARM');
-    var GL_RENDERER = cfg('__DEVICE_GL_RENDERER__', 'Mali-G72 MP3');
-    var MAX_TEX_SIZE = parseInt(cfg('__DEVICE_MAX_TEXTURE_SIZE__', '8192'), 10) || 8192;
-    var _deviceUuid = cfg('__DEVICE_UUID__', '') || (window.device && window.device.uuid) || deriveFromPort(2654435761, 'ca8ea76b', 'ca8ea76b0fe32f85');
-    var _deviceSerial = cfg('__DEVICE_SERIAL__', '') || (window.device && window.device.serial) || deriveFromPort(1103515245, 'R58M', 'R58M45F41EFD').toUpperCase();
+    const MOBILE_UA = cfg('__DEVICE_UA__', 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36').replace(/;\s*wv/i, '').replace(/Version\/[0-9.]+\s*/i, '');
+    const MOBILE_APP_VERSION = MOBILE_UA.replace(/^Mozilla\//, '');
+    const MOBILE_PLATFORM = 'Linux armv8l';
+    const _deviceModel = cfg('__DEVICE_MODEL__', 'SM-A515F');
+    const _deviceManufacturer = cfg('__DEVICE_MANUFACTURER__', 'samsung');
+    const GL_VENDOR = cfg('__DEVICE_GL_VENDOR__', 'ARM');
+    const GL_RENDERER = cfg('__DEVICE_GL_RENDERER__', 'Mali-G72 MP3');
+    const MAX_TEX_SIZE = parseInt(cfg('__DEVICE_MAX_TEXTURE_SIZE__', '8192'), 10) || 8192;
+    const _deviceUuid = cfg('__DEVICE_UUID__', '') || (window.device && window.device.uuid) || deriveFromPort(2654435761, 'ca8ea76b', 'ca8ea76b0fe32f85');
+    const _deviceSerial = cfg('__DEVICE_SERIAL__', '') || (window.device && window.device.serial) || deriveFromPort(1103515245, 'R58M', 'R58M45F41EFD').toUpperCase();
 
-    var _osVer = (MOBILE_UA.match(/Android\s+([0-9.]+)/) || [0, '10'])[1];
-    var _fullVer = (MOBILE_UA.match(/Chrome\/([0-9.]+)/) || [0, '83.0.4103.106'])[1];
-    var _majorVer = _fullVer.split('.')[0];
+    const _osVer = (MOBILE_UA.match(/Android\s+([0-9.]+)/) || [0, '10'])[1];
+    const _fullVer = (MOBILE_UA.match(/Chrome\/([0-9.]+)/) || [0, '83.0.4103.106'])[1];
+    const _majorVer = _fullVer.split('.')[0];
 
     function applyDevProps(dev) {
         if (!dev) return;
@@ -389,48 +389,49 @@
         }
     } catch (e) {}
 
-    var nativeToString = Function.prototype.toString;
-    var hookedFunctions = new WeakMap(), disguisedFrames = new WeakSet(), wrappedGlProtos = new WeakSet();
+    const nativeToString = Function.prototype.toString;
+    const hookedFunctions = new WeakMap(), disguisedFrames = new WeakSet(), wrappedGlProtos = new WeakSet();
 
     function makeNative(fn, name) {
         if (typeof fn !== 'function') return fn;
-        var fnName = name || fn.name || '';
-        var nativeFn = ({ [fnName](...args) { return fn.apply(this, args); } })[fnName];
+        const fnName = name || fn.name || '';
+        const nativeFn = ({ [fnName](...args) { return fn.apply(this, args); } })[fnName];
         try { Object.defineProperty(nativeFn, 'length', { value: fn.length, configurable: true }); } catch (e) {}
         hookedFunctions.set(nativeFn, 'function ' + fnName + '() { [native code] }');
         return nativeFn;
     }
 
-    var customToString = makeNative(function toString() {
+    const customToString = makeNative(function toString() {
         return (typeof this === 'function' && hookedFunctions.has(this)) ? hookedFunctions.get(this) : nativeToString.apply(this, arguments);
     }, 'toString');
     Function.prototype.toString = customToString;
 
-    var _instanceHash = (function() {
-        var seed = _deviceSerial + ':' + _deviceUuid + ':' + _deviceModel, h = 2166136261;
-        for (var i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+    const _instanceHash = (function() {
+                const seed = _deviceSerial +     + _deviceUuid +     + _deviceModel;
+        let h = 2166136261;
+        for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
         return h >>> 0;
     })();
-    var _fakeLocalIp = '100.' + (64 + (_instanceHash % 64)) + '.' + (((_instanceHash >>> 6) % 254) + 1) + '.' + (((_instanceHash >>> 14) % 253) + 2);
-    var _hwSpecs = (function() {
-        var m = (_deviceModel || '').toUpperCase();
+    const _fakeLocalIp = '100.' + (64 + (_instanceHash % 64)) + '.' + (((_instanceHash >>> 6) % 254) + 1) + '.' + (((_instanceHash >>> 14) % 253) + 2);
+    const _hwSpecs = (function() {
+        const m = (_deviceModel || '').toUpperCase();
         if (/SM-G998|PIXEL 6|LE2123|XQ-BC52|I005D/.test(m)) return { cores: 8, ram: 8 };
         if (m.indexOf('SM-T510') !== -1) return { cores: 8, ram: 3 };
         return /PIXEL 4A|SM-T860|M2007|JOYEUSE|NOTE 9/.test(m) ? { cores: 8, ram: 6 } : { cores: 8, ram: 4 };
     })();
 
-    var _VIEWPORT_DIMS = new Int32Array([MAX_TEX_SIZE, MAX_TEX_SIZE]);
-    var _LINE_WIDTH_RANGE = new Float32Array([1, 7]);
-    var _POINT_SIZE_RANGE = new Float32Array([1, 1024]);
+    const _VIEWPORT_DIMS = new Int32Array([MAX_TEX_SIZE, MAX_TEX_SIZE]);
+    const _LINE_WIDTH_RANGE = new Float32Array([1, 7]);
+    const _POINT_SIZE_RANGE = new Float32Array([1, 1024]);
 
     function defineProp(obj, prop, valueOrGetter) {
         try {
-            var target = obj, brandCheck = null;
+            let target = obj, brandCheck = null;
             if (obj === navigator && typeof Navigator !== 'undefined' && Navigator.prototype) { target = Navigator.prototype; brandCheck = Navigator; }
             else if (typeof Screen !== 'undefined' && obj === window.screen && Screen.prototype) { target = Screen.prototype; brandCheck = Screen; }
             else if (obj === window && typeof Window !== 'undefined' && Window.prototype) { target = Window.prototype; brandCheck = Window; }
             if (target !== obj) { try { delete obj[prop]; } catch (e) {} }
-            var isFn = typeof valueOrGetter === 'function';
+            const isFn = typeof valueOrGetter === 'function';
             Object.defineProperty(target, prop, {
                 get: makeNative(function() {
                     if (brandCheck && !(this instanceof brandCheck)) throw new TypeError('Illegal invocation');
@@ -442,7 +443,7 @@
     }
 
     function defineGetters(target, map) {
-        for (var k in map) {
+        for (const k in map) {
             if (Object.prototype.hasOwnProperty.call(map, k)) {
                 (function(prop, fn) {
                     try { Object.defineProperty(target, prop, { get: makeNative(fn, 'get ' + prop), configurable: true, enumerable: true }); } catch (e) {}
@@ -454,9 +455,9 @@
     // 1. Timezone coherence (Africa/Casablanca)
     try {
         if (typeof Intl !== 'undefined' && Intl.DateTimeFormat && Intl.DateTimeFormat.prototype) {
-            var origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+            const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
             Intl.DateTimeFormat.prototype.resolvedOptions = makeNative(function resolvedOptions() {
-                var res = origResolved.apply(this, arguments);
+                const res = origResolved.apply(this, arguments);
                 try { res.timeZone = 'Africa/Casablanca'; } catch (e) {}
                 return res;
             }, 'resolvedOptions');
@@ -466,9 +467,9 @@
     // 2. Alert & Dialogs - Untouched native browser implementations
 
     // 3 & 5. Navigator, PluginArray, NetworkInformation & BatteryManager
-    var falseNative = makeNative(function dispatchEvent() { return false; }, 'dispatchEvent');
+    const falseNative = makeNative(function dispatchEvent() { return false; }, 'dispatchEvent');
     function makeEmptyCollection(Ctor, tagName, withRefresh) {
-        var obj = Object.create((typeof Ctor !== 'undefined' && Ctor.prototype) ? Ctor.prototype : Object.prototype);
+        const obj = Object.create((typeof Ctor !== 'undefined' && Ctor.prototype) ? Ctor.prototype : Object.prototype);
         Object.defineProperty(obj, 'length', { value: 0, writable: false, enumerable: false, configurable: true });
         obj.item = makeNative(function item() { return null; }, 'item');
         obj.namedItem = makeNative(function namedItem() { return null; }, 'namedItem');
@@ -477,7 +478,7 @@
         return obj;
     }
 
-    var emptyPluginArray, emptyMimeTypeArray, connectionObj;
+    let emptyPluginArray, emptyMimeTypeArray, connectionObj;
     try {
         emptyPluginArray = makeEmptyCollection(typeof PluginArray !== 'undefined' ? PluginArray : undefined, 'PluginArray', true);
         emptyMimeTypeArray = makeEmptyCollection(typeof MimeTypeArray !== 'undefined' ? MimeTypeArray : undefined, 'MimeTypeArray', false);
@@ -492,16 +493,16 @@
             connectionObj.dispatchEvent = falseNative;
         }
         if (typeof Symbol !== 'undefined' && Symbol.toStringTag) { try { Object.defineProperty(connectionObj, Symbol.toStringTag, { value: 'NetworkInformation', configurable: true }); } catch (e) {} }
-        var baseRtt = 40 + (_instanceHash % 25), baseDownlink = 12.0 + ((_instanceHash >>> 4) % 80) * 0.1;
+        const baseRtt = 40 + (_instanceHash % 25), baseDownlink = 12.0 + ((_instanceHash >>> 4) % 80) * 0.1;
         defineGetters(connectionObj, {
             rtt: function() { return baseRtt + Math.floor((Math.random() - 0.5) * 6); },
             downlink: function() { return +(baseDownlink + (Math.random() - 0.5) * 1.2).toFixed(1); }
         });
     } catch (e) {}
 
-    var battStartTime = Date.now(), initialBattPct = 72 + (_instanceHash % 23);
-    var battProto = (typeof BatteryManager !== 'undefined' && BatteryManager.prototype) ? BatteryManager.prototype : Object.create((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype);
-    var fakeBattery = Object.create(battProto);
+    const battStartTime = Date.now(), initialBattPct = 72 + (_instanceHash % 23);
+    const battProto = (typeof BatteryManager !== 'undefined' && BatteryManager.prototype) ? BatteryManager.prototype : Object.create((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype);
+    const fakeBattery = Object.create(battProto);
     function getLazyBatteryLevel() { return Math.max(20, initialBattPct - Math.floor((Date.now() - battStartTime) / 360000)) / 100; }
     defineGetters(battProto, {
         charging: function() { return false; },
@@ -518,29 +519,29 @@
     //   2. what the host injected (it resolves from the installed bundle, or from
     //      client-version.ini if the user pinned one)
     //   3. nothing - the fields are left alone so the client keeps its own
-    var _injected = {
+    const _injected = {
         app: cfg('__DEVICE_APP_VERSION__', ''),
         code: cfg('__DEVICE_VERSION_CODE__', ''),
         build: cfg('__DEVICE_BUILD_VERSION__', '')
     };
-    var _appVersion = (window.appInfo && window.appInfo.version) || _injected.app || null;
-    var _versionCode = (window.appInfo && window.appInfo.versionCode) || _injected.code || null;
-    var _buildVersion = window.buildVersion || _injected.build || null;
+    let _appVersion = (window.appInfo && window.appInfo.version) || _injected.app || null;
+    const _versionCode = (window.appInfo && window.appInfo.versionCode) || _injected.code || null;
+    let _buildVersion = window.buildVersion || _injected.build || null;
     if (!_appVersion) {
         try {
-            var _cfgObj = window.Config || {};
+            const _cfgObj = window.Config || {};
             _appVersion = _cfgObj.appVersion || _cfgObj.version || null;
         } catch (e) {}
     }
     if (!_buildVersion) {
         try {
-            var _m = document.querySelector && document.querySelector('meta[name="build-version"]');
+            const _m = document.querySelector && document.querySelector('meta[name="build-version"]');
             if (_m && _m.content) _buildVersion = _m.content;
         } catch (e) {}
     }
 
-    var FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
-    var navOverrides = {
+    const FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
+    const navOverrides = {
         platform: MOBILE_PLATFORM, userAgent: MOBILE_UA, appVersion: MOBILE_APP_VERSION,
         maxTouchPoints: 5, hardwareConcurrency: _hwSpecs.cores, deviceMemory: _hwSpecs.ram,
         vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
@@ -548,7 +549,7 @@
         connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
         appInfo: { build: _appVersion, version: _appVersion, identifier: 'com.ankama.dofustouch', versionCode: _versionCode }
     };
-    for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
+    for (const nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
     try {
         window.appInfo = window.appInfo || { identifier: 'com.ankama.dofustouch' };
         // Only fill what is known: writing null would erase the client's own
@@ -570,11 +571,11 @@
         }
     } catch (e) {}
 
-    var suppressOffline = function(e) { if (e && (e.type === 'offline' || e.type === 'error')) { e.stopImmediatePropagation(); e.preventDefault(); } };
+    const suppressOffline = function(e) { if (e && (e.type === 'offline' || e.type === 'error')) { e.stopImmediatePropagation(); e.preventDefault(); } };
     try { window.addEventListener('offline', suppressOffline, true); document.addEventListener('offline', suppressOffline, true); } catch (e) {}
 
     if (navigator.userAgentData || window.NavigatorUAData) {
-        var uaBrands = [{ brand: 'Android WebView', version: _majorVer }, { brand: 'Chromium', version: _majorVer }, { brand: 'Not(A:Brand', version: '99' }];
+        const uaBrands = [{ brand: 'Android WebView', version: _majorVer }, { brand: 'Chromium', version: _majorVer }, { brand: 'Not(A:Brand', version: '99' }];
         defineProp(navigator, 'userAgentData', {
             brands: uaBrands, mobile: true, platform: 'Android',
             getHighEntropyValues: makeNative(function getHighEntropyValues() {
@@ -585,20 +586,20 @@
     }
 
     // 4. WebGL, WebGL2 & OffscreenCanvas Vendor/Renderer/ASTC/Precision Disguise
-    var UNMASKED_VENDOR_WEBGL = 0x9245, UNMASKED_RENDERER_WEBGL = 0x9246;
-    var EXT_DEBUG_RENDERER = { UNMASKED_VENDOR_WEBGL: UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL: UNMASKED_RENDERER_WEBGL };
-    var EXT_ASTC = (function() {
-        var o = { getSupportedProfiles: makeNative(function getSupportedProfiles() { return ['ldr']; }, 'getSupportedProfiles') };
-        var dims = ['4x4', '5x4', '5x5', '6x5', '6x6', '8x5', '8x6', '8x8', '10x5', '10x6', '10x8', '10x10', '12x10', '12x12'];
-        for (var i = 0; i < dims.length; i++) { o['COMPRESSED_RGBA_ASTC_' + dims[i] + '_KHR'] = 0x93B0 + i; o['COMPRESSED_SRGB8_ALPHA8_ASTC_' + dims[i] + '_KHR'] = 0x93D0 + i; }
+    const UNMASKED_VENDOR_WEBGL = 0x9245, UNMASKED_RENDERER_WEBGL = 0x9246;
+    const EXT_DEBUG_RENDERER = { UNMASKED_VENDOR_WEBGL: UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL: UNMASKED_RENDERER_WEBGL };
+    const EXT_ASTC = (function() {
+        const o = { getSupportedProfiles: makeNative(function getSupportedProfiles() { return ['ldr']; }, 'getSupportedProfiles') };
+        const dims = ['4x4', '5x4', '5x5', '6x5', '6x6', '8x5', '8x6', '8x8', '10x5', '10x6', '10x8', '10x10', '12x10', '12x12'];
+        for (let i = 0; i < dims.length; i++) { o['COMPRESSED_RGBA_ASTC_' + dims[i] + '_KHR'] = 0x93B0 + i; o['COMPRESSED_SRGB8_ALPHA8_ASTC_' + dims[i] + '_KHR'] = 0x93D0 + i; }
         return o;
     })();
-    var DESKTOP_GL_EXT_RX = /s3tc|bptc|rgtc|^webgl_polygon_mode$/i;
+    const DESKTOP_GL_EXT_RX = /s3tc|bptc|rgtc|^webgl_polygon_mode$/i;
 
     function wrapContext(ctxProto) {
         if (!ctxProto || wrappedGlProtos.has(ctxProto)) return;
         wrappedGlProtos.add(ctxProto);
-        var origGetParam = ctxProto.getParameter, origGetExt = ctxProto.getExtension, origGetSup = ctxProto.getSupportedExtensions, origGetPrec = ctxProto.getShaderPrecisionFormat;
+        const origGetParam = ctxProto.getParameter, origGetExt = ctxProto.getExtension, origGetSup = ctxProto.getSupportedExtensions, origGetPrec = ctxProto.getShaderPrecisionFormat;
 
         if (origGetParam) {
             ctxProto.getParameter = makeNative(function getParameter(p) {
@@ -626,7 +627,7 @@
         }
         if (origGetSup) {
             ctxProto.getSupportedExtensions = makeNative(function getSupportedExtensions() {
-                var arr = Array.from(origGetSup.apply(this, arguments) || []).filter(function(ext) { return !ext || !DESKTOP_GL_EXT_RX.test(ext); });
+                const arr = Array.from(origGetSup.apply(this, arguments) || []).filter(function(ext) { return !ext || !DESKTOP_GL_EXT_RX.test(ext); });
                 ['WEBGL_debug_renderer_info', 'KHR_parallel_shader_compile', 'WEBGL_compressed_texture_astc'].forEach(function(r) { if (arr.indexOf(r) === -1) arr.push(r); });
                 return arr;
             }, 'getSupportedExtensions');
@@ -634,12 +635,12 @@
         if (origGetPrec) {
             ctxProto.getShaderPrecisionFormat = makeNative(function getShaderPrecisionFormat(st, pt) {
                 if (pt < 0x8DF0 || pt > 0x8DF5 || (st !== 0x8B30 && st !== 0x8B31)) return null;
-                var rMin = 127, rMax = 127, prec = 23;
+                let rMin = 127, rMax = 127, prec = 23;
                 if (pt === 0x8DF1 || pt === 0x8DF0) { rMin = 15; rMax = 15; prec = 10; }
                 else if (pt === 0x8DF5) { rMin = 31; rMax = 30; prec = 0; }
                 else if (pt === 0x8DF4) { rMin = 15; rMax = 14; prec = 0; }
                 else if (pt === 0x8DF3) { rMin = 7; rMax = 6; prec = 0; }
-                var t = null;
+                let t = null;
                 try { t = origGetPrec.call(this, st, pt); } catch (e) {}
                 if (!t) t = Object.create((typeof WebGLShaderPrecisionFormat !== 'undefined' && WebGLShaderPrecisionFormat.prototype) ? WebGLShaderPrecisionFormat.prototype : Object.prototype);
                 try { Object.defineProperties(t, { rangeMin: { value: rMin, configurable: true, enumerable: true }, rangeMax: { value: rMax, configurable: true, enumerable: true }, precision: { value: prec, configurable: true, enumerable: true } }); } catch (e) {}
@@ -651,9 +652,9 @@
     if (window.WebGLRenderingContext) wrapContext(WebGLRenderingContext.prototype);
     if (window.WebGL2RenderingContext) wrapContext(WebGL2RenderingContext.prototype);
     if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype && OffscreenCanvas.prototype.getContext) {
-        var origOffscreenGetContext = OffscreenCanvas.prototype.getContext;
+        const origOffscreenGetContext = OffscreenCanvas.prototype.getContext;
         OffscreenCanvas.prototype.getContext = makeNative(function getContext(type) {
-            var ctx = origOffscreenGetContext.apply(this, arguments);
+            const ctx = origOffscreenGetContext.apply(this, arguments);
             if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) wrapContext(Object.getPrototypeOf(ctx));
             return ctx;
         }, 'getContext');
@@ -662,16 +663,16 @@
     // 6. Coherent Touch & PointerEvent Disguise
     try {
         if (!('ontouchstart' in window)) window.ontouchstart = window.ontouchend = window.ontouchmove = window.ontouchcancel = null;
-        var eventContactCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
-        var baseTouchRadius = 14 + (_instanceHash % 4);
+        const eventContactCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+        const baseTouchRadius = 14 + (_instanceHash % 4);
         function getEventContact(ev) {
-            if (eventContactCache && ev && typeof ev === 'object') { var c = eventContactCache.get(ev); if (c) return c; }
-            var res = { radius: Math.max(11, Math.min(23, baseTouchRadius + Math.round((Math.random() - 0.5) * 4))), pressure: +(0.58 + (Math.random() - 0.5) * 0.14).toFixed(2) };
+            if (eventContactCache && ev && typeof ev === 'object') { const c = eventContactCache.get(ev); if (c) return c; }
+            const res = { radius: Math.max(11, Math.min(23, baseTouchRadius + Math.round((Math.random() - 0.5) * 4))), pressure: +(0.58 + (Math.random() - 0.5) * 0.14).toFixed(2) };
             if (eventContactCache && ev && typeof ev === 'object') eventContactCache.set(ev, res);
             return res;
         }
         if (window.PointerEvent && PointerEvent.prototype) {
-            var ptrSz = function() { return (this.buttons === 0 && this.type !== 'pointerdown') ? 1 : getEventContact(this).radius * 2; };
+            const ptrSz = function() { return (this.buttons === 0 && this.type !== 'pointerdown') ? 1 : getEventContact(this).radius * 2; };
             defineGetters(PointerEvent.prototype, {
                 width: ptrSz, height: ptrSz,
                 pressure: function() { return (this.type === 'pointerup' || this.type === 'pointercancel' || (this.buttons === 0 && this.type !== 'pointerdown')) ? 0 : getEventContact(this).pressure; }
@@ -685,12 +686,12 @@
             });
         }
         if (window.matchMedia) {
-            var origMatchMedia = window.matchMedia;
-            var mqlProto = (typeof MediaQueryList !== 'undefined' && MediaQueryList.prototype) ? MediaQueryList.prototype : Object.prototype;
-            var mqlAddL = makeNative(function addListener() {}, 'addListener'), mqlRemL = makeNative(function removeListener() {}, 'removeListener');
-            var mqlAddEL = makeNative(function addEventListener() {}, 'addEventListener'), mqlRemEL = makeNative(function removeEventListener() {}, 'removeEventListener');
-            var makeMql = function(query, matches) {
-                var mql = Object.create(mqlProto);
+            const origMatchMedia = window.matchMedia;
+            const mqlProto = (typeof MediaQueryList !== 'undefined' && MediaQueryList.prototype) ? MediaQueryList.prototype : Object.prototype;
+            const mqlAddL = makeNative(function addListener() {}, 'addListener'), mqlRemL = makeNative(function removeListener() {}, 'removeListener');
+            const mqlAddEL = makeNative(function addEventListener() {}, 'addEventListener'), mqlRemEL = makeNative(function removeEventListener() {}, 'removeEventListener');
+            const makeMql = function(query, matches) {
+                const mql = Object.create(mqlProto);
                 Object.defineProperties(mql, {
                     matches: { value: matches, enumerable: true, configurable: true }, media: { value: String(query), enumerable: true, configurable: true }, onchange: { value: null, writable: true, enumerable: true, configurable: true },
                     addListener: { value: mqlAddL, configurable: true }, removeListener: { value: mqlRemL, configurable: true }, addEventListener: { value: mqlAddEL, configurable: true }, removeEventListener: { value: mqlRemEL, configurable: true }, dispatchEvent: { value: falseNative, configurable: true }
@@ -698,7 +699,7 @@
                 return mql;
             };
             window.matchMedia = makeNative(function matchMedia(query) {
-                var q = (query || '').toLowerCase();
+                const q = (query || '').toLowerCase();
                 if (/(?:any-)?hover:\s*none|(?:any-)?pointer:\s*coarse/.test(q)) return makeMql(query, true);
                 if (/(?:any-)?hover:\s*hover|(?:any-)?pointer:\s*fine/.test(q)) return makeMql(query, false);
                 return origMatchMedia.apply(this, arguments);
@@ -711,7 +712,7 @@
     // 8. Coherent Screen & Orientation
     try {
         if (window.screen) {
-            var getW = function() { return window.innerWidth || 1280; }, getH = function() { return window.innerHeight || 720; };
+            const getW = function() { return window.innerWidth || 1280; }, getH = function() { return window.innerHeight || 720; };
             defineProp(window.screen, 'colorDepth', 24); defineProp(window.screen, 'pixelDepth', 24);
             defineProp(window.screen, 'width', getW); defineProp(window.screen, 'height', getH);
             defineProp(window.screen, 'availWidth', getW); defineProp(window.screen, 'availHeight', getH);
@@ -724,7 +725,7 @@
     patchCordovaDevice();
     if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('deviceready', patchCordovaDevice, false);
     try {
-        var _curDev = window.device;
+        let _curDev = window.device;
         Object.defineProperty(window, 'device', {
             get: makeNative(function() { if (_curDev) applyDevProps(_curDev); return _curDev; }, 'get device'),
             set: makeNative(function(val) { _curDev = val; if (_curDev) applyDevProps(_curDev); }, 'set device'),
@@ -732,16 +733,16 @@
         });
     } catch (e) {}
     if (window.cordova && window.cordova.define) {
-        var origDefine = window.cordova.define;
+        const origDefine = window.cordova.define;
         window.cordova.define = makeNative(function define(id, factory) {
             if (id === 'cordova-plugin-device.device') {
                 return origDefine.call(window.cordova, id, function(require, exports, module) {
                     factory(require, exports, module);
-                    var dev = module.exports;
+                    const dev = module.exports;
                     if (dev) {
                         applyDevProps(dev);
                         if (dev.getInfo) {
-                            var origGetInfo = dev.getInfo;
+                            const origGetInfo = dev.getInfo;
                             dev.getInfo = makeNative(function getInfo(success, error) { origGetInfo.call(dev, function(info) { applyDevProps(info); success(info); }, error); }, 'getInfo');
                         }
                     }
@@ -753,19 +754,19 @@
 
     try {
         if (PeerConn && PeerConn.prototype) {
-            var _rePrivateIp = /(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}/g;
+            const _rePrivateIp = /(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}/g;
             ['createOffer', 'createAnswer'].forEach(function(name) {
-                var origFn = PeerConn.prototype[name];
+                const origFn = PeerConn.prototype[name];
                 if (origFn) PeerConn.prototype[name] = makeNative(function() {
                     return origFn.apply(this, arguments).then(function(desc) { if (desc && desc.sdp) desc.sdp = desc.sdp.replace(_rePrivateIp, _fakeLocalIp); return desc; });
                 }, name);
             });
             ['localDescription', 'currentLocalDescription', 'pendingLocalDescription'].forEach(function(prop) {
-                var desc = Object.getOwnPropertyDescriptor(PeerConn.prototype, prop);
+                const desc = Object.getOwnPropertyDescriptor(PeerConn.prototype, prop);
                 if (desc && desc.get) {
                     Object.defineProperty(PeerConn.prototype, prop, {
                         get: makeNative(function() {
-                            var val = desc.get.apply(this, arguments);
+                            const val = desc.get.apply(this, arguments);
                             if (val && val.sdp && /(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}/.test(val.sdp)) {
                                 try { Object.defineProperty(val, 'sdp', { value: val.sdp.replace(_rePrivateIp, _fakeLocalIp), configurable: true, enumerable: true }); } catch (e) {}
                             }
@@ -775,17 +776,17 @@
                 }
             });
             if (PeerConn.prototype.addIceCandidate) {
-                var origAddIce = PeerConn.prototype.addIceCandidate;
+                const origAddIce = PeerConn.prototype.addIceCandidate;
                 PeerConn.prototype.addIceCandidate = makeNative(function addIceCandidate(c) { scrubCandidate(c); return origAddIce.apply(this, arguments); }, 'addIceCandidate');
             }
-            var origOnIceDesc = Object.getOwnPropertyDescriptor(PeerConn.prototype, 'onicecandidate');
+            const origOnIceDesc = Object.getOwnPropertyDescriptor(PeerConn.prototype, 'onicecandidate');
             if (origOnIceDesc && origOnIceDesc.set) {
-                var iceHandlerMap = new WeakMap();
+                const iceHandlerMap = new WeakMap();
                 Object.defineProperty(PeerConn.prototype, 'onicecandidate', {
                     get: makeNative(function() { return iceHandlerMap.get(this) || null; }, 'get onicecandidate'),
                     set: makeNative(function(fn) {
                         if (typeof fn === 'function') {
-                            iceHandlerMap.set(this, fn); var self = this;
+                            iceHandlerMap.set(this, fn); const self = this;
                             origOnIceDesc.set.call(this, function(evt) { if (evt && evt.candidate) scrubCandidate(evt.candidate); return fn.call(self, evt); });
                         } else { iceHandlerMap.delete(this); origOnIceDesc.set.call(this, null); }
                     }, 'set onicecandidate'), configurable: true, enumerable: true
@@ -796,22 +797,22 @@
 
     // 11. Per-Instance Deterministic Audio & Font Coherence
     try {
-        var Actx = window.AudioContext || window.webkitAudioContext;
+        const Actx = window.AudioContext || window.webkitAudioContext;
         if (Actx && Actx.prototype) defineGetters(Actx.prototype, { sampleRate: function() { return 48000; } });
         if (window.OfflineAudioContext && OfflineAudioContext.prototype.startRendering) {
-            var origStartRendering = OfflineAudioContext.prototype.startRendering, audioSeedJitter = ((_instanceHash % 97) + 1) * 1e-8;
+            const origStartRendering = OfflineAudioContext.prototype.startRendering, audioSeedJitter = ((_instanceHash % 97) + 1) * 1e-8;
             OfflineAudioContext.prototype.startRendering = makeNative(function startRendering() {
                 return origStartRendering.apply(this, arguments).then(function(buffer) {
                     if (buffer && buffer.getChannelData) {
-                        var chan = buffer.getChannelData(0);
-                        if (chan && chan.length > 10) for (var j = (_instanceHash % 7); j < chan.length; j += 128) chan[j] += audioSeedJitter;
+                        const chan = buffer.getChannelData(0);
+                        if (chan && chan.length > 10) for (let j = (_instanceHash % 7); j < chan.length; j += 128) chan[j] += audioSeedJitter;
                     }
                     return buffer;
                 });
             }, 'startRendering');
         }
         if (document.fonts && document.fonts.check) {
-            var origFontsCheck = document.fonts.check, desktopFontsRx = /segoe ui|calibri|consolas|cambria|ms gothic|arial black|tahoma|lucida console|comic sans ms/i;
+            const origFontsCheck = document.fonts.check, desktopFontsRx = /segoe ui|calibri|consolas|cambria|ms gothic|arial black|tahoma|lucida console|comic sans ms/i;
             document.fonts.check = makeNative(function check(font) { return (font && desktopFontsRx.test(font)) ? false : origFontsCheck.apply(this, arguments); }, 'check');
         }
     } catch (e) {}
@@ -821,9 +822,9 @@
     // 12b. Non-CORS Static Asset & Market/Shop Image Sanitizer
     try {
         if (typeof HTMLImageElement !== 'undefined' && HTMLImageElement.prototype) {
-            var origImageSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+            const origImageSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
             if (origImageSetSrc && origImageSetSrc.set) {
-                var rawSetSrc = origImageSetSrc.set;
+                const rawSetSrc = origImageSetSrc.set;
                 Object.defineProperty(HTMLImageElement.prototype, 'src', {
                     set: function(val) {
                         if (typeof val === 'string' && (val.indexOf('static.ankama.com') !== -1 || val.indexOf('s.ankama.com') !== -1)) {
@@ -837,12 +838,12 @@
                 });
             }
 
-            var origCrossOrigin = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'crossOrigin');
+            const origCrossOrigin = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'crossOrigin');
             if (origCrossOrigin && origCrossOrigin.set) {
-                var rawSetCO = origCrossOrigin.set;
+                const rawSetCO = origCrossOrigin.set;
                 Object.defineProperty(HTMLImageElement.prototype, 'crossOrigin', {
                     set: function(val) {
-                        var curSrc = this.src || '';
+                        const curSrc = this.src || '';
                         if (curSrc.indexOf('static.ankama.com') !== -1 || curSrc.indexOf('s.ankama.com') !== -1) {
                             return rawSetCO.call(this, null);
                         }
@@ -862,9 +863,9 @@
         try {
             disguisedFrames.add(targetWin);
             if (targetWin.Function && targetWin.Function.prototype) targetWin.Function.prototype.toString = customToString;
-            var tNavProto = (targetWin.Navigator && targetWin.Navigator.prototype) ? targetWin.Navigator.prototype : targetWin.navigator;
+            const tNavProto = (targetWin.Navigator && targetWin.Navigator.prototype) ? targetWin.Navigator.prototype : targetWin.navigator;
             if (tNavProto) {
-                for (var k in navOverrides) {
+                for (const k in navOverrides) {
                     if (Object.prototype.hasOwnProperty.call(navOverrides, k) && navOverrides[k] !== undefined) {
                         (function(p, val) { try { Object.defineProperty(tNavProto, p, { get: makeNative(function() { return val; }, 'get ' + p), configurable: true, enumerable: true }); } catch (e) {} })(k, navOverrides[k]);
                     }
@@ -876,10 +877,10 @@
     }
     try {
         if (typeof HTMLIFrameElement !== 'undefined' && HTMLIFrameElement.prototype) {
-            var origCWDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+            const origCWDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
             if (origCWDesc && origCWDesc.get) {
                 Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
-                    get: makeNative(function() { var cw = origCWDesc.get.apply(this, arguments); if (cw) disguiseFrameWindow(cw); return cw; }, 'get contentWindow'),
+                    get: makeNative(function() { const cw = origCWDesc.get.apply(this, arguments); if (cw) disguiseFrameWindow(cw); return cw; }, 'get contentWindow'),
                     set: origCWDesc.set, configurable: true, enumerable: true
                 });
             }
@@ -889,11 +890,11 @@
     // 14. Dofus Touch WebGL Context Optimizer, Context-Loss Auto-Recovery & Always-Active Frame Booster
     try {
         if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype && HTMLCanvasElement.prototype.getContext) {
-            var origCanvasGetCtx = HTMLCanvasElement.prototype.getContext;
-            var hookedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+            const origCanvasGetCtx = HTMLCanvasElement.prototype.getContext;
+            const hookedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
             HTMLCanvasElement.prototype.getContext = makeNative(function getContext(type, attrs) {
                 if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
-                    var opts = (attrs && typeof attrs === 'object') ? Object.assign({}, attrs) : {};
+                    const opts = (attrs && typeof attrs === 'object') ? Object.assign({}, attrs) : {};
                     opts.powerPreference = 'high-performance';
                     opts.failIfMajorPerformanceCaveat = false;
                     if (opts.antialias === undefined) opts.antialias = false;
@@ -901,7 +902,7 @@
                         hookedCanvases.add(this);
                         this.addEventListener('webglcontextlost', function(e) { if (e && e.preventDefault) e.preventDefault(); }, false);
                     }
-                    var glCtx = origCanvasGetCtx.call(this, type, opts);
+                    const glCtx = origCanvasGetCtx.call(this, type, opts);
                     if (glCtx) wrapContext(Object.getPrototypeOf(glCtx));
                     return glCtx;
                 }
@@ -919,20 +920,20 @@
             // on the same canvas flipped the pixel back and returned the untouched image: two
             // toDataURL() calls, two different hashes, inside one session. A fingerprint that
             // changes when you ask twice is a far stronger bot signal than no noise at all.
-            var _noisedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+            const _noisedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
 
-            var applyCanvasMicroNoise = function(canvas) {
+            const applyCanvasMicroNoise = function(canvas) {
                 try {
                     if (_noisedCanvases) {
                         if (_noisedCanvases.has(canvas)) return;
                         _noisedCanvases.add(canvas);
                     }
                     if (canvas.width > 4 && canvas.height > 4) {
-                        var ctx2d = canvas.getContext('2d');
+                        const ctx2d = canvas.getContext('2d');
                         if (ctx2d) {
-                            var px = (_instanceHash % (canvas.width - 2)) + 1;
-                            var py = ((_instanceHash >>> 16) % (canvas.height - 2)) + 1;
-                            var img = ctx2d.getImageData(px, py, 1, 1);
+                            const px = (_instanceHash % (canvas.width - 2)) + 1;
+                            const py = ((_instanceHash >>> 16) % (canvas.height - 2)) + 1;
+                            const img = ctx2d.getImageData(px, py, 1, 1);
                             if (img && img.data && img.data.length >= 4) {
                                 img.data[0] ^= ((_instanceHash & 1) ? 1 : 2);
                                 img.data[1] ^= (((_instanceHash >>> 3) & 1) ? 1 : 2);
@@ -944,7 +945,7 @@
                 } catch (e) {}
             };
 
-            var origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
             if (origToDataURL) {
                 HTMLCanvasElement.prototype.toDataURL = makeNative(function toDataURL(type, quality) {
                     applyCanvasMicroNoise(this);
@@ -952,7 +953,7 @@
                 }, 'toDataURL');
             }
 
-            var origToBlob = HTMLCanvasElement.prototype.toBlob;
+            const origToBlob = HTMLCanvasElement.prototype.toBlob;
             if (origToBlob) {
                 HTMLCanvasElement.prototype.toBlob = makeNative(function toBlob(callback, type, quality) {
                     applyCanvasMicroNoise(this);
@@ -962,12 +963,12 @@
         }
 
         if (typeof CanvasRenderingContext2D !== 'undefined' && CanvasRenderingContext2D.prototype.getImageData) {
-            var origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
             CanvasRenderingContext2D.prototype.getImageData = makeNative(function getImageData(sx, sy, sw, sh) {
-                var res = origGetImageData.apply(this, arguments);
+                const res = origGetImageData.apply(this, arguments);
                 if (res && res.data && res.data.length >= 16) {
-                    var p1 = ((_instanceHash >>> 0) % (res.data.length / 4 | 0)) * 4;
-                    var p2 = ((_instanceHash >>> 16) % (res.data.length / 4 | 0)) * 4;
+                    const p1 = ((_instanceHash >>> 0) % (res.data.length / 4 | 0)) * 4;
+                    const p2 = ((_instanceHash >>> 16) % (res.data.length / 4 | 0)) * 4;
                     res.data[p1] ^= ((_instanceHash & 1) ? 1 : 2);
                     res.data[p2 + 1] ^= (((_instanceHash >>> 3) & 1) ? 1 : 2);
                     res.data[p1 + 2] ^= (((_instanceHash >>> 7) & 1) ? 1 : 2);
@@ -982,24 +983,24 @@
 
     // 17. In-Game Moderator & Private Message Sentinel
     try {
-        var _recentAlerts = new Set();
-        var triggerWhisperAlert = function(sender, text, isMod, channel) {
+        const _recentAlerts = new Set();
+        const triggerWhisperAlert = function(sender, text, isMod, channel) {
             try {
-                var key = (sender || '') + ':' + (text || '').substring(0, 32);
+                const key = (sender || '') + ':' + (text || '').substring(0, 32);
                 if (_recentAlerts.has(key)) return;
                 _recentAlerts.add(key);
                 if (_recentAlerts.size > 100) {
-                    var it = _recentAlerts.values().next();
+                    const it = _recentAlerts.values().next();
                     if (!it.done) _recentAlerts.delete(it.value);
                 }
 
                 // Web Audio tone alert inside browser
                 try {
-                    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
                     if (AudioCtx) {
-                        var ctx = new AudioCtx();
-                        var osc = ctx.createOscillator();
-                        var gain = ctx.createGain();
+                        const ctx = new AudioCtx();
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
                         osc.type = isMod ? 'sawtooth' : 'sine';
                         osc.frequency.setValueAtTime(isMod ? 987.77 : 659.25, ctx.currentTime); // B5 or E5
                         gain.gain.setValueAtTime(0.15, ctx.currentTime);
@@ -1038,43 +1039,43 @@
 
     // 19. AI Commander & Co-Op Action Agent (Stealth Human-like Action Execution)
     try {
-        var _activeDirectives = {};
+        let _activeDirectives = {};
 
-        var triggerNaturalClick = function(targetEl, offsetX, offsetY, onComplete) {
+        const triggerNaturalClick = function(targetEl, offsetX, offsetY, onComplete) {
             if (!targetEl) return;
-            var rect = targetEl.getBoundingClientRect();
-            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
-            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+            const rect = targetEl.getBoundingClientRect();
+            const cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            const cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
 
             // Apply Section 18 Spatial Gaussian Jitter (+- 2..4 px)
-            var jitterX = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
-            var jitterY = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+            const jitterX = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            const jitterY = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
 
             // Natural human dwell time: 65 - 125 ms
-            var dwellMs = 65 + (Math.random() * 60 | 0);
+            const dwellMs = 65 + (Math.random() * 60 | 0);
 
-            var downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+            const downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
             targetEl.dispatchEvent(downEvt);
 
             setTimeout(function() {
-                var upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
-                var clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+                const upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+                const clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
                 targetEl.dispatchEvent(upEvt);
                 targetEl.dispatchEvent(clickEvt);
                 if (typeof onComplete === 'function') onComplete();
             }, dwellMs);
         };
 
-        var triggerNaturalDoubleClick = function(targetEl, offsetX, offsetY, onComplete) {
+        const triggerNaturalDoubleClick = function(targetEl, offsetX, offsetY, onComplete) {
             if (!targetEl) return;
-            var rect = targetEl.getBoundingClientRect();
-            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
-            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+            const rect = targetEl.getBoundingClientRect();
+            const cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            const cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
 
             // 1st Click Spatial Jitter
-            var j1x = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
-            var j1y = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
-            var dwell1 = 60 + (Math.random() * 55 | 0);
+            const j1x = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            const j1y = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+            const dwell1 = 60 + (Math.random() * 55 | 0);
 
             targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
             setTimeout(function() {
@@ -1082,12 +1083,12 @@
                 targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
 
                 // Human inter-click delay (95 - 175 ms)
-                var interClickDelay = 95 + (Math.random() * 80 | 0);
+                const interClickDelay = 95 + (Math.random() * 80 | 0);
                 setTimeout(function() {
                     // 2nd Click Finger Micro-Shift (+- 1 px drift)
-                    var j2x = j1x + (Math.random() * 2 - 1);
-                    var j2y = j1y + (Math.random() * 2 - 1);
-                    var dwell2 = 60 + (Math.random() * 55 | 0);
+                    const j2x = j1x + (Math.random() * 2 - 1);
+                    const j2y = j1y + (Math.random() * 2 - 1);
+                    const dwell2 = 60 + (Math.random() * 55 | 0);
 
                     targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
                     setTimeout(function() {
@@ -1106,54 +1107,54 @@
         window.__executeCommanderDirective = function(directive) {
             try {
                 if (typeof directive === 'string') directive = JSON.parse(directive);
-                var action = (directive && directive.action || '').toUpperCase();
+                let action = (directive && directive.action || '').toUpperCase();
                 console.log('[AI Commander] Received directive:', action, directive);
 
                 if (action === 'PASS_TURN') {
-                    var passBtn = document.querySelector('.pass-turn, .btn-turn, [data-action="pass"], .timeline-turn-pass');
+                    const passBtn = document.querySelector('.pass-turn, .btn-turn, [data-action="pass"], .timeline-turn-pass');
                     if (passBtn) {
                         setTimeout(function() {
                             triggerNaturalClick(passBtn);
                         }, 400 + (Math.random() * 600 | 0));
                     }
                 } else if (action === 'AUTO_JOIN_COMBAT') {
-                    var joinBtn = document.querySelector('.join-fight, .btn-join, .sword-fight, [data-action="join"]');
+                    const joinBtn = document.querySelector('.join-fight, .btn-join, .sword-fight, [data-action="join"]');
                     if (joinBtn) {
                         setTimeout(function() {
                             triggerNaturalClick(joinBtn);
                         }, 600 + (Math.random() * 800 | 0));
                     }
                 } else if (action === 'CLICK' && directive.selector) {
-                    var targetEl = document.querySelector(directive.selector);
+                    const targetEl = document.querySelector(directive.selector);
                     if (targetEl) triggerNaturalClick(targetEl, directive.x, directive.y);
                 } else if (action === 'DBLCLICK' && directive.selector) {
-                    var targetDbl = document.querySelector(directive.selector);
+                    const targetDbl = document.querySelector(directive.selector);
                     if (targetDbl) triggerNaturalDoubleClick(targetDbl, directive.x, directive.y);
                 } else if (action === 'EXECUTE_OPTIMAL_ROTATION' || action === 'EXECUTE_TACTICAL_PLAN' || action === 'ATTACK') {
-                    var meta = directive.metadata || directive;
-                    var rotation = meta.rotation || [];
+                    const meta = directive.metadata || directive;
+                    const rotation = meta.rotation || [];
                     console.log('[AI Commander] Executing tactical plan (' + (meta.stance || 'COMBAT') + ') with ' + rotation.length + ' actions against ' + (meta.target_name || 'target'));
 
-                    var executeStep = function(stepIndex) {
+                    const executeStep = function(stepIndex) {
                         if (stepIndex >= rotation.length) {
                             console.log('[AI Commander] Completed rotation execution.');
                             return;
                         }
-                        var step = rotation[stepIndex];
-                        var spellEl = document.querySelector('[data-spell-id="' + step.spell_id + '"], .spell-' + step.spell_id + ', [title*="' + step.spell_name + '"]');
+                        const step = rotation[stepIndex];
+                        let spellEl = document.querySelector('[data-spell-id="' + step.spell_id + '"], .spell-' + step.spell_id + ', [title*="' + step.spell_name + '"]');
                         if (!spellEl) {
-                            var hotbarSlots = document.querySelectorAll('.hotbar-slot, .spell-slot, .slot-spell');
+                            const hotbarSlots = document.querySelectorAll('.hotbar-slot, .spell-slot, .slot-spell');
                             if (hotbarSlots && hotbarSlots[stepIndex]) spellEl = hotbarSlots[stepIndex];
                         }
 
                         if (spellEl) {
                             triggerNaturalClick(spellEl, undefined, undefined, function() {
-                                var targetPause = 250 + (Math.random() * 200 | 0);
+                                const targetPause = 250 + (Math.random() * 200 | 0);
                                 setTimeout(function() {
-                                    var enemyEl = document.querySelector('.fighter-enemy, .target-cell, [data-cell-id]');
+                                    const enemyEl = document.querySelector('.fighter-enemy, .target-cell, [data-cell-id]');
                                     if (enemyEl) triggerNaturalClick(enemyEl);
 
-                                    var interSpellDelay = 400 + (Math.random() * 400 | 0);
+                                    const interSpellDelay = 400 + (Math.random() * 400 | 0);
                                     setTimeout(function() {
                                         executeStep(stepIndex + 1);
                                     }, interSpellDelay);
@@ -1179,15 +1180,29 @@
 
     // 17b. Diagnostics - Untouched native browser implementations
 
+    // Consolidated periodic background tick (~500ms) to avoid multiple concurrent intervals per instance.
+    window.__agentRegisterPeriodicTick = function(fn) {
+        if (!window.__agentPeriodicTicks) {
+            window.__agentPeriodicTicks = [];
+            window.setInterval(function() {
+                const ticks = window.__agentPeriodicTicks;
+                for (let i = 0; i < ticks.length; i++) {
+                    try { ticks[i](); } catch (e) {}
+                }
+            }, 500);
+        }
+        window.__agentPeriodicTicks.push(fn);
+    };
+
     // 18. Map Loading Transition & Black Screen Safeguard Watchdog
     try {
-        var _mapStallStart = 0;
-        setInterval(function() {
+        let _mapStallStart = 0;
+        const _mapWatchdogTick = function() {
             try {
                 if (window.isoEngine) {
-                    var ie = window.isoEngine;
-                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg && ie._loadingProgress.progressEgg.visible) ? ie._loadingProgress.progressEgg.alpha : 0;
-                    var isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
+                    const ie = window.isoEngine;
+                    const eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg && ie._loadingProgress.progressEgg.visible) ? ie._loadingProgress.progressEgg.alpha : 0;
+                    const isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
                     if (isTransitionActive) {
                         if (!_mapStallStart) {
                             _mapStallStart = Date.now();
@@ -1229,14 +1244,15 @@
                     }
                 }
             } catch(e) {}
-        }, 500);
+        };
+        window.__agentRegisterPeriodicTick(_mapWatchdogTick);
     } catch (e) {}
 
     // 20. Fetch intercept — silence all /logger POSTs
     try {
-        var _nativeFetch = window.fetch;
+        const _nativeFetch = window.fetch;
         window.fetch = function(url, opts) {
-            var u = (typeof url === 'string') ? url : (url && url.url) || '';
+            const u = (typeof url === 'string') ? url : (url && url.url) || '';
             if (u.indexOf('/logger') !== -1) {
                 return Promise.resolve(new Response(null, { status: 204, statusText: 'No Content' }));
             }
@@ -1246,9 +1262,9 @@
 
     // 21. Adjust SDK globals stub — prevent Adjust from initialising
     try {
-        var _adjustCallCount = 0;
-        var _adjustLogged = false;
-        var _adjustNoop = function(methodName) {
+        let _adjustCallCount = 0;
+        let _adjustLogged = false;
+        const _adjustNoop = function(methodName) {
             return function() {
                 _adjustCallCount++;
                 if (!_adjustLogged) {
@@ -1263,7 +1279,7 @@
         // `create`, so the init chain threw one step further along than before
         // ("r.create is not a function"). A Proxy cannot go out of date when the
         // SDK grows a method.
-        var _adjustNoopObj = new Proxy({}, {
+        const _adjustNoopObj = new Proxy({}, {
             get: function(t, key) {
                 if (key === 'then') return undefined;
                 if (key === 'isEnabled') return function() { return false; };
@@ -1303,7 +1319,7 @@
 
     // 22. HAAPI sendKPIEvent intercept via window.dofus setter
     try {
-        var _dofusReal = window.dofus;
+        let _dofusReal = window.dofus;
         Object.defineProperty(window, 'dofus', {
             configurable: true,
             get: function() { return _dofusReal; },
@@ -1322,7 +1338,7 @@
     // 23. storage.estimate() normaliser — consistent profile
     try {
         if (navigator.storage && navigator.storage.estimate) {
-            var _nativeEstimate = navigator.storage.estimate.bind(navigator.storage);
+            const _nativeEstimate = navigator.storage.estimate.bind(navigator.storage);
             Object.defineProperty(navigator.storage, 'estimate', {
                 configurable: true,
                 writable: true,
@@ -1336,9 +1352,9 @@
     // 24. permissions.query profile normaliser — consistent 'prompt' state
     try {
         if (navigator.permissions && navigator.permissions.query) {
-            var _nativeQuery = navigator.permissions.query.bind(navigator.permissions);
+            const _nativeQuery = navigator.permissions.query.bind(navigator.permissions);
             navigator.permissions.query = function(descriptor) {
-                var safe = ['geolocation','notifications','push','midi','camera','microphone',
+                const safe = ['geolocation','notifications','push','midi','camera','microphone',
                             'speaker','device-info','background-fetch','background-sync',
                             'bluetooth','persistent-storage','ambient-light-sensor',
                             'accelerometer','gyroscope','magnetometer','clipboard-read',
@@ -1353,7 +1369,7 @@
 
     // 25. High-Speed Auto-Fight Pipeline with Floating HUD, F2 Hotkey, and C# Sync
     try {
-        var FarmBot = {
+        const FarmBot = {
             enabled: false,
             config: {
                 autoReadyDelayMs: 20,   // Delay before GameFightTurnReadyMessage
@@ -1400,11 +1416,11 @@
             },
 
             sessionSummary: function() {
-                var s = this.session || {};
-                var minutes = s.startedAt ? (Date.now() - s.startedAt) / 60000 : 0;
-                var drops = s.drops || {};
-                var dropTotal = 0;
-                for (var g in drops) { if (Object.prototype.hasOwnProperty.call(drops, g)) dropTotal += drops[g]; }
+                const s = this.session || {};
+                const minutes = s.startedAt ? (Date.now() - s.startedAt) / 60000 : 0;
+                const drops = s.drops || {};
+                let dropTotal = 0;
+                for (const g in drops) { if (Object.prototype.hasOwnProperty.call(drops, g)) dropTotal += drops[g]; }
                 return {
                     fights: s.fights || 0,
                     wins: s.wins || 0,
@@ -1422,16 +1438,16 @@
             },
 
             countMonsters: function() {
-                var count = 0;
+                let count = 0;
                 try {
                     if (window.isoEngine && window.isoEngine.actorManager) {
-                        var am = window.isoEngine.actorManager;
-                        var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
-                        for (var i = 0; i < ids.length; i++) {
-                            var a = am.getActor(ids[i]);
-                            var fighter = null;
+                        const am = window.isoEngine.actorManager;
+                        const ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                        for (let i = 0; i < ids.length; i++) {
+                            const a = am.getActor(ids[i]);
+                            let fighter = null;
                             try { fighter = (a && typeof a.getFighter === 'function') ? a.getFighter() : null; } catch(e) {}
-                            var isMonster = false;
+                            let isMonster = false;
                             try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
                             if (isMonster) count += 1;
                         }
@@ -1441,7 +1457,7 @@
             },
 
             openFight: function() {
-                var s = this.session;
+                const s = this.session;
                 s._pre = _agentSnapshot();
                 s._monsters = this.countMonsters();
                 // Stamped so closeFight can tell this fight's verdict from a stale one:
@@ -1451,27 +1467,27 @@
             },
 
             closeFight: function() {
-                var s = this.session;
+                const s = this.session;
                 s.fights += 1;
-                var pre = s._pre;
-                var post = _agentSnapshot();
+                const pre = s._pre;
+                const post = _agentSnapshot();
                 s._pre = null;
 
-                var xpGain = null;
-                var kamasGain = null;
+                let xpGain = null;
+                let kamasGain = null;
                 if (pre && post) {
                     if (pre.xp != null && post.xp != null && post.xp >= pre.xp) xpGain = post.xp - pre.xp;
                     if (pre.kamas != null && post.kamas != null && post.kamas >= pre.kamas) kamasGain = post.kamas - pre.kamas;
                     // Item deltas are the drops. Only gains count: a sale is a
                     // negative delta and must never be recorded as a drop.
-                    var preItems = (pre.inventory && pre.inventory.items) || [];
-                    var postItems = (post.inventory && post.inventory.items) || [];
-                    var before = {};
-                    var i;
+                    const preItems = (pre.inventory && pre.inventory.items) || [];
+                    const postItems = (post.inventory && post.inventory.items) || [];
+                    const before = {};
+                    let i;
                     for (i = 0; i < preItems.length; i++) before[preItems[i].gid] = preItems[i].qty;
                     for (i = 0; i < postItems.length; i++) {
-                        var gid = postItems[i].gid;
-                        var delta = postItems[i].qty - (before[gid] || 0);
+                        const gid = postItems[i].gid;
+                        const delta = postItems[i].qty - (before[gid] || 0);
                         if (delta > 0) s.drops[gid] = (s.drops[gid] || 0) + delta;
                     }
                 }
@@ -1484,10 +1500,10 @@
                 // alive still paid 518 xp, so a loss was counted as a win (session reported
                 // "fights 2, wins 2" with one real victory). Every win rate the farm loop
                 // reports was inflated by exactly those fights.
-                var monsters = s._monsters || 0;
-                var verdict = null;
+                const monsters = s._monsters || 0;
+                let verdict = null;
                 try {
-                    var end = window.__agentLastFightEnd;
+                    const end = window.__agentLastFightEnd;
                     if (end && typeof end.won === 'boolean'
                             && end.at != null && end.at >= (s._openedAt || 0)) {
                         verdict = end.won;
@@ -1522,10 +1538,10 @@
             // is still sitting on the placement screen — nobody has readied —
             // and replaying that message is what turns the bot on in practice.
             resumeFight: function() {
-                var self = this;
+                const self = this;
                 if (!this.state.inFight) return;
                 if (this.state.placement && !this.state.readied && !this.state.readying) {
-                    var msg = this.state.placement;
+                    const msg = this.state.placement;
                     setTimeout(function() {
                         if (!self.enabled || self.state.readied || self.state.readying) return;
                         try { self.placeAndReady(msg); } catch (e) {}
@@ -1536,7 +1552,7 @@
                 // rejected and would look like a broken combat driver.
                 if (this.state.myTurn && this.state.lastTurnId != null
                         && Date.now() - (this.state.turnStartedAt || 0) < 15000) {
-                    var fighterId = this.state.lastTurnId;
+                    const fighterId = this.state.lastTurnId;
                     setTimeout(function() {
                         if (!self.enabled || !self.state.myTurn) return;
                         self.executeOptimalTurn(null, fighterId);
@@ -1553,28 +1569,28 @@
             autoBuild: function() {
                 if (!this.enabled || this.state.inFight) return null;
                 if (this._lastBuildAt && Date.now() - this._lastBuildAt < 60000) return null;
-                var chc = null, level = null;
+                let chc = null, level = null;
                 try {
-                    var pd = window.gui.playerData;
+                    const pd = window.gui.playerData;
                     chc = pd.characters.mainCharacter.characteristics;
                     level = Number(pd.characterBaseInformations
                         && pd.characterBaseInformations.level) || null;
                 } catch (e) { return null; }
-                var stats = Number(chc.statsPoints);
-                var spells = Number(chc.spellsPoints);
+                const stats = Number(chc.statsPoints);
+                const spells = Number(chc.spellsPoints);
                 if (!(stats > 0) && !(spells > 0)) return null;
                 // A rank the server refused at this character level is not asked
                 // again: the spell cap moves only on a level-up, so repeating the
                 // same request is one wasted packet every minute.
-                var ask = this._spellAsk;
-                var spellAllowed = !(ask && ask.level === level
+                const ask = this._spellAsk;
+                const spellAllowed = !(ask && ask.level === level
                     && Date.now() - ask.at < 600000);
                 if (!(stats > 0) && !spellAllowed) return null;
                 this._lastBuildAt = Date.now();
                 try {
-                    var res = _agentHandlers['char.build']({
+                    const res = _agentHandlers['char.build']({
                         stats: stats > 0, spells: spellAllowed });
-                    var data = res && res.data;
+                    const data = res && res.data;
                     if (data && data.spell_rank_requested != null) {
                         this._spellAsk = { spell: data.spell,
                             rank: data.spell_rank_requested,
@@ -1591,9 +1607,9 @@
             aiWaiting: false,
 
             aiToggle: function() {
-                var self = this;
-                var hud = document.getElementById('__farmbot_hud');
-                var label = document.getElementById('__farmbot_hud_label');
+                const self = this;
+                const hud = document.getElementById('__farmbot_hud');
+                const label = document.getElementById('__farmbot_hud_label');
                 // Acknowledge the press immediately. Whether the host acts on it is a
                 // separate question, and leaving the badge unchanged made a working
                 // click look like a dead button.
@@ -1625,7 +1641,7 @@
                 if (this._ackTimer) clearTimeout(this._ackTimer);
                 this._ackTimer = setTimeout(function () {
                     if (self.aiPending) {
-                        var l = document.getElementById('__farmbot_hud_label');
+                        const l = document.getElementById('__farmbot_hud_label');
                         if (l) l.textContent = 'AI: no reply';
                     }
                 }, 4000);
@@ -1642,8 +1658,8 @@
                 this.aiWaiting = !!waiting && !this.aiRunning;
                 this.aiPending = false;
                 if (this._ackTimer) { clearTimeout(this._ackTimer); this._ackTimer = null; }
-                var hud = document.getElementById('__farmbot_hud');
-                var label = document.getElementById('__farmbot_hud_label');
+                const hud = document.getElementById('__farmbot_hud');
+                const label = document.getElementById('__farmbot_hud_label');
                 if (hud) hud.title = text || (running ? 'AI running'
                     : (this.aiWaiting ? 'AI on, waiting for this client to be ready'
                                       : 'Start the AI'));
@@ -1687,13 +1703,13 @@
             },
 
             createHud: function() {
-                var self = this;
-                var POS_KEY = '__dofusfarm_hud_pos';
+                const self = this;
+                const POS_KEY = '__dofusfarm_hud_pos';
 
                 function clampIntoView(x, y, el) {
-                    var w = el.offsetWidth || 180, h = el.offsetHeight || 26;
-                    var maxX = Math.max(0, window.innerWidth - w - 2);
-                    var maxY = Math.max(0, window.innerHeight - h - 2);
+                    const w = el.offsetWidth || 180, h = el.offsetHeight || 26;
+                    const maxX = Math.max(0, window.innerWidth - w - 2);
+                    const maxY = Math.max(0, window.innerHeight - h - 2);
                     return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
                 }
 
@@ -1701,7 +1717,7 @@
                     if (document.getElementById('__farmbot_hud')) return;
                     if (!document.body) { setTimeout(injectBadge, 300); return; }
 
-                    var hud = document.createElement('div');
+                    const hud = document.createElement('div');
                     hud.id = '__farmbot_hud';
                     hud.style.position = 'fixed';
                     hud.style.zIndex = '999999';
@@ -1719,7 +1735,7 @@
                     hud.style.touchAction = 'none';
                     hud.style.opacity = '0.92';
 
-                    var label = document.createElement('span');
+                    const label = document.createElement('span');
                     label.id = '__farmbot_hud_label';
                     label.style.cursor = 'pointer';
                     label.title = 'Click to toggle the fight AI, drag to move. F2 also toggles.';
@@ -1733,7 +1749,7 @@
                     // does -- `start_auto` used the AI page's shared selection, so a click
                     // here could start a loop for some other instance) and it repaints
                     // from `setAiState`, which is the state the host pushes.
-                    var auto = document.createElement('span');
+                    const auto = document.createElement('span');
                     auto.id = '__farmbot_hud_auto';
                     auto.style.cursor = 'pointer';
                     auto.style.padding = '2px 7px';
@@ -1742,8 +1758,8 @@
                     hud.appendChild(auto);
 
                     function paintPill() {
-                        var running = !!self.aiRunning;
-                        var waiting = !!self.aiWaiting && !running;
+                        const running = !!self.aiRunning;
+                        const waiting = !!self.aiWaiting && !running;
                         auto.textContent = running ? '■ Auto' : (waiting ? '⏳ Auto' : '▶ Auto');
                         auto.style.background = running ? 'rgba(220,38,38,0.9)'
                                             : (waiting ? 'rgba(180,83,9,0.9)'
@@ -1755,12 +1771,12 @@
                     paintPill();
                     auto.onclick = function(e) {
                         e.stopPropagation();
-                        var running = !!self.aiRunning;
+                        const running = !!self.aiRunning;
                         // Waiting is an ON switch with no loop yet: the click is a
                         // cancel, so it has to travel as stop_one. Sending start_one
                         // again asked for a loop that was already asked for, and the
                         // host's own cancel branch (ToggleAi) was never reached.
-                        var waiting = !!self.aiWaiting && !running;
+                        const waiting = !!self.aiWaiting && !running;
                         auto.textContent = running ? '…stopping'
                                          : (waiting ? '…cancelling' : '…starting');
                         try {
@@ -1779,20 +1795,20 @@
                     // replaced, and once: `setAiState` also paints the label and colour.
                     if (typeof self.setAiState === 'function' && !self._pillTracksState) {
                         self._pillTracksState = true;
-                        var setAiStateUnderneath = self.setAiState;
+                        const setAiStateUnderneath = self.setAiState;
                         self.setAiState = function() {
-                            var out = setAiStateUnderneath.apply(this, arguments);
+                            const out = setAiStateUnderneath.apply(this, arguments);
                             try { paintPill(); } catch (ePaint) {}
                             return out;
                         };
                     }
 
                     // --- position: restored from the last drag -----------------
-                    var pos = null;
+                    let pos = null;
                     try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) {}
                     document.body.appendChild(hud);
                     if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
-                        var c = clampIntoView(pos.x, pos.y, hud);
+                        let c = clampIntoView(pos.x, pos.y, hud);
                         hud.style.left = c.x + 'px';
                         hud.style.top = c.y + 'px';
                     } else {
@@ -1801,10 +1817,10 @@
                     }
 
                     // --- drag ---------------------------------------------------
-                    var dragging = false, moved = false, offX = 0, offY = 0;
+                    let dragging = false, moved = false, offX = 0, offY = 0;
                     hud.addEventListener('pointerdown', function(e) {
                         if (e.target === auto) return;
-                        var r = hud.getBoundingClientRect();
+                        const r = hud.getBoundingClientRect();
                         offX = e.clientX - r.left;
                         offY = e.clientY - r.top;
                         dragging = true;
@@ -1816,7 +1832,7 @@
                         if (!dragging) return;
                         if (!moved && (Math.abs(e.movementX) > 2 || Math.abs(e.movementY) > 2)) moved = true;
                         if (!moved) return;
-                        var c = clampIntoView(e.clientX - offX, e.clientY - offY, hud);
+                        const c = clampIntoView(e.clientX - offX, e.clientY - offY, hud);
                         hud.style.right = 'auto';
                         hud.style.left = c.x + 'px';
                         hud.style.top = c.y + 'px';
@@ -1827,7 +1843,7 @@
                         hud.style.cursor = 'grab';
                         try { hud.releasePointerCapture(e.pointerId); } catch (err) {}
                         if (moved) {
-                            var r = hud.getBoundingClientRect();
+                            const r = hud.getBoundingClientRect();
                             try {
                                 localStorage.setItem(POS_KEY, JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
                             } catch (err) {}
@@ -1844,8 +1860,8 @@
                     // Keep it on screen when the window is resized.
                     window.addEventListener('resize', function() {
                         if (!hud.style.left) return;
-                        var r = hud.getBoundingClientRect();
-                        var c = clampIntoView(r.left, r.top, hud);
+                        const r = hud.getBoundingClientRect();
+                        const c = clampIntoView(r.left, r.top, hud);
                         hud.style.left = c.x + 'px';
                         hud.style.top = c.y + 'px';
                     });
@@ -1868,7 +1884,7 @@
             },
 
             bindKeyListeners: function() {
-                var self = this;
+                const self = this;
                 window.addEventListener('keydown', function(e) {
                     if (e.key === 'F2') {
                         e.preventDefault();
@@ -1878,8 +1894,8 @@
             },
 
             waitForConnection: function() {
-                var self = this;
-                var checkInterval = setInterval(function() {
+                const self = this;
+                const checkInterval = setInterval(function() {
                     if (window.dofus && window.dofus.connectionManager) {
                         clearInterval(checkInterval);
                         self.bindNetworkHooks(window.dofus.connectionManager);
@@ -1888,7 +1904,7 @@
             },
 
             bindNetworkHooks: function(cm) {
-                var self = this;
+                const self = this;
                 console.log('[FarmBot] Bound to connection manager.');
 
                 // Keep-alive heartbeat. During an automated run the loop can be busy
@@ -1951,21 +1967,21 @@
                     // pointerdown *and* mousedown for the same press, so counting both
                     // doubled every click. `during_run_all` keeps the old, wider count so
                     // the difference stays auditable instead of silently disappearing.
-                    var takeoverEvent = (window.PointerEvent)
+                    const takeoverEvent = (window.PointerEvent)
                         ? { pointerdown: true }
                         : { mousedown: true, touchstart: true };
-                    var ui = { trusted: 0, during_run: 0, during_run_all: 0,
+                    const ui = { trusted: 0, during_run: 0, during_run_all: 0,
                                by_type: {}, last_ts: 0 };
                     window.__agentUserInput = function () {
-                        var copy = {};
-                        for (var k in ui.by_type) {
+                        const copy = {};
+                        for (const k in ui.by_type) {
                             if (Object.prototype.hasOwnProperty.call(ui.by_type, k)) copy[k] = ui.by_type[k];
                         }
                         return { trusted: ui.trusted, during_run: ui.during_run,
                                  during_run_all: ui.during_run_all,
                                  by_type: copy, last_ts: ui.last_ts };
                     };
-                    var noteUserInput = function (ev) {
+                    const noteUserInput = function (ev) {
                         try {
                             if (!ev || ev.isTrusted !== true) return;
                             ui.trusted++;
@@ -1991,12 +2007,12 @@
                 // 88 page loads in one log, with no way to tell them apart. Keeping the
                 // reason on the host side is the difference between guessing and knowing.
                 try {
-                    var wrap = function (name) {
-                        var orig = window.dofus && window.dofus[name];
+                    const wrap = function (name) {
+                        const orig = window.dofus && window.dofus[name];
                         if (typeof orig !== 'function' || orig.__agentWrapped) return;
-                        var wrapped = function (reason) {
+                        const wrapped = function (reason) {
                             try {
-                                var why = String(reason || 'CLIENT_CLOSING');
+                                const why = String(reason || 'CLIENT_CLOSING');
                                 window.__agentLastDisconnect = { at: Date.now(), reason: why,
                                                                  via: name };
                                 // Only attributes the kick when a claim was sent in the
@@ -2008,8 +2024,8 @@
                                 // validated, then the session ended client-side).
                                 try {
                                     if (window.__agentRecordKick) {
-                                        var sc = window.__agentServerClosing;
-                                        var srv = !!(sc && Date.now() - Number(sc.at || 0) < 5000);
+                                        const sc = window.__agentServerClosing;
+                                        const srv = !!(sc && Date.now() - Number(sc.at || 0) < 5000);
                                         window.__agentRecordKick('dofus_' + name, why, srv);
                                     }
                                 } catch (e) {}
@@ -2047,7 +2063,7 @@
                 // a claim sent while that refresh is in flight, or right
                 // after a map change, is checked against a state the server
                 // may no longer hold. _questClaimCheck reads these.
-                var stamp = function (name, field) {
+                const stamp = function (name, field) {
                     try {
                         cm.on(name, function () { window[field] = Date.now(); });
                     } catch (e) {}
@@ -2066,12 +2082,12 @@
                             window.__agentLastQuestSync = Date.now();
                             window.__mapQuestFlags = {};
                             if (msg && msg.npcsIdsWithQuest && msg.questFlags) {
-                                for (var i = 0; i < msg.npcsIdsWithQuest.length; i++) {
-                                    var cid = msg.npcsIdsWithQuest[i];
-                                    var flag = msg.questFlags[i];
+                                for (let i = 0; i < msg.npcsIdsWithQuest.length; i++) {
+                                    const cid = msg.npcsIdsWithQuest[i];
+                                    const flag = msg.questFlags[i];
                                     window.__mapQuestFlags[cid] = flag;
-                                    var am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
-                                    var act = am && typeof am.getActor === 'function' ? am.getActor(cid) : null;
+                                    const am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
+                                    const act = am && typeof am.getActor === 'function' ? am.getActor(cid) : null;
                                     if (act) act._questFlag = flag;
                                 }
                             }
@@ -2166,17 +2182,17 @@
                     // AuthenticationTicketMessage carries the live session ticket,
                     // and these rings are persisted to logs and training data. The
                     // snapshot must never publish a credential-shaped value.
-                    var _agentSecretPacketArg =
+                    const _agentSecretPacketArg =
                         /^(ticket|password|pass|secret|token|salt|apikey|api_key|key)$/i;
-                    var _agentPacketArgs = function (a) {
-                        var out = {};
+                    const _agentPacketArgs = function (a) {
+                        const out = {};
                         if (!a || typeof a !== 'object') return out;
-                        var n = 0;
-                        for (var k in a) {
+                        let n = 0;
+                        for (const k in a) {
                             if (!Object.prototype.hasOwnProperty.call(a, k)) continue;
                             if (n++ >= 8) break;
                             if (_agentSecretPacketArg.test(String(k))) continue;
-                            var v = a[k];
+                            let v = a[k];
                             if (v == null || typeof v === 'number'
                                     || typeof v === 'boolean'
                                     || typeof v === 'string') {
@@ -2189,13 +2205,13 @@
                         }
                         return out;
                     };
-                    var cmOut = window.__agentOutgoingRing
+                    const cmOut = window.__agentOutgoingRing
                         || (window.__agentOutgoingRing = []);
                     if (!cm.__agentOutWrapped && typeof cm.sendMessage === 'function') {
-                        var origSend = cm.sendMessage;
+                        const origSend = cm.sendMessage;
                         cm.sendMessage = function (name) {
                             try {
-                                var row = { at: Date.now(), name: String(name),
+                                const row = { at: Date.now(), name: String(name),
                                             args: _agentPacketArgs(arguments[1]) };
                                 cmOut.push(row);
                                 if (cmOut.length > 80) cmOut.splice(0, cmOut.length - 60);
@@ -2213,10 +2229,10 @@
                         try {
                             if (msg && msg.actors && Array.isArray(msg.actors)) {
                                 window.__mapQuestFlags = window.__mapQuestFlags || {};
-                                for (var ai = 0; ai < msg.actors.length; ai++) {
-                                    var actInfo = msg.actors[ai];
+                                for (let ai = 0; ai < msg.actors.length; ai++) {
+                                    const actInfo = msg.actors[ai];
                                     if (actInfo && actInfo.questFlag) {
-                                        var acid = actInfo.contextualId != null ? actInfo.contextualId : actInfo.id;
+                                        const acid = actInfo.contextualId != null ? actInfo.contextualId : actInfo.id;
                                         if (acid != null) {
                                             window.__mapQuestFlags[acid] = actInfo.questFlag;
                                             window.__mapQuestFlags[Number(acid)] = actInfo.questFlag;
@@ -2230,9 +2246,9 @@
                 try {
                     cm.on('GameRolePlayShowActorMessage', function (msg) {
                         try {
-                            var inf = msg && (msg.informations || msg.actorInfos);
+                            const inf = msg && (msg.informations || msg.actorInfos);
                             if (inf && inf.questFlag) {
-                                var sid = inf.contextualId != null ? inf.contextualId : inf.id;
+                                const sid = inf.contextualId != null ? inf.contextualId : inf.id;
                                 if (sid != null) {
                                     window.__mapQuestFlags = window.__mapQuestFlags || {};
                                     window.__mapQuestFlags[sid] = inf.questFlag;
@@ -2248,13 +2264,13 @@
                 // difference. Names plus a few scalar fields, bounded.
                 try {
                     if (!cm.__agentInWrapped && typeof cm.emit === 'function') {
-                        var cmIn = window.__agentIncomingRing
+                        const cmIn = window.__agentIncomingRing
                             || (window.__agentIncomingRing = []);
-                        var origEmit = cm.emit;
+                        const origEmit = cm.emit;
                         cm.emit = function (name) {
                             try {
-                                var row = { at: Date.now(), name: String(name) };
-                                var a = arguments[1];
+                                const row = { at: Date.now(), name: String(name) };
+                                let a = arguments[1];
                                 if (a && typeof a === 'object') {
                                     row.keys = Object.keys(a).slice(0, 8);
                                 }
@@ -2263,11 +2279,11 @@
                                 // The battle log the outcome row needs. The client's
                                 // own stack is cleared at fight end, so the numbers
                                 // have to be copied as each fight message arrives.
-                                var fightRing = window.__agentBattleRing
+                                const fightRing = window.__agentBattleRing
                                     || (window.__agentBattleRing = []);
-                                var rowName = String(name);
+                                const rowName = String(name);
                                 if (/^Game(Action)?Fight/.test(rowName)) {
-                                    var fightRow = _agentBattleRow(a, rowName);
+                                    const fightRow = _agentBattleRow(a, rowName);
                                     if (fightRow) {
                                         fightRing.push(fightRow);
                                         if (fightRing.length > 900) fightRing.splice(0, fightRing.length - 800);
@@ -2276,15 +2292,15 @@
                                         && a && typeof a === 'object') {
                                     // Sequence batches carry the actions; expand them
                                     // so the tap is not blind to every damaging cast.
-                                    var seq = a.sequence || a.messages || null;
+                                    const seq = a.sequence || a.messages || null;
                                     if (seq && typeof seq.length === 'number') {
-                                        for (var si = 0; si < seq.length; si++) {
-                                            var sm = seq[si];
+                                        for (let si = 0; si < seq.length; si++) {
+                                            const sm = seq[si];
                                             if (!sm || typeof sm !== 'object') continue;
-                                            var st = typeof sm._messageType === 'string'
+                                            const st = typeof sm._messageType === 'string'
                                                 ? sm._messageType : null;
                                             if (!st || !/^Game(Action)?Fight/.test(st)) continue;
-                                            var srow = _agentBattleRow(sm, st);
+                                            const srow = _agentBattleRow(sm, st);
                                             if (!srow) continue;
                                             fightRing.push(srow);
                                             if (fightRing.length > 900) fightRing.splice(0, fightRing.length - 800);
@@ -2323,11 +2339,11 @@
                 try {
                     if (!cm.__agentChallengeWrapped) {
                         cm.__agentChallengeWrapped = true;
-                        var chMap = window.__agentChallenges || (window.__agentChallenges = {});
+                        const chMap = window.__agentChallenges || (window.__agentChallenges = {});
                         cm.on('ChallengeInfoMessage', function (msg) {
                             try {
                                 if (!msg || msg.challengeId == null) return;
-                                var cid = Number(msg.challengeId);
+                                const cid = Number(msg.challengeId);
                                 chMap[cid] = {
                                     id: cid,
                                     name: typeof msg._name === 'string' ? msg._name
@@ -2347,8 +2363,8 @@
                         cm.on('ChallengeResultMessage', function (msg) {
                             try {
                                 if (!msg || msg.challengeId == null) return;
-                                var cid = Number(msg.challengeId);
-                                var row = chMap[cid] || (chMap[cid] = {
+                                const cid = Number(msg.challengeId);
+                                const row = chMap[cid] || (chMap[cid] = {
                                     id: cid, name: null, description: null,
                                     target_id: null, drop_bonus: null,
                                     xp_bonus: null, points: null });
@@ -2361,7 +2377,7 @@
                             // A new fight rolls new challenges; the previous fight's
                             // results must not leak into this one. Clear in place so
                             // every closure above keeps the same object.
-                            for (var ck in chMap) {
+                            for (const ck in chMap) {
                                 if (Object.prototype.hasOwnProperty.call(chMap, ck)) delete chMap[ck];
                             }
                         });
@@ -2400,19 +2416,19 @@
                     // client actually received, with the results entry for this
                     // character, so a fight can be proven from join to end.
                     try {
-                        var liveFightId = null;
+                        let liveFightId = null;
                         try {
-                            var fmEnd = (window.gui && window.gui.fightManager)
+                            const fmEnd = (window.gui && window.gui.fightManager)
                                 || window.fightManager || null;
                             if (fmEnd && fmEnd.fightId != null) liveFightId = Number(fmEnd.fightId);
                         } catch (eFm) {}
-                        var endResults = (msg && msg.results) || [];
-                        var meId = null;
+                        const endResults = (msg && msg.results) || [];
+                        let meId = null;
                         try { meId = window.gui.playerData.id; } catch (eId) {}
-                        var mine = null;
-                        var compact = [];
-                        for (var ri = 0; ri < endResults.length; ri++) {
-                            var rr = endResults[ri] || {};
+                        let mine = null;
+                        const compact = [];
+                        for (let ri = 0; ri < endResults.length; ri++) {
+                            const rr = endResults[ri] || {};
                             if (String(rr.id) === String(meId)) mine = rr;
                             if (compact.length < 12) compact.push({
                                 id: rr.id, alive: !!rr.alive,
@@ -2421,7 +2437,7 @@
                                 rewards: rr.rewards ? rr.rewards.length : 0
                             });
                         }
-                        var msgFightId = msg && (msg.fightId != null ? msg.fightId : msg.fightID);
+                        const msgFightId = msg && (msg.fightId != null ? msg.fightId : msg.fightID);
                         window.__agentLastFightEnd = {
                             at: Date.now(),
                             fight_id: msgFightId != null ? Number(msgFightId) : liveFightId,
@@ -2462,17 +2478,17 @@
                 // `.indexOf`; the throw skipped the ready send entirely and the
                 // fight waited forever. Copy whatever is there into an array,
                 // and ready even when no cell list is usable.
-                var raw = (msg && (msg.positionsForChallengers
+                const raw = (msg && (msg.positionsForChallengers
                     || msg.positions || msg.positionsForSpectators)) || [];
-                var positions = [];
+                const positions = [];
                 try {
-                    for (var i = 0; raw && i < raw.length; i++) positions.push(raw[i]);
+                    for (let i = 0; raw && i < raw.length; i++) positions.push(raw[i]);
                 } catch (e) {}
-                var am = window.actorManager
+                const am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
-                var ua = am && am.userActor;
-                var current = ua && ua.cellId != null ? ua.cellId : null;
-                var cell = null;
+                const ua = am && am.userActor;
+                const current = ua && ua.cellId != null ? ua.cellId : null;
+                let cell = null;
                 if (positions.length) {
                     cell = positions.indexOf(current) !== -1 ? current : positions[0];
                 } else {
@@ -2486,9 +2502,9 @@
                 if (cell != null) {
                     this.sendPacket('GameFightPlacementPositionRequestMessage', { cellId: cell });
                 }
-                var self = this;
+                const self = this;
                 setTimeout(function() {
-                    var ok = self.sendPacket('GameFightReadyMessage', { isReady: true });
+                    const ok = self.sendPacket('GameFightReadyMessage', { isReady: true });
                     window.__agentLastFightReady = {
                         at: Date.now(), cell: cell, positions: positions.length,
                         sent: !!ok, error: ok ? null : (self.lastSendError || null)
@@ -2507,15 +2523,15 @@
             // which this character does not own: every turn was a wasted cast and a
             // pass. Nothing here assumes a class or a level.
             executeOptimalTurn: function(cm, fighterId) {
-                var self = this;
-                var steps = 0;
-                var tick = function() {
+                const self = this;
+                let steps = 0;
+                const tick = function() {
                     if (!self.enabled || !self.state.myTurn) return;
                     if (steps++ >= 8 || Date.now() - (self.state.turnStartedAt || 0) > 20000) {
                         self._endFightTurn();
                         return;
                     }
-                    var ctx = self._fightContext(fighterId);
+                    const ctx = self._fightContext(fighterId);
                     if (!ctx) { self._endFightTurn(); return; }
                     if (!self._stillMyTurn(ctx)) return;
                     if (self._askBrain(ctx, fighterId, tick)) return;
@@ -2530,17 +2546,17 @@
             _stillMyTurn: function(ctx) {
                 try {
                     if (!this.enabled || !this.state.myTurn || !ctx) return false;
-                    var fm = window.gui && window.gui.fightManager;
+                    const fm = window.gui && window.gui.fightManager;
                     if (!fm) return false;
-                    var current = fm.currentFighterId;
+                    const current = fm.currentFighterId;
                     return current != null && String(current) === String(ctx.myId);
                 } catch (e) { return false; }
             },
 
             _localTick: function(ctx, fighterId, tick) {
-                var self = this;
+                const self = this;
                 if (!self._stillMyTurn(ctx)) return;
-                var action = null;
+                let action = null;
                 try {
                     action = self._planFightAction(ctx);
                 } catch (e) {
@@ -2559,15 +2575,15 @@
             // the character is cached. The local heuristic is the fallback when
             // the server is down, slow or cannot express the policy's intent.
             _askBrain: function(ctx, fighterId, tick) {
-                var self = this;
-                var url = window.__agentFightBrain;
+                const self = this;
+                const url = window.__agentFightBrain;
                 if (!url || typeof fetch !== 'function') return false;
                 if (self._brainDownAt && Date.now() - self._brainDownAt < 30000) return false;
-                var state = null;
+                let state = null;
                 try {
                     if (typeof window.__agentDirective === 'function') {
-                        var raw = window.__agentDirective({ tool: 'fight.state' });
-                        var parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        let raw = window.__agentDirective({ tool: 'fight.state' });
+                        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
                         if (parsed && parsed.ok && parsed.data) state = parsed.data;
                     }
                 } catch (e) {}
@@ -2580,15 +2596,15 @@
                 // nothing can stall on this. The predicate mirrors the brain's own definition
                 // (team other than "player", still alive, still on its feet) and is pinned
                 // headlessly by tools/test_fight_state_fields.js.
-                var liveEnemy = false;
+                let liveEnemy = false;
                 (state.fighters || []).forEach(function (f) {
                     if (f && f.team === 'enemy' && f.alive !== false && Number(f.hp) > 0) {
                         liveEnemy = true;
                     }
                 });
                 if (!liveEnemy) return false;
-                var done = false;
-                var finish = function(action, meta, error) {
+                let done = false;
+                const finish = function(action, meta, error) {
                     if (done) return;
                     done = true;
                     if (!self._stillMyTurn(ctx)) return;
@@ -2600,9 +2616,9 @@
                     else self._localTick(ctx, fighterId, tick);
                 };
                 try {
-                    var controller = (typeof AbortController !== 'undefined')
+                    const controller = (typeof AbortController !== 'undefined')
                         ? new AbortController() : null;
-                    var timer = controller ? setTimeout(function() {
+                    const timer = controller ? setTimeout(function() {
                         try { controller.abort(); } catch (e) {}
                     }, 4000) : null;
                     fetch(url.replace(/\/$/, '') + '/v1/combat/decide', {
@@ -2634,7 +2650,7 @@
             },
 
             _executeAction: function(ctx, action, tick, fighterId, meta) {
-                var self = this;
+                const self = this;
                 if (!self._stillMyTurn(ctx)) return;
                 if (!action || action.type === 'pass') {
                     // A pass with MP left is the policy declining to walk. The local
@@ -2651,7 +2667,7 @@
                 }
                 try {
                     if (action.type === 'cast') {
-                        var usable = false;
+                        let usable = false;
                         try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, action.spellId)); } catch (e) {}
                         if (!usable) { self._localTick(ctx, fighterId, tick); return; }
                         // The policy plans casts, not walks: executing a cast the
@@ -2659,21 +2675,21 @@
                         // re-sending the same refused action, and the turn ends with
                         // full MP. Fall back to the local planner, which either casts
                         // something that reaches or walks toward the target.
-                        var spellObj = null;
+                        let spellObj = null;
                         try {
                             spellObj = ctx.spells[String(action.spellId)]
                                 || ctx.spells[action.spellId] || null;
                         } catch (e) {}
-                        var targetCell = action.cell != null ? action.cell : null;
+                        let targetCell = action.cell != null ? action.cell : null;
                         if (targetCell == null && action.targetId != null) {
-                            for (var ei = 0; ei < ctx.enemies.length; ei++) {
+                            for (let ei = 0; ei < ctx.enemies.length; ei++) {
                                 if (String(ctx.enemies[ei].id) === String(action.targetId)) {
                                     targetCell = ctx.enemies[ei].cell; break;
                                 }
                             }
                         }
                         if (spellObj && targetCell != null) {
-                            var reaches = true;
+                            let reaches = true;
                             try { reaches = self._spellReaches(ctx, spellObj, targetCell); }
                             catch (e) { reaches = true; }
                             if (!reaches) {
@@ -2711,13 +2727,13 @@
                         return;
                     }
                     if (action.type === 'move') {
-                        var path = action.path;
+                        let path = action.path;
                         if ((!path || !path.length) && ctx.iso
                             && typeof ctx.iso._displayPathInFight === 'function') {
-                            var found = ctx.iso._displayPathInFight(action.cell);
+                            const found = ctx.iso._displayPathInFight(action.cell);
                             path = found && found.reachable;
                         }
-                        var mapId = (ctx.iso && ctx.iso.mapRenderer && ctx.iso.mapRenderer.map)
+                        let mapId = (ctx.iso && ctx.iso.mapRenderer && ctx.iso.mapRenderer.map)
                             ? ctx.iso.mapRenderer.map.id : null;
                         if (mapId == null || !path || !path.length) {
                             self._localTick(ctx, fighterId, tick);
@@ -2728,7 +2744,7 @@
                         // compressPath. Without that start cell every key is shifted
                         // by one and the server ignores the request.
                         if (path[0] !== ctx.myCell) path = [ctx.myCell].concat(path);
-                        var compressed = self._compressPath(path);
+                        const compressed = self._compressPath(path);
                         window.__agentLastFightTurn = { at: Date.now(), action: 'move',
                             cell: action.cell, path_len: path.length,
                             path: path.slice(0, 16), keys: compressed.slice(0, 16),
@@ -2748,27 +2764,27 @@
             _endFightTurn: function() {
                 this.state.myTurn = false;
                 try {
-                    var fm = window.gui && window.gui.fightManager;
+                    const fm = window.gui && window.gui.fightManager;
                     if (fm && typeof fm.finishTurn === 'function') { fm.finishTurn(); return; }
                 } catch (e) {}
                 this.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
             },
 
             _fightContext: function(fighterId) {
-                var gui = window.gui || {};
-                var fm = gui.fightManager || null;
-                var pd = gui.playerData || null;
-                var iso = window.isoEngine || null;
-                var am = window.actorManager || (iso && iso.actorManager) || null;
+                const gui = window.gui || {};
+                const fm = gui.fightManager || null;
+                const pd = gui.playerData || null;
+                const iso = window.isoEngine || null;
+                const am = window.actorManager || (iso && iso.actorManager) || null;
                 if (!fm || !pd || !am) return null;
-                var chars = pd.characters || {};
-                var myId = chars.controlledCharacterId != null
+                const chars = pd.characters || {};
+                const myId = chars.controlledCharacterId != null
                     ? chars.controlledCharacterId : fighterId;
-                var me = am.getActor ? am.getActor(myId) : null;
-                var myCell = me && me.cellId != null ? me.cellId
+                const me = am.getActor ? am.getActor(myId) : null;
+                const myCell = me && me.cellId != null ? me.cellId
                     : (pd.position && pd.position.cell != null ? pd.position.cell : null);
-                var controlled = chars.getControlledCharacter ? chars.getControlledCharacter() : null;
-                var stats = (controlled && controlled.characteristics) || {};
+                const controlled = chars.getControlledCharacter ? chars.getControlledCharacter() : null;
+                const stats = (controlled && controlled.characteristics) || {};
                 // Action and movement points from the two places the client actually keeps
                 // them, not from the constants this function used to fall back to. The
                 // fighter's own stats bag is authoritative during a turn (`actionPoints`,
@@ -2778,12 +2794,12 @@
                 // refuse for want of AP, and capped the walk at the wrong distance. Which
                 // source answered is carried out so a live turn shows whether either exists on
                 // this build rather than silently trusting the guess.
-                var fighterBag = null;
+                let fighterBag = null;
                 try {
-                    var selfFighter = fm.getFighter ? fm.getFighter(myId) : null;
+                    const selfFighter = fm.getFighter ? fm.getFighter(myId) : null;
                     fighterBag = (selfFighter && selfFighter.data && selfFighter.data.stats) || null;
                 } catch (e) {}
-                var ap = null, mp = null, apFrom = null, mpFrom = null;
+                let ap = null, mp = null, apFrom = null, mpFrom = null;
                 if (fighterBag && fighterBag.actionPoints != null) {
                     ap = Number(fighterBag.actionPoints); apFrom = 'fighter';
                 } else if (stats.actionPointsCurrent != null) {
@@ -2800,30 +2816,30 @@
                 }
                 if (ap == null || isNaN(ap)) { ap = 6; apFrom = 'assumed'; }
                 if (mp == null || isNaN(mp)) { mp = 3; mpFrom = 'assumed'; }
-                var spells = (controlled && controlled.spellData
+                const spells = (controlled && controlled.spellData
                     && controlled.spellData.getSpellListDependingOnGameMode)
                     ? controlled.spellData.getSpellListDependingOnGameMode() : {};
-                var enemies = [];
-                var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
-                for (var i = 0; i < ids.length; i++) {
-                    var id = ids[i];
+                const enemies = [];
+                const ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                for (let i = 0; i < ids.length; i++) {
+                    let id = ids[i];
                     if (id === myId) continue;
-                    var a = am.getActor(id);
+                    const a = am.getActor(id);
                     if (!a || a.cellId == null || a.isDead) continue;
-                    var f = null;
+                    let f = null;
                     try { f = (typeof a.getFighter === 'function') ? a.getFighter() : null; } catch (e) {}
                     if (!f) continue;
                     if (f.data && f.data.alive === false) continue;
-                    var onTeam = false;
+                    let onTeam = false;
                     try { onTeam = !!fm.isFighterOnUsersTeam(id); } catch (e) {}
                     if (onTeam) continue;
-                    var st = (f.data && f.data.stats) || {};
+                    const st = (f.data && f.data.stats) || {};
                     enemies.push({ id: id, cell: a.cellId,
                         hp: st.lifePoints != null ? st.lifePoints : 1 });
                 }
-                var fighterStates = [];
+                let fighterStates = [];
                 try {
-                    var selfF = fm.getFighter ? fm.getFighter(myId) : null;
+                    const selfF = fm.getFighter ? fm.getFighter(myId) : null;
                     fighterStates = (selfF && selfF.states) || [];
                 } catch (e) {}
                 return { fm: fm, iso: iso, am: am, myId: myId, myCell: myCell,
@@ -2840,19 +2856,19 @@
                 try {
                     if (typeof spell.isWeapon === 'function' && spell.isWeapon()) return true;
                 } catch (e) {}
-                var lvl = spell.spellLevel;
+                const lvl = spell.spellLevel;
                 if (!lvl || !lvl.effects || !lvl.effects.length) return false;
-                var prefix = (typeof spell.getSpellLevelId === 'function')
+                const prefix = (typeof spell.getSpellLevelId === 'function')
                     ? spell.getSpellLevelId() : null;
-                var rawDamage = [82, 85, 86, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100];
-                for (var i = 0; i < lvl.effects.length; i++) {
-                    var inst = (spell.effectInstances && prefix != null)
+                const rawDamage = [82, 85, 86, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100];
+                for (let i = 0; i < lvl.effects.length; i++) {
+                    const inst = (spell.effectInstances && prefix != null)
                         ? spell.effectInstances[prefix + '-effects-' + i] : null;
                     if (inst && typeof inst.isDamageEffect === 'function') {
                         try { if (inst.isDamageEffect()) return true; } catch (e) {}
                         continue;
                     }
-                    var eid = (lvl.effects[i] || {}).effectId;
+                    const eid = (lvl.effects[i] || {}).effectId;
                     if (rawDamage.indexOf(eid) !== -1) return true;
                 }
                 return false;
@@ -2864,20 +2880,20 @@
             // makes "cast the enabler first" readable from the live spell data
             // instead of being hardcoded per class.
             _spellStates: function(spell) {
-                var prop = function(name) {
+                const prop = function(name) {
                     try {
-                        var v = spell.getProperty ? spell.getProperty(name) : null;
+                        const v = spell.getProperty ? spell.getProperty(name) : null;
                         return v && v.length ? v : [];
                     } catch (e) { return []; }
                 };
-                var grants = [];
+                const grants = [];
                 try {
-                    var fx = (spell.spellLevel && spell.spellLevel.effects) || [];
-                    for (var i = 0; i < fx.length; i++) {
-                        var e = fx[i] || {};
-                        var eid = Number(e.effectId);
+                    const fx = (spell.spellLevel && spell.spellLevel.effects) || [];
+                    for (let i = 0; i < fx.length; i++) {
+                        const e = fx[i] || {};
+                        const eid = Number(e.effectId);
                         if (eid !== 950 && eid !== 951 && eid !== 952) continue;
-                        var state = e.value != null ? Number(e.value) : Number(e.diceNum);
+                        const state = e.value != null ? Number(e.value) : Number(e.diceNum);
                         if (state) grants.push(state);
                     }
                 } catch (e) {}
@@ -2886,9 +2902,9 @@
             },
 
             _spellDescriptor: function(spell) {
-                var prop = function(name, fallback) {
+                const prop = function(name, fallback) {
                     try {
-                        var v = spell.getProperty ? spell.getProperty(name) : null;
+                        const v = spell.getProperty ? spell.getProperty(name) : null;
                         return v != null ? v : (fallback !== undefined ? fallback : null);
                     } catch (e) { return fallback !== undefined ? fallback : null; }
                 };
@@ -2912,13 +2928,13 @@
             // does, and isOutsight then answers for one cell. Geometry is only a
             // fallback for when the renderer is not ready.
             _spellReaches: function(ctx, spell, targetCell) {
-                var iso = ctx.iso;
-                var desc = this._spellDescriptor(spell);
+                const iso = ctx.iso;
+                const desc = this._spellDescriptor(spell);
                 if (iso && typeof iso.setCurrentSpell === 'function'
                     && typeof iso.displaySpellRange === 'function'
                     && typeof iso.isOutsight === 'function'
                     && iso.mapRenderer && iso.mapRenderer.map && iso.mapRenderer.map.cells) {
-                    var actor = ctx.am.getActor ? ctx.am.getActor(ctx.myId) : null;
+                    const actor = ctx.am.getActor ? ctx.am.getActor(ctx.myId) : null;
                     if (actor && !actor.isDead) {
                         try {
                             iso.setCurrentSpell(desc);
@@ -2928,14 +2944,14 @@
                     }
                 }
                 if (ctx.myCell == null) return false;
-                var dist = this._cellDistance(ctx.myCell, targetCell);
-                var min = desc.minRange || 0;
-                var max = desc.range == null ? 63 : desc.range;
+                const dist = this._cellDistance(ctx.myCell, targetCell);
+                const min = desc.minRange || 0;
+                const max = desc.range == null ? 63 : desc.range;
                 if (dist < min || dist > max) return false;
                 if (desc.castInLine || desc.castInDiagonal) {
-                    var a = this._cellPoint(ctx.myCell), b = this._cellPoint(targetCell);
-                    var line = (a.x === b.x || a.y === b.y);
-                    var diag = Math.abs(a.x - b.x) === Math.abs(a.y - b.y);
+                    const a = this._cellPoint(ctx.myCell), b = this._cellPoint(targetCell);
+                    const line = (a.x === b.x || a.y === b.y);
+                    const diag = Math.abs(a.x - b.x) === Math.abs(a.y - b.y);
                     if (desc.castInLine && desc.castInDiagonal) {
                         if (!line && !diag) return false;
                     } else if (desc.castInLine && !line) return false;
@@ -2946,24 +2962,24 @@
 
             _planFightAction: function(ctx) {
                 if (ctx.myCell == null) return null;
-                var candidates = [];
-                var stateBlocked = [];
-                var states = ctx.states || [];
-                for (var k in ctx.spells) {
+                const candidates = [];
+                const stateBlocked = [];
+                const states = ctx.states || [];
+                for (const k in ctx.spells) {
                     if (!Object.prototype.hasOwnProperty.call(ctx.spells, k)) continue;
-                    var sid = parseInt(k, 10);
+                    const sid = parseInt(k, 10);
                     if (isNaN(sid)) continue;
-                    var spell = ctx.spells[k];
+                    const spell = ctx.spells[k];
                     if (!this._damageSpell(spell)) continue;
-                    var usable = false;
+                    let usable = false;
                     try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, sid)); } catch (e) {}
                     if (!usable) {
                         // Distinguish "this spell is broken" from "this spell waits
                         // for a state": only the second is fixable this turn.
-                        var st = this._spellStates(spell);
+                        const st = this._spellStates(spell);
                         if (st.required && st.required.length) {
-                            var missing = [];
-                            for (var rq = 0; rq < st.required.length; rq++) {
+                            const missing = [];
+                            for (let rq = 0; rq < st.required.length; rq++) {
                                 if (states.indexOf(st.required[rq]) < 0) {
                                     missing.push(st.required[rq]);
                                 }
@@ -2974,8 +2990,8 @@
                         }
                         continue;
                     }
-                    var desc = this._spellDescriptor(spell);
-                    var cost = desc.apCost != null ? desc.apCost : 1;
+                    const desc = this._spellDescriptor(spell);
+                    const cost = desc.apCost != null ? desc.apCost : 1;
                     // Spend only what the client says is left. `canCastThisSpell` above is
                     // the game's own legality gate; this removes only the candidates that
                     // would still be refused for want of action points, and it stands aside
@@ -2985,18 +3001,18 @@
                     candidates.push({ id: sid, spell: spell, cost: cost });
                 }
                 candidates.sort(function(a, b) { return b.cost - a.cost; });
-                var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });
+                const enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });
                 // Unlock first. The enabler costs a point or two and turns a
                 // hammer-only turn into a 20-damage spell next tick; casting the
                 // weapon because it happens to reach keeps the good spells locked
                 // for the whole fight. `canCastThisSpell` refuses a second cast
                 // while the enabler's cooldown runs, so this cannot loop.
                 if (stateBlocked.length) {
-                    var unlock = this._planStateEnabler(ctx, stateBlocked);
+                    const unlock = this._planStateEnabler(ctx, stateBlocked);
                     if (unlock) return unlock;
                 }
-                for (var e = 0; e < enemies.length; e++) {
-                    for (var s = 0; s < candidates.length; s++) {
+                for (let e = 0; e < enemies.length; e++) {
+                    for (let s = 0; s < candidates.length; s++) {
                         if (this._spellReaches(ctx, candidates[s].spell, enemies[e].cell)) {
                             return { type: 'cast', spellId: candidates[s].id,
                                 targetId: enemies[e].id, cell: enemies[e].cell };
@@ -3021,23 +3037,23 @@
             // The first castable spell whose state effects include a state that a
             // blocked damage spell is waiting for.
             _planStateEnabler: function(ctx, blocked) {
-                for (var k in ctx.spells) {
+                for (const k in ctx.spells) {
                     if (!Object.prototype.hasOwnProperty.call(ctx.spells, k)) continue;
-                    var sid = parseInt(k, 10);
+                    const sid = parseInt(k, 10);
                     if (isNaN(sid)) continue;
-                    var spell = ctx.spells[k];
-                    var st = this._spellStates(spell);
+                    const spell = ctx.spells[k];
+                    const st = this._spellStates(spell);
                     if (!st.grants.length) continue;
-                    var wanted = false;
-                    for (var b = 0; b < blocked.length && !wanted; b++) {
-                        for (var m = 0; m < blocked[b].missing.length; m++) {
+                    let wanted = false;
+                    for (let b = 0; b < blocked.length && !wanted; b++) {
+                        for (let m = 0; m < blocked[b].missing.length; m++) {
                             if (st.grants.indexOf(blocked[b].missing[m]) >= 0) {
                                 wanted = true; break;
                             }
                         }
                     }
                     if (!wanted) continue;
-                    var usable = false;
+                    let usable = false;
                     try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, sid)); } catch (e) {}
                     if (!usable) continue;
                     if (typeof window !== 'undefined') window.__agentLastFightStateEnabler = {
@@ -3052,29 +3068,29 @@
             // Walk towards the nearest enemy using the client's fight pathfinder, so
             // MP cost, tackle and occupied cells are the game's answers, not guesses.
             _planFightMove: function(ctx, enemies) {
-                var iso = ctx.iso;
+                const iso = ctx.iso;
                 if (!iso || typeof iso._displayPathInFight !== 'function') return null;
-                var self = this;
-                var nearest = enemies[0];
-                var bestDist = this._cellDistance(ctx.myCell, nearest.cell);
-                for (var i = 1; i < enemies.length; i++) {
-                    var d = this._cellDistance(ctx.myCell, enemies[i].cell);
+                const self = this;
+                let nearest = enemies[0];
+                let bestDist = this._cellDistance(ctx.myCell, nearest.cell);
+                for (let i = 1; i < enemies.length; i++) {
+                    const d = this._cellDistance(ctx.myCell, enemies[i].cell);
                     if (d < bestDist) { bestDist = d; nearest = enemies[i]; }
                 }
-                var limit = Math.max(1, Math.min(ctx.mp, 6));
-                var best = null;
-                var tried = 0, reachable = 0;
-                for (var cell = 0; cell < 560; cell++) {
+                const limit = Math.max(1, Math.min(ctx.mp, 6));
+                let best = null;
+                let tried = 0, reachable = 0;
+                for (let cell = 0; cell < 560; cell++) {
                     if (cell === ctx.myCell) continue;
                     if (this._cellDistance(cell, ctx.myCell) > limit) continue;
-                    var dist = this._cellDistance(cell, nearest.cell);
+                    const dist = this._cellDistance(cell, nearest.cell);
                     if (dist >= bestDist) continue;
                     try {
                         if (typeof ctx.am.getActorsOnCell === 'function'
                             && ctx.am.getActorsOnCell(cell).length > 0) continue;
                     } catch (e) {}
                     tried += 1;
-                    var path = null;
+                    let path = null;
                     try { path = iso._displayPathInFight(cell); } catch (e) {}
                     if (!path || !path.reachable || path.reachable.indexOf(cell) === -1) continue;
                     if (path.costMP != null && path.costMP > ctx.mp) continue;
@@ -3093,21 +3109,27 @@
             // Same grid the bundle uses (getMapPointFromCellId): cell ids are not
             // row-major, so distance computed on raw ids is meaningless.
             _cellPoint: function(cell) {
-                var t = cell % 14 - Math.floor(cell / 28);
+                const t = cell % 14 - Math.floor(cell / 28);
                 return { x: t + 19, y: t + Math.floor(cell / 14) };
             },
 
             _cellDistance: function(a, b) {
-                var pa = this._cellPoint(a), pb = this._cellPoint(b);
+                const pa = this._cellPoint(a), pb = this._cellPoint(b);
                 return Math.abs(pa.x - pb.x) + Math.abs(pa.y - pb.y);
             },
 
             // The bundle's compressPath, verified against the live capture: cells
             // [316, 359] must encode to keyMovements [4412, 4455].
             _compressPath: function(path) {
-                var out = [], prev = path[0], lastDir = -1, px, py;
-                for (var i = 0; i < path.length; i++) {
-                    var cell = path[i], p = this._cellPoint(cell), dir;
+                                const out = [];
+                let prev = path[0];
+                let lastDir = -1;
+                let px;
+                let py;
+                for (let i = 0; i < path.length; i++) {
+                                        const cell = path[i];
+                    const p = this._cellPoint(cell);
+                    let dir;
                     if (i === 0) dir = -1;
                     else if (p.y === py) dir = p.x > px ? 7 : 3;
                     else if (p.x === px) dir = p.y > py ? 1 : 5;
@@ -3173,7 +3195,7 @@
         // symptom is a fix that appears not to work; this makes that visible
         // in every recorded observation.
         window.__agentBuild = (window.buildVersion || (window.Config && window.Config.buildVersion)) ? (AGENT_BUILD + '+' + (window.buildVersion || window.Config.buildVersion)) : AGENT_BUILD;
-        var _agentResult = function(ok, data, error) {
+        const _agentResult = function(ok, data, error) {
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
         };
 
@@ -3185,47 +3207,47 @@
         // script executes at document creation) and our own login and reload presses
         // refuse while it is fresh. The login screen's own retry loop is the game's code
         // and is not touched; what this stops is the agent adding attempts on top of it.
-        var _LOGIN_BUSY_STORE = 'dofus.agent.loginBusy.v1';
+        const _LOGIN_BUSY_STORE = 'dofus.agent.loginBusy.v1';
         // A ten-minute window is not enough. Measured on dofus-05 (2026-10-28):
         // "Server busy" armed at 22:28:46, the press at the end of that window was
         // refused again at 22:39:28, and the same guest logged in at 23:50 after
         // ~70 quiet minutes. Consecutive refusals therefore buy longer quiet:
         // 10 min, then 60 min, then 3 h. The window is derived from the stored
         // refusal times, so a reload that drops the busy record cannot shorten it.
-        var _LOGIN_BACKOFF_MS = [10 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000];
-        var _loginBackoff = function(n) {
-            var idx = Math.min(Math.max(Number(n) || 1, 1), _LOGIN_BACKOFF_MS.length) - 1;
+        const _LOGIN_BACKOFF_MS = [10 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000];
+        const _loginBackoff = function(n) {
+            const idx = Math.min(Math.max(Number(n) || 1, 1), _LOGIN_BACKOFF_MS.length) - 1;
             return _LOGIN_BACKOFF_MS[idx];
         };
-        var _lastLoginPress = 0;
-        var _LOGIN_FAIL_STORE = 'dofus.agent.loginFails.v1';
-        var _LOGIN_FAIL_WINDOW_MS = 3 * 60 * 60 * 1000;
+        let _lastLoginPress = 0;
+        const _LOGIN_FAIL_STORE = 'dofus.agent.loginFails.v1';
+        const _LOGIN_FAIL_WINDOW_MS = 3 * 60 * 60 * 1000;
         // A refusal is only evidence while its burst is still open. Once the
         // longest single backoff has been served, the record decays: the retry
         // that follows it is a new incident and restarts the 10-min step.
         // Without this, two refusals an hour apart left the slot one press away
         // from a 3-hour lockout (live 2026-10-29: "Server busy" never cleared).
-        var _LOGIN_FAIL_DECAY_MS = 60 * 60 * 1000;
-        var _LOGIN_FAIL_LIMIT = 3;
-        var _LOGIN_EXHAUST_MS = _LOGIN_BACKOFF_MS[2];
+        const _LOGIN_FAIL_DECAY_MS = 60 * 60 * 1000;
+        const _LOGIN_FAIL_LIMIT = 3;
+        const _LOGIN_EXHAUST_MS = _LOGIN_BACKOFF_MS[2];
         // The refused popup stays on screen after its window expires and is not a
         // new press. Measured on dofus-05: the window ended at 22:38:46 and the
         // background-throttled text scan (one pass a minute) re-armed a fresh one at
         // 22:39:28 with nobody pressing. The signature is cleared by a real press,
         // by the popup leaving the screen, and by the fail window running out.
-        var _LOGIN_POPUP_STORE = 'dofus.agent.loginPopup.v1';
-        var _loginFails = [];
+        const _LOGIN_POPUP_STORE = 'dofus.agent.loginPopup.v1';
+        let _loginFails = [];
         try {
-            var rawFails = window.localStorage && window.localStorage.getItem(_LOGIN_FAIL_STORE);
-            var savedFails = rawFails ? JSON.parse(rawFails) : [];
+            const rawFails = window.localStorage && window.localStorage.getItem(_LOGIN_FAIL_STORE);
+            const savedFails = rawFails ? JSON.parse(rawFails) : [];
             if (Object.prototype.toString.call(savedFails) === '[object Array]') {
                 _loginFails = savedFails.filter(function (t) { return typeof t === 'number'; });
             }
         } catch (eFails) { _loginFails = []; }
-        var _pruneLoginFails = function(now) {
-            var kept = [];
-            for (var i = 0; i < _loginFails.length; i++) {
-                var t = Number(_loginFails[i]);
+        const _pruneLoginFails = function(now) {
+            const kept = [];
+            for (let i = 0; i < _loginFails.length; i++) {
+                const t = Number(_loginFails[i]);
                 if (!(now - t < _LOGIN_FAIL_WINDOW_MS)) continue;
                 if (now - t >= _LOGIN_FAIL_DECAY_MS) continue;
                 kept.push(t);
@@ -3239,8 +3261,8 @@
             }
             return kept;
         };
-        var _noteLoginFail = function(reason) {
-            var now = Date.now();
+        const _noteLoginFail = function(reason) {
+            const now = Date.now();
             _pruneLoginFails(now);
             _loginFails.push(now);
             try {
@@ -3267,7 +3289,7 @@
                 } catch (e4) {}
             }
         };
-        var _clearLoginFails = function() {
+        const _clearLoginFails = function() {
             if (!_loginFails.length && !_loginBusy) return;
             _loginFails = [];
             _loginBusy = null;
@@ -3276,14 +3298,14 @@
                 window.localStorage && window.localStorage.removeItem(_LOGIN_BUSY_STORE);
             } catch (e) {}
         };
-        var _loginBusy = null;
+        let _loginBusy = null;
         try {
-            var rawBusy = window.localStorage && window.localStorage.getItem(_LOGIN_BUSY_STORE);
-            var savedBusy = rawBusy ? JSON.parse(rawBusy) : null;
+            const rawBusy = window.localStorage && window.localStorage.getItem(_LOGIN_BUSY_STORE);
+            const savedBusy = rawBusy ? JSON.parse(rawBusy) : null;
             if (savedBusy && Number(savedBusy.at) > 0) _loginBusy = savedBusy;
         } catch (e) { _loginBusy = null; }
-        var _noteLoginBusy = function(text) {
-            var msg = String(text == null ? '' : text);
+        const _noteLoginBusy = function(text) {
+            const msg = String(text == null ? '' : text);
             if (!/server\s*busy|accessDenied|too many|try again later|permanently banned/i.test(msg)) return false;
             // A second alert inside an already-running window is the host's 60s
             // reload re-pressing through the gap before the screen exists (measured
@@ -3315,9 +3337,9 @@
             return true;
         };
         try {
-            var _origAlert = window.alert;
+            let _origAlert = window.alert;
             window.alert = function(msg) {
-                var busy = false;
+                let busy = false;
                 try { busy = _noteLoginBusy(msg); } catch (e) {}
                 // A native alert blocks this page's JS thread: every directive times
                 // out while it is on screen and only a person can dismiss it. The
@@ -3340,22 +3362,22 @@
         // and re-arms it, which is the "server busy keeps coming back" report. Scan
         // visible text (innerText ignores hidden templates) on a 5 s throttle and
         // route the same words through the same cooldown.
-        var _lastPopupScan = 0;
-        var _popupSig = function(text) {
-            var m = String(text == null ? '' : text).match(
+        let _lastPopupScan = 0;
+        const _popupSig = function(text) {
+            const m = String(text == null ? '' : text).match(
                 /.{0,40}(?:access has been revoked|accessdenied|access revoked|permanently banned|server\s*busy).{0,40}/i);
             if (!m) return null;
             // Digits vary with timestamps and counts; the words are the identity.
             return m[0].replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
         };
-        var _popupScan = function() {
-            var now = Date.now();
+        const _popupScan = function() {
+            const now = Date.now();
             if (now - _lastPopupScan < 5000) return false;
             _lastPopupScan = now;
             try {
-                var body = document.body;
-                var txt = body && typeof body.innerText === 'string' ? body.innerText : '';
-                var sig = _popupSig(txt);
+                const body = document.body;
+                const txt = body && typeof body.innerText === 'string' ? body.innerText : '';
+                let sig = _popupSig(txt);
                 if (!sig) {
                     try {
                         window.localStorage
@@ -3363,9 +3385,9 @@
                     } catch (eGone) {}
                     return false;
                 }
-                var seen = null;
+                let seen = null;
                 try {
-                    var rawSig = window.localStorage
+                    const rawSig = window.localStorage
                         && window.localStorage.getItem(_LOGIN_POPUP_STORE);
                     seen = rawSig ? JSON.parse(rawSig) : null;
                 } catch (eSeen) { seen = null; }
@@ -3381,8 +3403,8 @@
             } catch (e) {}
             return false;
         };
-        var _popupScanDebounce = null;
-        var _schedPopupScan = function () {
+        let _popupScanDebounce = null;
+        const _schedPopupScan = function () {
             if (_popupScanDebounce) return;
             _popupScanDebounce = setTimeout(function () {
                 _popupScanDebounce = null;
@@ -3391,28 +3413,29 @@
         };
         try {
             if (window.MutationObserver && document.documentElement) {
-                var _popupObserver = new MutationObserver(_schedPopupScan);
+                const _popupObserver = new MutationObserver(_schedPopupScan);
                 _popupObserver.observe(document.documentElement,
                                        { childList: true, subtree: true });
             }
         } catch (e) {}
-        var _loginCooldown = function() {
-            var nowMs = Date.now();
-            var kept = _pruneLoginFails(nowMs), lastFail = 0;
-            for (var i = 0; i < kept.length; i++) {
-                var t = Number(kept[i]);
+        const _loginCooldown = function() {
+            const nowMs = Date.now();
+                        const kept = _pruneLoginFails(nowMs);
+            let lastFail = 0;
+            for (let i = 0; i < kept.length; i++) {
+                const t = Number(kept[i]);
                 if (t > lastFail) lastFail = t;
             }
             // The quiet is owned by the newest refusal and the number of refusals
             // behind it, not by the record that armed the first window: a reload
             // that dropped `_loginBusy` must not shorten an escalation.
-            var until = 0, why = '';
+            let until = 0, why = '';
             if (lastFail) {
                 until = lastFail + _loginBackoff(_loginFails.length);
                 why = 'quiet after ' + _loginFails.length + ' refused guest login(s)';
             }
             if (_loginBusy) {
-                var busyUntil = Number(_loginBusy.until || 0)
+                const busyUntil = Number(_loginBusy.until || 0)
                     || (Number(_loginBusy.at || 0)
                         + _loginBackoff(_loginFails.length || 1));
                 if (busyUntil >= until && busyUntil > 0) {
@@ -3446,16 +3469,16 @@
         // and a reload loop only keeps the server angry. `debug.reload` with
         // force:true sets `__agentReloadForced` to bypass this once.
         try {
-            var _origReload = window.location && window.location.reload;
+            let _origReload = window.location && window.location.reload;
             if (typeof _origReload === 'function') {
-                var _patchedReload = function() {
-                    var forced = false;
+                const _patchedReload = function() {
+                    let forced = false;
                     try {
                         forced = !!window.__agentReloadForced;
                         window.__agentReloadForced = false;
                     } catch (eF) {}
                     if (!forced) {
-                        var cool = null;
+                        let cool = null;
                         try { cool = _loginCooldown(); } catch (eC) {}
                         if (cool) {
                             try {
@@ -3467,7 +3490,7 @@
                     }
                     return _origReload.apply(window.location, arguments);
                 };
-                var _reloadPatched = false;
+                let _reloadPatched = false;
                 try {
                     Object.defineProperty(window.location, 'reload', {
                         value: _patchedReload, configurable: true, writable: true
@@ -3489,26 +3512,26 @@
         // The host counts an attempt before it calls, so a refusal also resets its
         // counter -- five attempts spent while the server is busy would otherwise
         // leave the page with no attempt left once the cooldown expires.
-        var _guardLoginScreen = function() {
-            var ls = null;
+        const _guardLoginScreen = function() {
+            let ls = null;
             try { ls = window.gui && window.gui.loginScreen; } catch (e) { ls = null; }
             if (!ls || ls.__agentCooldownWrapped) return false;
             ls.__agentCooldownWrapped = true;
-            var names = ['playWithGuest', '_createGuest', '_continueGuest',
+            const names = ['playWithGuest', '_createGuest', '_continueGuest',
                          '_continueGuestFollow'];
             // One initial press at a time. The host seeder presses 800ms after the
             // document and an auto-started AI loop presses on its own schedule; two
             // presses inside one server round trip are answered "Server busy" or
             // "already using that account" even with no lockout yet. `_continueGuestFollow`
             // is a follow-up step of a press that already happened, not a new one.
-            var _singleFlight = { playWithGuest: true, _createGuest: true,
+            const _singleFlight = { playWithGuest: true, _createGuest: true,
                                   _continueGuest: true };
-            for (var i = 0; i < names.length; i++) {
+            for (let i = 0; i < names.length; i++) {
                 (function(name) {
-                    var original = ls[name];
+                    const original = ls[name];
                     if (typeof original !== 'function') return;
                     ls[name] = function() {
-                        var cool = _loginCooldown();
+                        const cool = _loginCooldown();
                         if (cool) {
                             try {
                                 // Keep the host seeder's budget spent, not reset: a
@@ -3526,7 +3549,7 @@
                             } catch (e2) {}
                             return undefined;
                         }
-                        var now = Date.now();
+                        const now = Date.now();
                         if (_singleFlight[name] && now - _lastLoginPress < 20000) {
                             try {
                                 console.log('[AgentGuard] ignored loginScreen.' + name
@@ -3536,14 +3559,14 @@
                             } catch (e3) {}
                             return undefined;
                         }
-                        var callArgs = Array.prototype.slice.call(arguments);
+                        const callArgs = Array.prototype.slice.call(arguments);
                         // A press makes any popup on screen old news: if the server
                         // refuses again, the refusal must be able to arm a window.
                         try {
                             window.localStorage
                                 && window.localStorage.removeItem(_LOGIN_POPUP_STORE);
                         } catch (eSigClear) {}
-                        var out;
+                        let out;
                         try {
                             out = original.apply(ls, callArgs);
                         } catch (eCall) {
@@ -3576,10 +3599,10 @@
                 })(names[i]);
             }
             try {
-                var proto = Object.getPrototypeOf(ls);
+                const proto = Object.getPrototypeOf(ls);
                 if (proto && typeof proto.hasAccount === 'function' && !proto.__agentHasAccountGuarded) {
                     proto.__agentHasAccountGuarded = true;
-                    var _protoHasAccount = proto.hasAccount;
+                    const _protoHasAccount = proto.hasAccount;
                     proto.hasAccount = function() {
                         try { return _protoHasAccount.apply(this, arguments); }
                         catch (eProtoHa) { return false; }
@@ -3588,7 +3611,7 @@
             } catch (eProto) {}
             if (typeof ls.hasAccount === 'function' && !ls.__agentHasAccountGuarded) {
                 ls.__agentHasAccountGuarded = true;
-                var _origHasAccount = ls.hasAccount;
+                const _origHasAccount = ls.hasAccount;
                 ls.hasAccount = function() {
                     try { return _origHasAccount.apply(this, arguments); }
                     catch (eHa) { return false; }
@@ -3597,7 +3620,7 @@
             try { console.log('[AgentGuard] login screen wrapped for the login cooldown'); } catch (e) {}
             return true;
         };
-        var _guardTimer = setInterval(function() {
+        const _guardTimer = setInterval(function() {
             try { if (_guardLoginScreen()) clearInterval(_guardTimer); } catch (e) {}
         }, 150);
         // Shared 5s maintenance tick: re-guard screen on re-render and scan background popups.
@@ -3632,12 +3655,12 @@
         // runs the same close handler (setValue('guestAgreement', ...) + onValidate).
         // The host's localStorage hook then posts GUEST_ACCOUNT_PERSIST, so the new
         // login reaches accounts.txt for this slot with nothing else changed.
-        var _agentGuestRegister = function() {
-            var ls = null;
+        const _agentGuestRegister = function() {
+            let ls = null;
             try { ls = window.gui && window.gui.loginScreen; } catch (e) { ls = null; }
             if (!ls) return { ok: false, why: 'no login screen yet' };
 
-            var stored = null;
+            let stored = null;
             try { stored = typeof ls.getGuestAccount === 'function' ? ls.getGuestAccount() : null; }
             catch (eStored) { stored = null; }
             if (stored && stored.login && stored.password) {
@@ -3647,10 +3670,10 @@
                 catch (ePlay) { return { ok: false, why: 'playWithGuest threw: ' + ePlay }; }
             }
 
-            var accept = function() {
-                var win = null;
+            const accept = function() {
+                let win = null;
                 try {
-                    var mgr = _agentWindowManager();
+                    const mgr = _agentWindowManager();
                     win = mgr && typeof mgr.getWindow === 'function' ? mgr.getWindow('legalAgreement') : null;
                 } catch (eWin) { win = null; }
                 if (!win || !win.openState) return false;
@@ -3669,8 +3692,8 @@
             console.log('[Auth] no stored guest on this profile; registering a new one through the client');
 
             // The window opens on the next frame; press accept as soon as it is up.
-            var tries = 0;
-            var timer = setInterval(function() {
+            let tries = 0;
+            const timer = setInterval(function() {
                 tries++;
                 if (accept() || tries > 40) clearInterval(timer);   // 40 x 250ms = 10s
             }, 250);
@@ -3684,9 +3707,9 @@
         // docs/PROTOCOL_NOTES.md), never inferred from the bundle: a hand-built
         // message that the server disagrees with is a desync, and the client has
         // no way to recover from one.
-        var _cmSend = function(name, args) {
+        const _cmSend = function(name, args) {
             try {
-                var cm = window.dofus && window.dofus.connectionManager;
+                const cm = window.dofus && window.dofus.connectionManager;
                 if (!cm) return { ok: false, error: 'connectionManager unavailable' };
                 cm.sendMessage(name, args);
                 // A directive is real activity; tell the client so it does not enter
@@ -3707,31 +3730,31 @@
         // host seeds signatures extracted from old sessions before the page
         // loads. Nothing here is a quest list -- only what the server itself
         // rejected, on this machine or in a recorded session.
-        var _KICK_STORE = 'dofus.agent.unsafeClaims.v1';
+        const _KICK_STORE = 'dofus.agent.unsafeClaims.v1';
         // A signature is a hypothesis about one packet, and a wrong one permanently
         // disables an objective. Two costless corrections keep it honest: an accepted
         // validation clears its own signature (`__agentClearKick`), and a signature
         // older than a day is forgotten rather than trusted forever. A real kick is
         // re-learned with one disconnect; a stale false positive never expires
         // otherwise.
-        var _KICK_TTL_MS = 24 * 60 * 60 * 1000;
-        var _knownKickSignatures = function() {
-            var out = {};
-            var now = Date.now();
+        const _KICK_TTL_MS = 24 * 60 * 60 * 1000;
+        const _knownKickSignatures = function() {
+            const out = {};
+            const now = Date.now();
             try {
-                var seeded = window.__agentKnownKickSignatures;
+                const seeded = window.__agentKnownKickSignatures;
                 if (seeded && seeded.length) {
-                    for (var i = 0; i < seeded.length; i++) out[String(seeded[i])] = true;
+                    for (let i = 0; i < seeded.length; i++) out[String(seeded[i])] = true;
                 }
             } catch (e) {}
             try {
-                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
-                var saved = raw ? JSON.parse(raw) : null;
+                const raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                let saved = raw ? JSON.parse(raw) : null;
                 if (saved && typeof saved === 'object') {
-                    for (var k in saved) {
+                    for (const k in saved) {
                         if (!Object.prototype.hasOwnProperty.call(saved, k)) continue;
-                        var row = saved[k];
-                        var at = row && typeof row === 'object' ? Number(row.at) : 0;
+                        let row = saved[k];
+                        const at = row && typeof row === 'object' ? Number(row.at) : 0;
                         if (at && now - at > _KICK_TTL_MS) continue;
                         out[k] = true;
                     }
@@ -3741,17 +3764,17 @@
         };
         window.__agentClearKick = function(questId, objectiveId) {
             if (questId == null || objectiveId == null) return false;
-            var sig = Number(questId) + '/' + Number(objectiveId);
-            var cleared = false;
+            const sig = Number(questId) + '/' + Number(objectiveId);
+            let cleared = false;
             // A seeded signature is a hypothesis too, and it is the only kind
             // with no expiry: without this, one wrong seed would disable the
             // objective in every future session, and the accepted validation
             // that proves it wrong had no effect at all on a fresh profile
             // (there is no localStorage row to delete).
             try {
-                var seeded = window.__agentKnownKickSignatures;
+                const seeded = window.__agentKnownKickSignatures;
                 if (seeded && seeded.length) {
-                    for (var i = seeded.length - 1; i >= 0; i--) {
+                    for (let i = seeded.length - 1; i >= 0; i--) {
                         if (String(seeded[i]) === sig) {
                             seeded.splice(i, 1);
                             cleared = true;
@@ -3760,8 +3783,8 @@
                 }
             } catch (e) {}
             try {
-                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
-                var saved = raw ? JSON.parse(raw) : null;
+                const raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                let saved = raw ? JSON.parse(raw) : null;
                 if (saved && typeof saved === 'object'
                         && Object.prototype.hasOwnProperty.call(saved, sig)) {
                     delete saved[sig];
@@ -3783,26 +3806,26 @@
             // SWITCHING_TO_GAME, and a bare socket loss has no author; none of those
             // is the server answering a validation.
             if (serverSide !== true) return false;
-            var why = String(reason == null ? '' : reason);
+            const why = String(reason == null ? '' : reason);
             if (/INACTIVITY|SESSION_TIMED_OUT|CLIENT_CLOSING|SWITCHING_TO_GAME|NICKNAME_CLOSING|ASSET_MISSING|UserClosing/i.test(why)) {
                 return false;
             }
-            var prev = window.__agentLastValidate;
+            const prev = window.__agentLastValidate;
             if (!prev || !prev.quest_id || !prev.objective_id) return false;
-            var age = Date.now() - Number(prev.at || 0);
+            const age = Date.now() - Number(prev.at || 0);
             if (age < 0 || age > 3000) return false;
-            var sig = Number(prev.quest_id) + '/' + Number(prev.objective_id);
-            var saved = {};
+            const sig = Number(prev.quest_id) + '/' + Number(prev.objective_id);
+            let saved = {};
             try {
-                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                const raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
                 saved = raw ? JSON.parse(raw) : {};
                 if (!saved || typeof saved !== 'object') saved = {};
             } catch (e) { saved = {}; }
             saved[sig] = { at: Date.now(), via: String(via || ''),
                            reason: why.slice(0, 80),
                            count: ((saved[sig] && saved[sig].count) || 0) + 1 };
-            var keys = [];
-            for (var k in saved) {
+            const keys = [];
+            for (const k in saved) {
                 if (Object.prototype.hasOwnProperty.call(saved, k)) keys.push(k);
             }
             while (keys.length > 500) delete saved[keys.shift()];
@@ -3832,11 +3855,11 @@
         // that its type is one the client is allowed to report, that no earlier
         // claim of this pair ended the connection, and that nothing refreshed
         // the state or changed the map moments ago.
-        var _questClaimCheck = function(qid, oid) {
-            var now = Date.now();
-            var sq = window.gui && window.gui.playerData && window.gui.playerData.quests
+        const _questClaimCheck = function(qid, oid) {
+            const now = Date.now();
+            const sq = window.gui && window.gui.playerData && window.gui.playerData.quests
                 && window.gui.playerData.quests.standardQuests;
-            var q = null;
+            let q = null;
             try {
                 if (sq && typeof sq.getActiveQuestById === 'function') {
                     q = sq.getActiveQuestById(qid) || sq.getActiveQuestById(String(qid));
@@ -3847,9 +3870,9 @@
                          error: 'quest ' + qid + ' objective ' + oid
                              + ' is not in the client quest model; the client cannot see what it would claim' };
             }
-            var target = null, current = null;
-            for (var i = 0; i < q.objectives.length; i++) {
-                var o = q.objectives[i] || {};
+            let target = null, current = null;
+            for (let i = 0; i < q.objectives.length; i++) {
+                const o = q.objectives[i] || {};
                 if (o.objectiveStatus !== 0 && !current) current = o;
                 if (Number(o.objectiveId) === oid) target = o;
             }
@@ -3879,15 +3902,15 @@
             }
             // Types whose completion the server decides. Claiming one before
             // the server has counted the event is what the disconnect follows.
-            var db = (q.dbObjectives && q.dbObjectives[oid]) || null;
+            let db = (q.dbObjectives && q.dbObjectives[oid]) || null;
             if (!db) {
                 try {
-                    var table = window.gui && window.gui.databases && window.gui.databases.QuestObjectives;
+                    const table = window.gui && window.gui.databases && window.gui.databases.QuestObjectives;
                     db = (table && table[oid]) || null;
                 } catch (e) {}
             }
-            var kind = (db && db._type) || target._type || null;
-            var SERVER_TYPES = {
+            let kind = (db && db._type) || target._type || null;
+            const SERVER_TYPES = {
                 // GoToNpc is the talk objective. The server counts the NPC
                 // conversation, not a validation: measured 2026-10-24, claiming
                 // tutorial objective 13922 (QuestObjectiveGoToNpc, "Talk to Ayin
@@ -3917,7 +3940,7 @@
                 QuestObjectiveDuelSpecificPlayer: true,
                 QuestObjectivePoiId: true
             };
-            var typeId = db && db.typeId != null ? Number(db.typeId)
+            let typeId = db && db.typeId != null ? Number(db.typeId)
                 : (target.typeId != null ? Number(target.typeId) : null);
             // Fallback for builds where _type is absent: 1 is GoToNpc (measured on
             // objective 13922), 4 and 6 are the DiscoverMap and FightMonster ids in
@@ -3950,19 +3973,19 @@
                                  + ' ended the connection; perform the objective instead' };
                 }
             } catch (e) {}
-            var mapAt = Number(window.__agentLastMapChange || 0);
+            const mapAt = Number(window.__agentLastMapChange || 0);
             if (mapAt && now - mapAt < 2000) {
                 return { ok: false, reason: 'map_change_settling',
                          wait_ms: 2000 - (now - mapAt),
                          error: 'the map changed ' + (now - mapAt) + ' ms ago; the quest state is settling' };
             }
-            var syncAt = Number(window.__agentLastQuestSync || 0);
+            const syncAt = Number(window.__agentLastQuestSync || 0);
             if (syncAt && now - syncAt < 800) {
                 return { ok: false, reason: 'quest_state_syncing',
                          wait_ms: 800 - (now - syncAt),
                          error: 'the quest state was refreshed ' + (now - syncAt) + ' ms ago; retry in a moment' };
             }
-            var prev = window.__agentLastValidate;
+            const prev = window.__agentLastValidate;
             if (prev && Number(prev.quest_id) === qid && Number(prev.objective_id) === oid
                     && now - prev.at < 5000) {
                 return { ok: false, reason: 'validation_cooldown',
@@ -3983,30 +4006,30 @@
         // Reading `isoEngine.interactiveElements` returned nothing on every map, so
         // tap.interactive reported "no visible interactive element" for every quest
         // objective that needs one (measured 2026-10-28 on map 145490432).
-        var _interactives = function() {
-            var out = [];
-            var seen = {};
-            var add = function(id, el, graphic) {
-                var elemId = Number(id);
+        const _interactives = function() {
+            const out = [];
+            const seen = {};
+            const add = function(id, el, graphic) {
+                const elemId = Number(id);
                 if (!isFinite(elemId) || seen[elemId]) return;
                 seen[elemId] = true;
                 el = el || {};
-                var g = graphic || {};
-                var data = (g.data && typeof g.data === 'object') ? g.data : {};
-                var enabled = [], disabled = [];
+                const g = graphic || {};
+                const data = (g.data && typeof g.data === 'object') ? g.data : {};
+                const enabled = [], disabled = [];
                 try {
-                    var en = el.enabledSkills || [];
-                    for (var a = 0; a < en.length; a++) {
+                    const en = el.enabledSkills || [];
+                    for (let a = 0; a < en.length; a++) {
                         if (en[a] && en[a].skillInstanceUid != null) enabled.push(Number(en[a].skillInstanceUid));
                     }
-                    var dis = el.disabledSkills || [];
-                    for (var b = 0; b < dis.length; b++) {
+                    const dis = el.disabledSkills || [];
+                    for (let b = 0; b < dis.length; b++) {
                         if (dis[b] && dis[b].skillInstanceUid != null) disabled.push(Number(dis[b].skillInstanceUid));
                     }
                 } catch (eSkills) {}
-                var elName = el.name || (el.staticInfos && el.staticInfos.name)
+                let elName = el.name || (el.staticInfos && el.staticInfos.name)
                     || el._name || data.name || null;
-                var cell = g.position != null ? g.position
+                const cell = g.position != null ? g.position
                     : (data.position != null ? data.position
                     : (data.cellId != null ? data.cellId : null));
                 out.push({
@@ -4023,23 +4046,23 @@
                 });
             };
             try {
-                var ie = window.isoEngine;
-                var mr = ie && ie.mapRenderer;
-                var lists = [
+                const ie = window.isoEngine;
+                const mr = ie && ie.mapRenderer;
+                const lists = [
                     mr && mr.interactiveElements,
                     ie && ie.interactiveElements,
                     ie && ie.mapData && ie.mapData.interactiveElements
                 ];
-                for (var li = 0; li < lists.length; li++) {
-                    var list = lists[li];
+                for (let li = 0; li < lists.length; li++) {
+                    const list = lists[li];
                     if (!list || typeof list !== 'object') continue;
-                    for (var k in list) {
+                    for (const k in list) {
                         if (!Object.prototype.hasOwnProperty.call(list, k)) continue;
-                        var el = list[k] || {};
-                        var id = el.elementId != null ? el.elementId
+                        const el = list[k] || {};
+                        const id = el.elementId != null ? el.elementId
                             : (el.id != null ? el.id
                             : (el.elemId != null ? el.elemId : parseInt(k, 10)));
-                        var graphic = (mr && mr.identifiedElements ? mr.identifiedElements[id] : null) || null;
+                        const graphic = (mr && mr.identifiedElements ? mr.identifiedElements[id] : null) || null;
                         add(id, el, graphic);
                     }
                 }
@@ -4057,27 +4080,27 @@
         // bundle's own panel (`gui.challengeIndicator.challengesData[id]`, filled
         // by setChallenge from `_name`/`_description`/`dropBonus`/`xpBonus`).
         // Merge that panel in, message first so a raw value still wins.
-        var _challenges = function() {
-            var out = [];
+        const _challenges = function() {
+            const out = [];
             try {
-                var map = window.__agentChallenges || {};
-                var panel = null;
+                const map = window.__agentChallenges || {};
+                let panel = null;
                 try {
                     panel = window.gui && window.gui.challengeIndicator;
                 } catch (eP) {}
-                var pdata = (panel && panel.challengesData) || null;
-                for (var k in map) {
+                const pdata = (panel && panel.challengesData) || null;
+                for (const k in map) {
                     if (!Object.prototype.hasOwnProperty.call(map, k)) continue;
-                    var row = map[k] || {};
+                    const row = map[k] || {};
                     if (row.id == null) continue;
-                    var src = (pdata && pdata[row.id]) || {};
-                    var pick = function(a, b) { return a != null ? a : b; };
-                    var target = pick(row.target_id,
+                    const src = (pdata && pdata[row.id]) || {};
+                    const pick = function(a, b) { return a != null ? a : b; };
+                    const target = pick(row.target_id,
                         src.targetFighter && src.targetFighter.id != null
                             ? src.targetFighter.id : null);
-                    var drop = pick(row.drop_bonus, src.dropBonus);
-                    var xp = pick(row.xp_bonus, src.xpBonus);
-                    var pts = pick(row.points, src.points);
+                    const drop = pick(row.drop_bonus, src.dropBonus);
+                    const xp = pick(row.xp_bonus, src.xpBonus);
+                    const pts = pick(row.points, src.points);
                     out.push({
                         id: Number(row.id),
                         name: pick(row.name, src.name) || null,
@@ -4104,9 +4127,9 @@
         // One fight message -> one battle-log row. Used by the reader below and by
         // the incoming-message tap, so both produce the same shape: who did what,
         // to whom, for how much, AP/MP changes, deaths.
-        var _agentBattleRow = function(msg, type) {
+        const _agentBattleRow = function(msg, type) {
             if (!msg || typeof msg !== 'object') return null;
-            var mt = type || (typeof msg._messageType === 'string' ? msg._messageType : null);
+            const mt = type || (typeof msg._messageType === 'string' ? msg._messageType : null);
             if (!mt) return null;
             return {
                 type: mt,
@@ -4134,23 +4157,23 @@
         // 22-row log had zero casts). The client keeps every fight message in
         // `fightMessagesStack`; copy the action-bearing rows out of it while the
         // fight runs, deduped by action id so a repoll cannot double-count.
-        var _agentHarvestStack = function() {
+        const _agentHarvestStack = function() {
             try {
-                var fm = (window.gui && window.gui.fightManager) || window.fightManager;
-                var stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || null;
+                const fm = (window.gui && window.gui.fightManager) || window.fightManager;
+                const stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || null;
                 if (!stack || typeof stack.length !== 'number' || !stack.length) return 0;
-                var ring = window.__agentBattleRing || (window.__agentBattleRing = []);
-                var sigs = window.__agentBattleSigs || (window.__agentBattleSigs = {});
-                var added = 0;
-                var start = Math.max(0, stack.length - 400);
-                for (var i = start; i < stack.length; i++) {
-                    var m = stack[i];
+                const ring = window.__agentBattleRing || (window.__agentBattleRing = []);
+                const sigs = window.__agentBattleSigs || (window.__agentBattleSigs = {});
+                let added = 0;
+                const start = Math.max(0, stack.length - 400);
+                for (let i = start; i < stack.length; i++) {
+                    const m = stack[i];
                     if (!m || typeof m !== 'object') continue;
-                    var t = typeof m._messageType === 'string' ? m._messageType : null;
+                    const t = typeof m._messageType === 'string' ? m._messageType : null;
                     if (!t || t.indexOf('GameActionFight') !== 0) continue;
-                    var row = _agentBattleRow(m, t);
+                    const row = _agentBattleRow(m, t);
                     if (!row || row.at_action == null) continue;
-                    var sig = [row.type, row.at_action, row.source, row.target,
+                    const sig = [row.type, row.at_action, row.source, row.target,
                                row.spell, row.loss, row.value, row.delta].join('|');
                     if (sigs[sig]) continue;
                     sigs[sig] = 1;
@@ -4159,11 +4182,11 @@
                 }
                 if (added) {
                     if (ring.length > 800) ring.splice(0, ring.length - 800);
-                    var keys = Object.keys(sigs);
+                    const keys = Object.keys(sigs);
                     if (keys.length > 1200) {
                         window.__agentBattleSigs = {};
-                        var keep = keys.slice(keys.length - 600);
-                        for (var ki = 0; ki < keep.length; ki++) {
+                        const keep = keys.slice(keys.length - 600);
+                        for (let ki = 0; ki < keep.length; ki++) {
                             window.__agentBattleSigs[keep[ki]] = 1;
                         }
                     }
@@ -4171,9 +4194,9 @@
                 return added;
             } catch (e) { return 0; }
         };
-        var _battleLog = function(limit) {
-            var out = [];
-            var cap = limit && limit > 0 ? Math.min(limit, 800) : 800;
+        const _battleLog = function(limit) {
+            const out = [];
+            const cap = limit && limit > 0 ? Math.min(limit, 800) : 800;
             try {
                 // Copy any action rows the tap missed (sequence batches) before
                 // reading, so an end-of-fight read still sees the whole fight.
@@ -4183,19 +4206,19 @@
                 // time the end message arrived), which is exactly when the outcome row
                 // needs the numbers, so a stack-only reader recorded `battle_log: []`
                 // for both of them.
-                var ring = window.__agentBattleRing || [];
+                const ring = window.__agentBattleRing || [];
                 if (ring.length) {
-                    var start = Math.max(0, ring.length - cap);
-                    for (var r = start; r < ring.length; r++) {
+                    const start = Math.max(0, ring.length - cap);
+                    for (let r = start; r < ring.length; r++) {
                         if (ring[r]) out.push(ring[r]);
                     }
                     return out;
                 }
-                var fm = (window.gui && window.gui.fightManager) || window.fightManager;
-                var stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || [];
-                var from = Math.max(0, stack.length - cap);
-                for (var i = from; i < stack.length; i++) {
-                    var row = _agentBattleRow(stack[i]);
+                const fm = (window.gui && window.gui.fightManager) || window.fightManager;
+                const stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || [];
+                const from = Math.max(0, stack.length - cap);
+                for (let i = from; i < stack.length; i++) {
+                    const row = _agentBattleRow(stack[i]);
                     if (row) out.push(row);
                 }
             } catch (e) {}
@@ -4204,15 +4227,15 @@
 
         // Inventory lookup by name, so hdv.list / inv.sell can take a name like
         // every other verb instead of an internal uid.
-        var _findItem = function(name) {
-            var items = [];
+        const _findItem = function(name) {
+            const items = [];
             try {
-                var inv = window.gui && window.gui.playerData && window.gui.playerData.inventory;
-                var bag = (inv && (inv.items || inv.objects)) || null;
+                const inv = window.gui && window.gui.playerData && window.gui.playerData.inventory;
+                let bag = (inv && (inv.items || inv.objects)) || null;
                 if (bag && typeof bag === 'object') {
-                    for (var k in bag) {
+                    for (const k in bag) {
                         if (!Object.prototype.hasOwnProperty.call(bag, k)) continue;
-                        var it = bag[k] || {};
+                        const it = bag[k] || {};
                         items.push({ uid: it.objectUID != null ? it.objectUID : (it.uid != null ? it.uid : parseInt(k, 10)),
                                      gid: it.objectGID != null ? it.objectGID : (it.gid != null ? it.gid : null),
                                      quantity: it.quantity != null ? it.quantity : (it.count != null ? it.count : 1),
@@ -4221,11 +4244,11 @@
                 }
             } catch (e) {}
             if (!name) return items;
-            var needle = String(name).toLowerCase();
-            for (var i = 0; i < items.length; i++) {
+            const needle = String(name).toLowerCase();
+            for (let i = 0; i < items.length; i++) {
                 if (String(items[i].name).toLowerCase() === needle) return [items[i]];
             }
-            for (var j = 0; j < items.length; j++) {
+            for (let j = 0; j < items.length; j++) {
                 if (String(items[j].name).toLowerCase().indexOf(needle) !== -1) return [items[j]];
             }
             return [];
@@ -4240,7 +4263,7 @@
         // item on the server. Both land here, and nothing else does: this cache
         // only ever holds values the server actually sent, tagged with when and
         // from which message, so a listing can say where its price came from.
-        var __PriceCache = {
+        const __PriceCache = {
             average: {},      // gid -> average price across the server
             listings: {},     // gid -> [{uid, price, quantity}] seen in a category
             averageAt: 0,
@@ -4254,11 +4277,12 @@
             absorb: function(name, msg) {
                 if (!msg || typeof msg !== 'object') return;
                 if (name === 'ObjectAveragePricesMessage') {
-                    var ids = msg.ids, prices = msg.avgPrices || msg.prices;
+                    const ids = msg.ids, prices = msg.avgPrices || msg.prices;
                     if (Object.prototype.toString.call(ids) !== '[object Array]') return;
                     if (Object.prototype.toString.call(prices) !== '[object Array]') return;
-                    for (var i = 0; i < ids.length && i < prices.length; i++) {
-                        var gid = Number(ids[i]), price = Number(prices[i]);
+                    for (let i = 0; i < ids.length && i < prices.length; i++) {
+                                                const gid = Number(ids[i]);
+                        let price = Number(prices[i]);
                         if (gid > 0 && price > 0) this.average[gid] = price;
                     }
                     this.averageAt = Date.now();
@@ -4266,16 +4290,16 @@
                 }
                 if (name === 'ExchangeBidHouseInListAddedMessage'
                         || name === 'ExchangeBidHouseInListUpdatedMessage') {
-                    var g = Number(msg.objGenericId != null ? msg.objGenericId
+                    const g = Number(msg.objGenericId != null ? msg.objGenericId
                                  : msg.objectGID);
                     if (!(g > 0)) return;
-                    var p = msg.prices;
+                    const p = msg.prices;
                     if (Object.prototype.toString.call(p) !== '[object Array]') return;
-                    var uid = msg.itemUID != null ? Number(msg.itemUID)
+                    const uid = msg.itemUID != null ? Number(msg.itemUID)
                             : (msg.objectUID != null ? Number(msg.objectUID) : null);
-                    var rows = [];
-                    for (var j = 0; j < p.length; j++) {
-                        var price = Number(p[j]);
+                    const rows = [];
+                    for (let j = 0; j < p.length; j++) {
+                        const price = Number(p[j]);
                         if (!(price > 0)) continue;
                         rows.push({ uid: uid, price: price, quantity: 1 });
                     }
@@ -4286,10 +4310,10 @@
                 }
             },
             stats: function(gid) {
-                var rows = this.listings[gid] || [];
+                const rows = this.listings[gid] || [];
                 if (!rows.length) return null;
-                var prices = rows.map(function(r) { return r.price; }).sort(function(a, b) { return a - b; });
-                var mid = Math.floor(prices.length / 2);
+                const prices = rows.map(function(r) { return r.price; }).sort(function(a, b) { return a - b; });
+                const mid = Math.floor(prices.length / 2);
                 return {
                     count: prices.length,
                     min: prices[0],
@@ -4300,7 +4324,7 @@
                 };
             },
             averageOf: function(gid) {
-                var price = this.average[gid];
+                const price = this.average[gid];
                 if (!(price > 0)) return null;
                 return { average: price, source: 'average', age_ms: Date.now() - this.averageAt };
             }
@@ -4311,12 +4335,12 @@
         // character stood in world at 55/55 (see the snapshot below), and a live
         // session refused every fight with "0 HP; revive before fighting".
         // isAlive() is the bundle's own test: state === STATUS_ALIVE_AND_KICKING.
-        var _agentLife = function () {
-            var pd = null;
+        const _agentLife = function () {
+            let pd = null;
             try { pd = (window.gui && window.gui.playerData) || null; } catch (e) {}
-            var life = null, max = null, state = null, alive = null;
+            let life = null, max = null, state = null, alive = null;
             try {
-                var stats = pd && pd.characters && pd.characters.mainCharacter
+                const stats = pd && pd.characters && pd.characters.mainCharacter
                     && pd.characters.mainCharacter.characteristics;
                 if (stats) {
                     if (stats.lifePoints != null) life = Number(stats.lifePoints);
@@ -4337,8 +4361,8 @@
             if (alive == null) alive = (life == null) ? true : life > 0;
             return { alive: alive, life: life, max: max, state: state };
         };
-        var _agentSnapshot = function() {
-            var snap = { connected: false, in_fight: false };
+        const _agentSnapshot = function() {
+            const snap = { connected: false, in_fight: false };
             try {
                 // The fields this used to read do not exist in this client build.
                 // `playerData.character` is not an object with id/name/level (the
@@ -4352,18 +4376,18 @@
                 //   playerData.position                   {mapId,coordinates{posX,posY},...}
                 //   playerData.isFighting                 bool
                 //   isoEngine.actorManager.userActor      the player's own actor
-                var first = function (fns) {
-                    for (var i = 0; i < fns.length; i++) {
-                        try { var v = fns[i](); if (v !== undefined && v !== null) return v; }
+                const first = function (fns) {
+                    for (let i = 0; i < fns.length; i++) {
+                        try { const v = fns[i](); if (v !== undefined && v !== null) return v; }
                         catch (e) {}
                     }
                     return null;
                 };
-                var pd = (window.gui && window.gui.playerData) || null;
-                var base = (pd && pd.characterBaseInformations) || {};
-                var pos = (pd && pd.position) || {};
-                var coords = pos.coordinates || {};
-                var ua = null;
+                const pd = (window.gui && window.gui.playerData) || null;
+                const base = (pd && pd.characterBaseInformations) || {};
+                const pos = (pd && pd.position) || {};
+                const coords = pos.coordinates || {};
+                let ua = null;
                 try { ua = window.isoEngine && window.isoEngine.actorManager
                     && window.isoEngine.actorManager.userActor; } catch (e) {}
                 snap.connected = !!(window.dofus && window.dofus.connectionManager);
@@ -4374,7 +4398,7 @@
                     breed: first([function(){ return base.breed && base.breed.name; },
                                   function(){ return base.breed; }])
                 };
-                var mapId = first([
+                const mapId = first([
                     function(){ return pos.mapId; },
                     function(){ return window.isoEngine.mapData.mapId; }
                 ]);
@@ -4398,7 +4422,7 @@
                 // autopilot stops the loop on this instead of pressing login into
                 // a permanent refusal; a cooldown would only delay the same answer.
                 try { snap.login = _agentLoginBan(); } catch (eBan) {}
-                var stats = (ua && ua.stats) || {};
+                let stats = (ua && ua.stats) || {};
                 // The live stats live on the selected character, not on playerData:
                 //   playerData.characters.mainCharacter.characteristics
                 // That is what the bundle's own HUD and XP gauge read. playerData has
@@ -4406,14 +4430,14 @@
                 // character stood in world, and `first()` treats 0 as a real value,
                 // so the actor fallback was never reached. Read the character stats
                 // first and keep the others as fallbacks.
-                var chars = null;
+                let chars = null;
                 try {
                     chars = (pd && pd.characters && pd.characters.mainCharacter
                         && pd.characters.mainCharacter.characteristics) || null;
                 } catch (e) {}
                 try {
-                    var charStats = _agentExtractStats(chars);
-                    var primaryElem = _agentPrimaryElement(charStats, pd);
+                    const charStats = _agentExtractStats(chars);
+                    const primaryElem = _agentPrimaryElement(charStats, pd);
                     snap.character.stats = charStats;
                     snap.character.element = primaryElem;
                     snap.stats = charStats;
@@ -4441,15 +4465,15 @@
                                function(){ return pd.movementPoints; },
                                function(){ return stats.movementPoints; }])
                 };
-                var lifeSelf = _agentLife();
+                const lifeSelf = _agentLife();
                 snap.alive = lifeSelf.alive;
                 snap.life_state = lifeSelf.state;
                 // Unspent points are part of the character's state: a level-up that
                 // nobody spends leaves every later fight at base stats, which looks
                 // like a balance problem rather than the housekeeping gap it is.
                 try {
-                    var hm = pd.characters && pd.characters.mainCharacter;
-                    var hc = hm && hm.characteristics;
+                    const hm = pd.characters && pd.characters.mainCharacter;
+                    const hc = hm && hm.characteristics;
                     snap.points = {
                         stats: _agentNum(hc && hc.statsPoints),
                         spells: _agentNum(hc && hc.spellsPoints)
@@ -4461,7 +4485,7 @@
                 // from a flee, and the id is what ties a join to that verdict.
                 snap.last_fight_end = window.__agentLastFightEnd || null;
                 try {
-                    var fmSnap = (window.gui && window.gui.fightManager)
+                    const fmSnap = (window.gui && window.gui.fightManager)
                         || window.fightManager || null;
                     snap.fight_id = fmSnap && fmSnap.fightId != null
                         ? Number(fmSnap.fightId) : null;
@@ -4497,10 +4521,10 @@
                 // and how stale that flip is. `present:false` is the case a keep-alive
                 // must never pretend to cover: the client has no recordActivity to call.
                 try {
-                    var ka = window.__agentActivity;
-                    var tr = window.__agentActivityTracker
+                    const ka = window.__agentActivity;
+                    const tr = window.__agentActivityTracker
                         ? window.__agentActivityTracker() : null;
-                    var trTarget = tr && tr.target;
+                    const trTarget = tr && tr.target;
                     snap.keep_alive = ka ? {
                         marks: ka.marks || 0, failed: ka.failed || 0,
                         present: !!ka.present, via: ka.via || null,
@@ -4580,14 +4604,14 @@
                 // planner saw an id and a status and could do nothing but re-send the
                 // validation message: the tutorial quest it was stuck on (3841) is not
                 // in quests_full.json at all, so there was no type to translate.
-                var _objParams = function (raw) {
-                    var out = {};
+                const _objParams = function (raw) {
+                    const out = {};
                     if (!raw) return out;
                     if (raw.length !== undefined && typeof raw !== 'string') {
                         if (raw.length > 0 && raw[0] != null) out.parameter0 = raw[0];
                         if (raw.length > 1 && raw[1] != null) out.parameter1 = raw[1];
                     } else if (typeof raw === 'object') {
-                        for (var k in raw) {
+                        for (const k in raw) {
                             if (raw.hasOwnProperty(k) && raw[k] != null) out[k] = raw[k];
                         }
                     }
@@ -4599,10 +4623,10 @@
                 // bare ids. The same table is available globally once the client has
                 // loaded its databases, so use it as a generic fallback -- the raw id
                 // lookup is not specific to any quest.
-                var _rawObjectiveDb = function (id) {
+                const _rawObjectiveDb = function (id) {
                     try {
-                        var dbs = window.gui && window.gui.databases;
-                        var table = dbs && dbs.QuestObjectives;
+                        const dbs = window.gui && window.gui.databases;
+                        const table = dbs && dbs.QuestObjectives;
                         return (table && table[id]) || null;
                     } catch (e) { return null; }
                 };
@@ -4610,11 +4634,11 @@
                 // itself formats text from `_type`. They are the same enum, so prefer
                 // typeId and fall back rather than emit a null type on a build that
                 // only carries one of them.
-                var _objMeta = function (o, db, raw) {
-                    var d = db || {};
-                    var r = raw || {};
-                    var meta = {};
-                    var t = d.typeId != null ? d.typeId
+                const _objMeta = function (o, db, raw) {
+                    const d = db || {};
+                    const r = raw || {};
+                    const meta = {};
+                    const t = d.typeId != null ? d.typeId
                         : (o.typeId != null ? o.typeId
                         : (d._type != null ? d._type
                         : (r.typeId != null ? r.typeId : r._type)));
@@ -4624,7 +4648,7 @@
                     // ...). It decides who completes the objective: the client
                     // reports some, the server counts the rest, and a claim on
                     // a server-counted one before its event is a disconnect.
-                    var tn = d._type || o._type || r._type;
+                    let tn = d._type || o._type || r._type;
                     if (typeof tn === 'string' && tn) meta.type = tn;
                     if (o.curCompletion != null && !isNaN(Number(o.curCompletion))) {
                         meta.cur_completion = Number(o.curCompletion);
@@ -4632,21 +4656,21 @@
                     if (o.maxCompletion != null && !isNaN(Number(o.maxCompletion))) {
                         meta.max_completion = Number(o.maxCompletion);
                     }
-                    var m = Number(d.mapId || r.mapId || 0);
+                    const m = Number(d.mapId || r.mapId || 0);
                     if (m) meta.map_id = m;
-                    var p = _objParams(d.parameters || r.parameters);
-                    var keys = [];
-                    for (var pk in p) if (p.hasOwnProperty(pk)) keys.push(pk);
+                    const p = _objParams(d.parameters || r.parameters);
+                    const keys = [];
+                    for (const pk in p) if (p.hasOwnProperty(pk)) keys.push(pk);
                     if (keys.length) meta.params = p;
                     if (typeof o.text === 'string') meta.text = o.text;
                     else if (typeof d.text === 'string') meta.text = d.text;
                     else if (typeof r.text === 'string') meta.text = r.text;
-                    var sid = d.stepId != null ? d.stepId : r.stepId;
+                    const sid = d.stepId != null ? d.stepId : r.stepId;
                     if (sid != null) meta.step_id = Number(sid);
                     return meta;
                 };
-                var _objEntry = function (base, meta) {
-                    for (var k in meta) if (meta.hasOwnProperty(k)) base[k] = meta[k];
+                const _objEntry = function (base, meta) {
+                    for (const k in meta) if (meta.hasOwnProperty(k)) base[k] = meta[k];
                     return base;
                 };
                 // Where the character actually is in a quest. `finishedCount` cannot answer
@@ -4656,14 +4680,14 @@
                 // progress signal built on it reads 0 forever (14,899 live rows said so).
                 // The client's own criterion code measures the same thing as the position of
                 // the live `stepId` in `dbQuest.stepIds`, which the step handlers do update.
-                var _questProgress = function (q) {
-                    var out = {index: 0, step_id: 0};
+                const _questProgress = function (q) {
+                    const out = {index: 0, step_id: 0};
                     try {
-                        var sid = q && q.stepId;
+                        const sid = q && q.stepId;
                         if (sid != null && !isNaN(Number(sid))) out.step_id = Number(sid);
-                        var sids = q && q.dbQuest && q.dbQuest.stepIds;
+                        const sids = q && q.dbQuest && q.dbQuest.stepIds;
                         if (Array.isArray(sids) && sids.length && out.step_id) {
-                            var at = sids.indexOf(out.step_id);
+                            const at = sids.indexOf(out.step_id);
                             if (at > 0) out.index = at;
                         }
                     } catch (e) {}
@@ -4677,8 +4701,8 @@
                 // stepId, text). Publish that graph as a bounded read so the knowledge
                 // layer can use observed rows instead of the foreign cache. Nothing here
                 // sends; an empty catalog is a fact about this build, not an error.
-                var _agentQuestCatalog = function (q, qid, prog, budget) {
-                    var MAX_STEPS = 40, MAX_OBJECTIVES = 40, MAX_UNLISTED = 20;
+                const _agentQuestCatalog = function (q, qid, prog, budget) {
+                    const MAX_STEPS = 40, MAX_OBJECTIVES = 40, MAX_UNLISTED = 20;
                     // A per-quest cap alone lets 12 quests put 19,200 objectives in one
                     // snapshot. The caller passes one budget shared by every active quest,
                     // so the whole catalogue stays small enough to log and send per step.
@@ -4686,14 +4710,14 @@
                         budget = {steps: MAX_STEPS, objectives: MAX_OBJECTIVES,
                                   truncated: false};
                     }
-                    var out = { id: Number(qid), steps: [], truncated: false };
+                    const out = { id: Number(qid), steps: [], truncated: false };
                     try {
-                        var dq = q.dbQuest || {};
+                        const dq = q.dbQuest || {};
                         if (dq.nameId != null) out.name = dq.nameId;
-                        var sids = Array.isArray(dq.stepIds) ? dq.stepIds : [];
-                        var stepCap = Math.min(MAX_STEPS,
+                        const sids = Array.isArray(dq.stepIds) ? dq.stepIds : [];
+                        const stepCap = Math.min(MAX_STEPS,
                             Math.max(0, Math.floor(budget.steps)));
-                        var shownSteps = Math.min(sids.length, stepCap);
+                        const shownSteps = Math.min(sids.length, stepCap);
                         if (sids.length > shownSteps) {
                             out.truncated = true;
                             budget.truncated = true;
@@ -4703,21 +4727,21 @@
                             out.step_index = prog.index;
                             out.step_id = prog.step_id;
                         }
-                        var dsteps = q.dbSteps || {};
-                        var dbs = q.dbObjectives || {};
-                        var seen = {};
-                        for (var si = 0; si < shownSteps; si++) {
+                        const dsteps = q.dbSteps || {};
+                        const dbs = q.dbObjectives || {};
+                        const seen = {};
+                        for (let si = 0; si < shownSteps; si++) {
                             budget.steps -= 1;
-                            var sid = Number(sids[si]);
-                            var ds = dsteps[sids[si]] || {};
-                            var oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];
-                            var step = { id: sid, objectives: [] };
+                            const sid = Number(sids[si]);
+                            const ds = dsteps[sids[si]] || {};
+                            const oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];
+                            const step = { id: sid, objectives: [] };
                             if (ds.nameId != null) step.name = ds.nameId;
                             if (ds.descriptionId != null) step.description = ds.descriptionId;
-                            var objCap = Math.min(MAX_OBJECTIVES,
+                            const objCap = Math.min(MAX_OBJECTIVES,
                                 Math.max(0, Math.floor(budget.objectives)));
-                            for (var oi = 0; oi < oids.length && step.objectives.length < objCap; oi++) {
-                                var oid = Number(oids[oi]);
+                            for (let oi = 0; oi < oids.length && step.objectives.length < objCap; oi++) {
+                                const oid = Number(oids[oi]);
                                 if (isNaN(oid) || seen[oid]) continue;
                                 seen[oid] = true;
                                 budget.objectives -= 1;
@@ -4735,13 +4759,13 @@
                         // The objective table is filled asynchronously and can hold rows
                         // the step graph does not list yet; keep them, or the capture
                         // loses exactly the rows it was built to observe.
-                        var rest = [];
-                        var restCap = Math.min(MAX_UNLISTED,
+                        const rest = [];
+                        const restCap = Math.min(MAX_UNLISTED,
                             Math.max(0, Math.floor(budget.objectives)));
-                        for (var key in dbs) {
+                        for (const key in dbs) {
                             if (rest.length >= restCap) break;
                             if (!Object.prototype.hasOwnProperty.call(dbs, key)) continue;
-                            var kid = Number(key);
+                            const kid = Number(key);
                             if (isNaN(kid) || seen[kid]) continue;
                             seen[kid] = true;
                             budget.objectives -= 1;
@@ -4760,33 +4784,33 @@
                     } catch (e) { out.error = String(e); }
                     return out;
                 };
-                var qs = { active: {}, steps: {}, current: null, ready: [],
+                const qs = { active: {}, steps: {}, current: null, ready: [],
                     step_objectives: [], completed: 0, finished: 0, catalog: [],
                     catalog_status: {quests: 0, steps: 0, objectives: 0, truncated: false} };
                 try {
-                    var sq = pd && pd.quests && pd.quests.standardQuests;
+                    const sq = pd && pd.quests && pd.quests.standardQuests;
                     if (sq && typeof sq.getListOfActiveQuestsId === 'function') {
-                        var qids = sq.getListOfActiveQuestsId() || [];
-                        var perQuest = {};
+                        const qids = sq.getListOfActiveQuestsId() || [];
+                        const perQuest = {};
                         // One budget for the whole catalogue: 12 quests x 40 steps x 40
                         // objectives would otherwise be 19,200 rows in every snapshot.
-                        var catalogBudget = {steps: 60, objectives: 80,
+                        const catalogBudget = {steps: 60, objectives: 80,
                                              truncated: false};
-                        for (var qi = 0; qi < qids.length; qi++) {
-                            var qid = qids[qi];
-                            var q = sq.getActiveQuestById(qid);
+                        for (let qi = 0; qi < qids.length; qi++) {
+                            const qid = qids[qi];
+                            const q = sq.getActiveQuestById(qid);
                             if (!q) continue;
-                            var prog = _questProgress(q);
+                            const prog = _questProgress(q);
                             qs.active[qid] = prog.index;
                             qs.steps[qid] = prog.step_id;
                             qs.completed += prog.index;
-                            var objs = q.objectives || [];
-                            var dbs = q.dbObjectives || {};
+                            const objs = q.objectives || [];
+                            const dbs = q.dbObjectives || {};
                             perQuest[qid] = [];
-                            for (var oi = 0; oi < objs.length; oi++) {
-                                var o = objs[oi] || {};
-                                var st = o.objectiveStatus;
-                                var meta = _objMeta(o, dbs[o.objectiveId],
+                            for (let oi = 0; oi < objs.length; oi++) {
+                                const o = objs[oi] || {};
+                                let st = o.objectiveStatus;
+                                const meta = _objMeta(o, dbs[o.objectiveId],
                                                     _rawObjectiveDb(o.objectiveId));
                                 perQuest[qid].push(_objEntry(
                                     { id: o.objectiveId, done: st === 0, status: st }, meta));
@@ -4806,11 +4830,11 @@
                                         && catalogBudget.objectives <= 0) {
                                     qs.catalog_status.truncated = true;
                                 } else {
-                                    var cat = _agentQuestCatalog(q, qid, prog,
+                                    const cat = _agentQuestCatalog(q, qid, prog,
                                                                  catalogBudget);
                                     qs.catalog.push(cat);
                                     qs.catalog_status.quests += 1;
-                                    for (var ci = 0; ci < cat.steps.length; ci++) {
+                                    for (let ci = 0; ci < cat.steps.length; ci++) {
                                         qs.catalog_status.steps += 1;
                                         qs.catalog_status.objectives +=
                                             (cat.steps[ci].objectives || []).length;
@@ -4826,7 +4850,7 @@
                         // progress quantity in the goal that only goes up, and the client
                         // publishes it as a list of ids.
                         if (typeof sq.getListOfFinishedQuestsId === 'function') {
-                            var fq = sq.getListOfFinishedQuestsId() || [];
+                            const fq = sq.getListOfFinishedQuestsId() || [];
                             qs.finished = fq.length;
                         }
                     }
@@ -4887,21 +4911,21 @@
                 // bloated every observation to hundreds of tokens and made inventory
                 // reasoning impossible. Normalise both shapes to {gid, qty} numbers.
                 if (pd && pd.inventory) {
-                    var inv = pd.inventory;
+                    const inv = pd.inventory;
                     snap.inventory = { kamas: (inv.kamas != null ? inv.kamas : null), items: [], raw_keys: null };
-                    var _qty = function (v) {
+                    const _qty = function (v) {
                         if (typeof v === 'number') return v;
                         if (v && typeof v === 'object' && typeof v.quantity === 'number') return v.quantity;
-                        var n = Number(v);
+                        const n = Number(v);
                         return isFinite(n) ? n : 1;
                     };
-                    var _pushItem = function (gid, qty, uid, src) {
+                    const _pushItem = function (gid, qty, uid, src) {
                         if (gid == null) return;
                         if (snap.inventory.items.length >= 120) {
                             snap.inventory.items_truncated = true;
                             return;
                         }
-                        var row = { gid: gid, qty: _qty(qty) };
+                        const row = { gid: gid, qty: _qty(qty) };
                         if (uid != null) row.object_uid = Number(uid);
                         // The row used to publish only gid/qty/uid, and that is exactly why
                         // the tutorial's bag step looked like "the slot exists nowhere": the
@@ -4910,8 +4934,8 @@
                         // declares [1] and equips on slot 1, the quest debris declares
                         // nothing and cannot be worn, and both rows were identical here.
                         try {
-                            var tpl = src && src.item ? src.item : null;
-                            var tt = tpl && tpl.type ? tpl.type : null;
+                            const tpl = src && src.item ? src.item : null;
+                            const tt = tpl && tpl.type ? tpl.type : null;
                             if (tt) {
                                 if (tt.id != null) row.type_id = Number(tt.id);
                                 if (tt.category != null) row.type_category = Number(tt.category);
@@ -4926,10 +4950,10 @@
                         } catch (eT) {}
                         snap.inventory.items.push(row);
                     };
-                    var items = inv.objects || inv.items || null;
+                    let items = inv.objects || inv.items || null;
                     if (Array.isArray(items)) {
-                        for (var i = 0; i < items.length; i++) {
-                            var it = items[i] || {};
+                        for (let i = 0; i < items.length; i++) {
+                            const it = items[i] || {};
                             _pushItem(it.objectGID != null ? it.objectGID
                                       : (it.gid != null ? it.gid : null),
                                       it.quantity != null ? it.quantity : it.qty,
@@ -4937,9 +4961,9 @@
                                       it);
                         }
                     } else if (items && typeof items === 'object') {
-                        for (var key in items) {
+                        for (const key in items) {
                             if (!Object.prototype.hasOwnProperty.call(items, key)) continue;
-                            var entry = items[key];
+                            let entry = items[key];
                             if (entry && typeof entry === 'object') {
                                 _pushItem(entry.objectGID != null ? entry.objectGID
                                           : (entry.gid != null ? entry.gid
@@ -4964,19 +4988,19 @@
                     // Entry field names other than `objectGID` are NOT guessed: the first
                     // equipped entry's own keys are captured so the next live run can name
                     // them instead of a session inventing one.
-                    var bag = inv;
+                    let bag = inv;
                     if (bag.equippedItems == null && bag.presets == null
                             && typeof bag.getCorrectInventory === 'function') {
                         try { bag = bag.getCorrectInventory(bag._type) || bag; } catch (e) {}
                     }
-                    var equipped = [];
-                    var eq = (bag && bag.equippedItems) || null;
+                    let equipped = [];
+                    let eq = (bag && bag.equippedItems) || null;
                     if (eq && typeof eq === 'object') {
-                        for (var slot in eq) {
+                        for (const slot in eq) {
                             if (!Object.prototype.hasOwnProperty.call(eq, slot)) continue;
                             if (equipped.length >= 24) break;
-                            var worn = eq[slot];
-                            var slotNum = parseInt(slot, 10);
+                            const worn = eq[slot];
+                            const slotNum = parseInt(slot, 10);
                             equipped.push({
                                 slot: isNaN(slotNum) ? String(slot) : slotNum,
                                 gid: worn && worn.objectGID != null ? Number(worn.objectGID) : null,
@@ -4995,13 +5019,13 @@
                             }
                         }
                     }
-                    var presets = [];
-                    var ps = (bag && bag.presets) || null;
+                    let presets = [];
+                    let ps = (bag && bag.presets) || null;
                     if (ps && typeof ps === 'object') {
-                        var plist = Array.isArray(ps) ? ps : Object.keys(ps);
-                        for (var pi = 0; pi < plist.length && presets.length < 12; pi++) {
-                            var pid = Array.isArray(ps) ? null : plist[pi];
-                            var preset = Array.isArray(ps) ? plist[pi] : ps[pid];
+                        const plist = Array.isArray(ps) ? ps : Object.keys(ps);
+                        for (let pi = 0; pi < plist.length && presets.length < 12; pi++) {
+                            const pid = Array.isArray(ps) ? null : plist[pi];
+                            let preset = Array.isArray(ps) ? plist[pi] : ps[pid];
                             if (preset == null) continue;
                             presets.push({
                                 preset_id: pid != null ? Number(pid)
@@ -5011,11 +5035,11 @@
                             });
                         }
                     }
-                    var sets = [];
-                    var isets = (bag && bag.itemSets) || null;
+                    const sets = [];
+                    const isets = (bag && bag.itemSets) || null;
                     if (Array.isArray(isets)) {
-                        for (var si = 0; si < isets.length && sets.length < 12; si++) {
-                            var set = isets[si] || {};
+                        for (let si = 0; si < isets.length && sets.length < 12; si++) {
+                            const set = isets[si] || {};
                             sets.push({
                                 name: typeof set.name === 'string' ? set.name.slice(0, 40) : null,
                                 items: Array.isArray(set.items) ? set.items.length : null
@@ -5040,11 +5064,11 @@
                 // holds values the server sent; the pointer model needs the gid,
                 // average and a few listing uids/prices, not the whole table.
                 try {
-                    var priceRows = [];
-                    var priceGids = Object.keys(__PriceCache.listings || {}).slice(0, 20);
-                    for (var pri = 0; pri < priceGids.length; pri++) {
-                        var pgid = Number(priceGids[pri]);
-                        var prows = (__PriceCache.listings[pgid] || []).slice(0, 5)
+                    const priceRows = [];
+                    const priceGids = Object.keys(__PriceCache.listings || {}).slice(0, 20);
+                    for (let pri = 0; pri < priceGids.length; pri++) {
+                        const pgid = Number(priceGids[pri]);
+                        const prows = (__PriceCache.listings[pgid] || []).slice(0, 5)
                             .map(function (row) {
                                 return { uid: row.uid, price: row.price,
                                          quantity: row.quantity };
@@ -5057,9 +5081,9 @@
                         });
                     }
                     if (priceRows.length < 20 && __PriceCache.average) {
-                        var avgKeys = Object.keys(__PriceCache.average).slice(0, 20 - priceRows.length);
-                        for (var avi = 0; avi < avgKeys.length; avi++) {
-                            var agid = Number(avgKeys[avi]);
+                        const avgKeys = Object.keys(__PriceCache.average).slice(0, 20 - priceRows.length);
+                        for (let avi = 0; avi < avgKeys.length; avi++) {
+                            const agid = Number(avgKeys[avi]);
                             if (!__PriceCache.listings || !__PriceCache.listings[agid]) {
                                 priceRows.push({
                                     gid: agid,
@@ -5097,7 +5121,7 @@
         // an account name typed into a field is not logged, only the fact that a
         // field was used. Everything else is game state.
         // ------------------------------------------------------------------
-        var __Rec = {
+        const __Rec = {
             enabled: false,
             sessionId: null,
             startedAt: 0,
@@ -5119,7 +5143,7 @@
                         });
                     }
                 } catch (e) {}
-                var k = event.kind;
+                const k = event.kind;
                 this.counts[k] = (this.counts[k] || 0) + 1;
             },
 
@@ -5146,7 +5170,7 @@
                 if (!this.enabled) return this.status();
                 this._post({ kind: 'session_stop', counts: this.counts });
                 this.enabled = false;
-                for (var i = 0; i < this._hooks.length; i++) {
+                for (let i = 0; i < this._hooks.length; i++) {
                     try { this._hooks[i](); } catch (e) {}
                 }
                 this._hooks = [];
@@ -5167,7 +5191,7 @@
             // The API surface, written straight to the trace (not through
             // _shrink: this one is meant to be big).
             probe: function(tag) {
-                var report = null;
+                let report = null;
                 try { report = window.__DofusProbe ? window.__DofusProbe() : null; } catch (e) {}
                 try {
                     if (window.chrome && window.chrome.webview) {
@@ -5183,12 +5207,12 @@
 
             // -- network: every message the client sends is an action --------
             _hookNetwork: function() {
-                var self = this;
-                var cm = (window.dofus && window.dofus.connectionManager) || null;
+                const self = this;
+                const cm = (window.dofus && window.dofus.connectionManager) || null;
                 if (!cm) {
                     // The connection manager appears after login; retry until it does.
-                    var tries = 0;
-                    var iv = setInterval(function() {
+                    let tries = 0;
+                    const iv = setInterval(function() {
                         tries++;
                         if (window.dofus && window.dofus.connectionManager) {
                             clearInterval(iv);
@@ -5205,10 +5229,10 @@
                 // Both entry points exist on this client and the login path does
                 // not use the one we wrapped first, which is why an earlier trace
                 // had no `send` events at all.
-                var sendMethods = ['sendMessage', 'send'];
-                for (var s = 0; s < sendMethods.length; s++) {
+                const sendMethods = ['sendMessage', 'send'];
+                for (let s = 0; s < sendMethods.length; s++) {
                     (function(method) {
-                        var original = cm[method];
+                        const original = cm[method];
                         if (typeof original !== 'function') return;
                         cm[method] = function(name, params) {
                             try {
@@ -5225,7 +5249,7 @@
                 // is dialling? Everything upstream of this (appInfo.server,
                 // config.json, serversData) is guesswork until this is recorded.
                 if (typeof cm.connect === 'function') {
-                    var origConnect = cm.connect;
+                    const origConnect = cm.connect;
                     cm.connect = function() {
                         try {
                             self._post({ kind: 'connect', args: self._shrink(
@@ -5239,18 +5263,18 @@
                 // Incoming: what the server told us. This client keeps its
                 // handlers in `eventHandlers` (confirmed by the probe); the other
                 // names are kept as fallbacks for older builds.
-                var registry = cm.eventHandlers || cm._handlers || cm.handlers
+                let registry = cm.eventHandlers || cm._handlers || cm.handlers
                     || cm._messageHandlers || null;
                 if (registry && typeof registry === 'object') {
-                    var wrapped = {};
-                    var names = Object.keys(registry);
-                    for (var i = 0; i < names.length; i++) {
+                    const wrapped = {};
+                    const names = Object.keys(registry);
+                    for (let i = 0; i < names.length; i++) {
                         (function(name, handlers) {
                             if (!handlers) return;
-                            var isArray = Object.prototype.toString.call(handlers) === '[object Array]';
-                            var list = isArray ? handlers : [handlers];
-                            var out = [];
-                            for (var j = 0; j < list.length; j++) {
+                            const isArray = Object.prototype.toString.call(handlers) === '[object Array]';
+                            const list = isArray ? handlers : [handlers];
+                            const out = [];
+                            for (let j = 0; j < list.length; j++) {
                                 (function(fn) {
                                     if (typeof fn !== 'function') { out.push(fn); return; }
                                     out.push(function(msg) {
@@ -5294,22 +5318,22 @@
             // update", "Update available: true"). Without these lines a blocked
             // launch is invisible: the dialog is native, the cause is a log.
             _hookConsole: function() {
-                var self = this;
+                const self = this;
                 if (console.__recorderHooked) return;
                 console.__recorderHooked = true;
-                var levels = ['log', 'info', 'warn', 'error'];
-                var originals = {};
-                for (var i = 0; i < levels.length; i++) {
+                const levels = ['log', 'info', 'warn', 'error'];
+                const originals = {};
+                for (let i = 0; i < levels.length; i++) {
                     (function(level) {
-                        var original = console[level];
+                        const original = console[level];
                         originals[level] = original;
                         console[level] = function() {
                             if (!self._inConsole) {
                                 self._inConsole = true;
                                 try {
-                                    var parts = [];
-                                    for (var j = 0; j < arguments.length; j++) {
-                                        var a = arguments[j];
+                                    const parts = [];
+                                    for (let j = 0; j < arguments.length; j++) {
+                                        let a = arguments[j];
                                         try { parts.push(typeof a === 'string' ? a : JSON.stringify(a)); }
                                         catch (e) { parts.push(String(a)); }
                                     }
@@ -5322,7 +5346,7 @@
                     })(levels[i]);
                 }
                 this._hooks.push(function() {
-                    for (var k in originals) {
+                    for (const k in originals) {
                         if (Object.prototype.hasOwnProperty.call(originals, k)) console[k] = originals[k];
                     }
                     console.__recorderHooked = false;
@@ -5331,10 +5355,10 @@
 
             // -- DOM: clicks and keys, never values --------------------------
             _hookDom: function() {
-                var self = this;
-                var clickHandler = function(ev) {
+                const self = this;
+                const clickHandler = function(ev) {
                     if (!self.enabled) return;
-                    var t = ev.target || {};
+                    const t = ev.target || {};
                     self._post({
                         kind: 'click',
                         tag: (t.tagName || '').toLowerCase(),
@@ -5346,9 +5370,9 @@
                         cell: self._cellAt(ev.clientX, ev.clientY)
                     });
                 };
-                var keyHandler = function(ev) {
+                const keyHandler = function(ev) {
                     if (!self.enabled) return;
-                    var t = ev.target || {};
+                    const t = ev.target || {};
                     self._post({
                         kind: 'key',
                         key: ev.key,
@@ -5359,7 +5383,7 @@
                         typed: (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')
                     });
                 };
-                var visHandler = function() {
+                const visHandler = function() {
                     if (!self.enabled) return;
                     self._post({ kind: 'visibility', hidden: !!document.hidden });
                 };
@@ -5371,8 +5395,8 @@
                 // (`_cellAt`, which asks isoEngine), so no new calibration exists or is
                 // needed -- the click says the cell, the walk asks for that cell id, which
                 // is how the agent navigates everywhere else (`_movePlayerOnMap`).
-                var chip = null;
-                var lastShown = null;
+                let chip = null;
+                const lastShown = null;
                 function chipFor(show) {
                     if (!chip && show) {
                         chip = document.createElement('div');
@@ -5392,10 +5416,10 @@
                     }
                     return chip;
                 }
-                var moveHandler = function(ev) {
+                const moveHandler = function(ev) {
                     if (ev.button !== 2 || !ev.ctrlKey) return;   // left/right without Ctrl: game's own
-                    var cell = self._cellAt(ev.clientX, ev.clientY);
-                    var hint = chipFor(cell != null);
+                    let cell = self._cellAt(ev.clientX, ev.clientY);
+                    const hint = chipFor(cell != null);
                     if (hint) {
                         hint.textContent = cell == null ? 'no cell here' : ('cell ' + cell);
                         hint.style.display = 'block';
@@ -5403,14 +5427,14 @@
                         hint.style.top = (ev.clientY + 14) + 'px';
                     }
                 };
-                var downHandler = function(ev) {
+                const downHandler = function(ev) {
                     if (ev.button !== 2 || !ev.ctrlKey) return;
                     ev.preventDefault();
                     ev.stopPropagation();
-                    var cell = self._cellAt(ev.clientX, ev.clientY);
-                    var iso = window.isoEngine;
+                    let cell = self._cellAt(ev.clientX, ev.clientY);
+                    const iso = window.isoEngine;
                     if (cell == null || !iso || typeof iso._movePlayerOnMap !== 'function') {
-                        var hint = chipFor(true);
+                        const hint = chipFor(true);
                         if (hint) hint.textContent = cell == null ? 'no cell under pointer'
                                                                   : 'no map engine';
                         return;
@@ -5422,17 +5446,17 @@
                     iso._movePlayerOnMap(cell, false, function(err) {
                         self._post({ kind: 'goto_result', cell: cell,
                                      error: err ? String(err).slice(0, 200) : null });
-                        var h = chipFor(true);
+                        const h = chipFor(true);
                         if (h) h.textContent = err ? ('walk failed: ' + String(err).slice(0, 40))
                                                    : ('walking to ' + cell);
                     });
                 };
-                var menuHandler = function(ev) {
+                const menuHandler = function(ev) {
                     // Only the Ctrl chord is ours; a plain right-click stays exactly as
                     // the game handles it today.
                     if (ev.ctrlKey) ev.preventDefault();
                 };
-                var leaveHandler = function() {
+                const leaveHandler = function() {
                     if (chip) chip.style.display = 'none';
                 };
 
@@ -5459,7 +5483,7 @@
 
             _cellAt: function(x, y) {
                 try {
-                    var ie = window.isoEngine;
+                    const ie = window.isoEngine;
                     if (ie && typeof ie.getCellFromPixel === 'function') return ie.getCellFromPixel(x, y);
                     if (ie && typeof ie.getCellIdFromMousePosition === 'function') return ie.getCellIdFromMousePosition(x, y);
                     if (ie && ie.mapPos && typeof ie.mapPos.getCellId === 'function') return ie.mapPos.getCellId(x, y);
@@ -5469,12 +5493,12 @@
 
             // -- state deltas: position, hp, kamas, xp, fights ----------------
             _pollState: function() {
-                var self = this;
+                const self = this;
                 this._timer = setInterval(function() {
                     if (!self.enabled) return;
-                    var snap;
+                    let snap;
                     try { snap = _agentSnapshot(); } catch (e) { return; }
-                    var now = {
+                    const now = {
                         map: snap.position && snap.position.map_id,
                         cell: snap.position && snap.position.cell,
                         hp: snap.hp && snap.hp.life,
@@ -5485,12 +5509,12 @@
                         fight: snap.farm_state && snap.farm_state.inFight,
                         inv: snap.inventory && snap.inventory.items ? snap.inventory.items.length : null
                     };
-                    var prev = self.lastState;
+                    const prev = self.lastState;
                     self.lastState = now;
                     if (!prev) { self._post({ kind: 'state', state: now }); return; }
-                    var diff = {};
-                    var changed = false;
-                    for (var k in now) {
+                    const diff = {};
+                    let changed = false;
+                    for (const k in now) {
                         if (!Object.prototype.hasOwnProperty.call(now, k)) continue;
                         if (now[k] !== prev[k]) { diff[k] = { from: prev[k], to: now[k] }; changed = true; }
                     }
@@ -5514,9 +5538,9 @@
             // against -- truncating it at 600 left us with `_truncated: true` and
             // no NPC ids at all. Incoming gets a much larger budget.
             _shrink: function(value, cap) {
-                var limit = cap || 600;
+                const limit = cap || 600;
                 try {
-                    var text = JSON.stringify(value);
+                    const text = JSON.stringify(value);
                     if (text && text.length <= limit) return value;
                     if (text) return { _truncated: true, length: text.length,
                                        preview: text.slice(0, limit) };
@@ -5553,9 +5577,9 @@
         window.__DofusProbe = function() {
             function shape(obj, depth) {
                 if (!obj) return null;
-                var out = { type: typeof obj, keys: [] };
+                const out = { type: typeof obj, keys: [] };
                 try {
-                    var keys = Object.keys(obj);
+                    let keys = Object.keys(obj);
                     out.keys = keys.slice(0, 60);
                     out.functions = keys.filter(function(k) {
                         try { return typeof obj[k] === 'function'; } catch (e) { return false; }
@@ -5564,11 +5588,11 @@
                 } catch (e) { out.error = String(e); }
                 if (depth > 0 && obj) {
                     out.children = {};
-                    var kids = ['playerData', 'isoEngine', 'dofus', 'gui', 'connectionManager',
+                    const kids = ['playerData', 'isoEngine', 'dofus', 'gui', 'connectionManager',
                                 'actorManager', 'mapData', 'mapPos', 'fighter', 'character',
                                 'inventory', 'spells', 'inventoryViewer', 'chat'];
-                    for (var i = 0; i < kids.length; i++) {
-                        var name = kids[i];
+                    for (let i = 0; i < kids.length; i++) {
+                        const name = kids[i];
                         try {
                             if (obj[name] !== undefined) out.children[name] = shape(obj[name], depth - 1);
                         } catch (e) {}
@@ -5576,7 +5600,7 @@
                 }
                 return out;
             }
-            var report = {
+            const report = {
                 at: Date.now(),
                 href: String(location.href).slice(0, 200),
                 ua: navigator.userAgent,
@@ -5597,7 +5621,7 @@
             // Where the client thinks the game server is. Without this the only
             // symptom of a wrong target is a bare LOGIN_ERROR.
             try {
-                var sd = null;
+                let sd = null;
                 try { sd = JSON.parse(JSON.stringify(window.gui && window.gui.serversData)); } catch (e) { sd = String(e); }
                 report.server = {
                     appInfoServer: (window.appInfo && window.appInfo.server) || null,
@@ -5609,7 +5633,7 @@
                 };
             } catch (e) { report.serverError = String(e); }
             try {
-                var ie = window.isoEngine;
+                const ie = window.isoEngine;
                 if (ie && ie.mapData) {
                     report.map = {
                         id: ie.mapData.mapId || ie.currentMapId || null,
@@ -5628,10 +5652,10 @@
         };
 
 
-        var _agentCommander = function(action) {
+        const _agentCommander = function(action) {
             try {
                 if (typeof window.__executeCommanderDirective === 'function') {
-                    var raw = window.__executeCommanderDirective({ action: action });
+                    const raw = window.__executeCommanderDirective({ action: action });
                     try { return JSON.parse(raw); } catch(e) { return { status: 'ok', action: action }; }
                 }
             } catch(err) { return { status: 'error', message: err.toString() }; }
@@ -5645,53 +5669,53 @@
         // id in NpcGenericActionRequestMessage is the actor's `contextualId` — the
         // bundle sends `npcId: l.contextualId` — not the template npcId the quest
         // objective carries. Sending the template id talks to nobody.
-        var _listNpcActors = function () {
-            var am = window.actorManager
+        const _listNpcActors = function () {
+            const am = window.actorManager
                 || (window.isoEngine && window.isoEngine.actorManager) || null;
-            var actors = (am && am.actors) || null;
-            var out = [];
+            const actors = (am && am.actors) || null;
+            const out = [];
             if (!actors) return out;
-            for (var k in actors) {
+            for (const k in actors) {
                 if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                var a = actors[k] || {};
-                var d = a.data || {};
-                var si = d.staticInfos || a.staticInfos || {};
+                const a = actors[k] || {};
+                const d = a.data || {};
+                const si = d.staticInfos || a.staticInfos || {};
                 // The actor's template id lives on `data.npcId`: the bundle's own
                 // isNPC() and getActorFromNpcId() both read it there. `staticInfos`
                 // exists on some builds but not this one, which is why this list was
                 // always empty and the map looked NPC-less.
-                var template = d.npcId != null ? d.npcId
+                let template = d.npcId != null ? d.npcId
                     : (si.npcId != null ? si.npcId : (a.npcId != null ? a.npcId : null));
                 if (template == null || Number(template) <= 0) continue;
                 // The actor is constructed with `actorId` = contextual id; it has
                 // no `contextualId` or `id` property. Sending the template id (or
                 // undefined) in NpcGenericActionRequestMessage talks to nobody.
-                var cid = a.actorId != null ? a.actorId
+                const cid = a.actorId != null ? a.actorId
                     : (d.contextualId != null ? d.contextualId
                     : (a.contextualId != null ? a.contextualId
                     : (a.id != null ? a.id : k)));
-                var npcName = si.name || d.name || a.name || null;
+                let npcName = si.name || d.name || a.name || null;
                 // The client paints quest icons in a.icons[1] (ICON_CATEGORY_ENUM.QUEST).
                 // Symbols include 'questClip' (exclamation point / available quest)
                 // and 'questObjectiveClip' (question mark / quest objective turn-in).
                 if (!a.__questFlagHooked && typeof a.addQuestIcon === 'function') {
                     a.__questFlagHooked = true;
-                    var origAQ = a.addQuestIcon;
+                    const origAQ = a.addQuestIcon;
                     a.addQuestIcon = function(qflag) {
                         try { this._questFlag = qflag; } catch(e) {}
                         return origAQ.apply(this, arguments);
                     };
                 }
-                var iconMap = (a.icons && a.icons[1]) || {};
-                var iconKeys = Object.keys(iconMap);
-                var qf = a._questFlag || d.questFlag || a.questFlag
+                const iconMap = (a.icons && a.icons[1]) || {};
+                const iconKeys = Object.keys(iconMap);
+                const qf = a._questFlag || d.questFlag || a.questFlag
                     || (window.__mapQuestFlags && (window.__mapQuestFlags[cid] || window.__mapQuestFlags[Number(cid)]))
                     || null;
-                var toStart = (qf && Array.isArray(qf.questsToStartId)) ? qf.questsToStartId : [];
-                var toValid = (qf && Array.isArray(qf.questsToValidId)) ? qf.questsToValidId : [];
-                var hasExclamation = toStart.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') === -1; });
-                var hasQuestion = toValid.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') >= 0; });
-                var hasQuest = (iconKeys.length > 0) || (toStart.length > 0) || (toValid.length > 0);
+                const toStart = (qf && Array.isArray(qf.questsToStartId)) ? qf.questsToStartId : [];
+                const toValid = (qf && Array.isArray(qf.questsToValidId)) ? qf.questsToValidId : [];
+                const hasExclamation = toStart.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') === -1; });
+                const hasQuestion = toValid.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') >= 0; });
+                const hasQuest = (iconKeys.length > 0) || (toStart.length > 0) || (toValid.length > 0);
                 out.push({
                     templateId: Number(template),
                     contextualId: Number(cid),
@@ -5707,21 +5731,21 @@
             return out;
         };
 
-        var _findNpcActor = function (templateId) {
-            var list = _listNpcActors();
-            var seen = [];
-            for (var i = 0; i < list.length; i++) seen.push(list[i].templateId);
+        const _findNpcActor = function (templateId) {
+            const list = _listNpcActors();
+            const seen = [];
+            for (let i = 0; i < list.length; i++) seen.push(list[i].templateId);
             // The client has a purpose-built lookup (the bundle calls
             // `window.actorManager.getActorFromNpcId(npcId)`), so prefer it over a scan.
             if (templateId != null) {
-                var am = window.actorManager
+                const am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
                 if (am && typeof am.getActorFromNpcId === 'function') {
                     try {
-                        var hit = am.getActorFromNpcId(Number(templateId));
+                        const hit = am.getActorFromNpcId(Number(templateId));
                         if (hit) {
-                            var hd = hit.data || {};
-                            var hcid = hit.actorId != null ? hit.actorId
+                            const hd = hit.data || {};
+                            const hcid = hit.actorId != null ? hit.actorId
                                 : (hd.contextualId != null ? hd.contextualId
                                 : (hit.contextualId != null ? hit.contextualId : hit.id));
                             return {
@@ -5736,7 +5760,7 @@
                         }
                     } catch (e) {}
                 }
-                for (var j = 0; j < list.length; j++) {
+                for (let j = 0; j < list.length; j++) {
                     if (Number(list[j].templateId) === Number(templateId)) {
                         return { actor: list[j], seen: seen, all: list };
                     }
@@ -5749,12 +5773,12 @@
         // Same grid the bundle uses (getMapPointFromCellId). Two cells are
         // neighbours when their grid points differ by one on each axis at most;
         // diagonal neighbours included, because the client allows diagonal steps.
-        var _cellsAdjacent = function (a, b) {
-            var point = function (cell) {
-                var t = Number(cell) % 14 - Math.floor(Number(cell) / 28);
+        const _cellsAdjacent = function (a, b) {
+            const point = function (cell) {
+                const t = Number(cell) % 14 - Math.floor(Number(cell) / 28);
                 return { x: t + 19, y: t + Math.floor(Number(cell) / 14) };
             };
-            var pa = point(a), pb = point(b);
+            const pa = point(a), pb = point(b);
             return Math.max(Math.abs(pa.x - pb.x), Math.abs(pa.y - pb.y)) === 1;
         };
 
@@ -5762,13 +5786,13 @@
         // `isoEngine.mapData.mapId` is absent on this build. A null npcMapId makes
         // the server ignore a talk request, so this must be the same source the
         // client itself uses.
-        var _currentMapId = function () {
+        const _currentMapId = function () {
             try {
-                var pd = window.gui && window.gui.playerData;
+                const pd = window.gui && window.gui.playerData;
                 if (pd && pd.position && pd.position.mapId != null) {
                     return Number(pd.position.mapId);
                 }
-                var mr = window.isoEngine && window.isoEngine.mapRenderer;
+                const mr = window.isoEngine && window.isoEngine.mapRenderer;
                 if (mr && mr.map && mr.map.id != null) return Number(mr.map.id);
             } catch (e) {}
             return null;
@@ -5784,9 +5808,9 @@
         // formatted question and replies from `nextQuestionAsync`, while
         // `npcDialogHandler` holds the server reply ids -- so expose both,
         // aligned by index, and never re-resolve text ids here.
-        var _agentPlainText = function (value) {
+        const _agentPlainText = function (value) {
             if (value == null) return null;
-            var t = String(value);
+            let t = String(value);
             // Strip markup before decoding entities: a decoded `&lt;` would
             // otherwise look like a tag to the next pass.
             t = t.replace(/<br\s*\/?>/gi, ' ')
@@ -5799,34 +5823,34 @@
                  .replace(/&#39;|&apos;/gi, "'")
                  .replace(/&amp;/gi, '&')
                  .replace(/&#(x?[0-9a-f]+);/gi, function (m, code) {
-                     var n = (code[0] === 'x' || code[0] === 'X')
+                     const n = (code[0] === 'x' || code[0] === 'X')
                          ? parseInt(code.slice(1), 16) : parseInt(code, 10);
                      return isNaN(n) ? m : String.fromCharCode(n);
                  });
             return t.replace(/\s+/g, ' ').trim();
         };
-        var _agentNormalizeText = function (value) {
-            var t = _agentPlainText(value);
+        const _agentNormalizeText = function (value) {
+            let t = _agentPlainText(value);
             if (t == null) return null;
             try {
                 t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
             } catch (e) {}
             return t.toLowerCase();
         };
-        var _agentDialogInfo = function () {
-            var pd = (window.gui && window.gui.playerData) || null;
-            var ui = (window.gui && window.gui.npcDialogUi) || null;
-            var handler = (window.gui && window.gui.npcDialogHandler) || null;
+        const _agentDialogInfo = function () {
+            const pd = (window.gui && window.gui.playerData) || null;
+            const ui = (window.gui && window.gui.npcDialogUi) || null;
+            const handler = (window.gui && window.gui.npcDialogHandler) || null;
             // The ids and the texts live on different objects: the handler
             // receives `replyIds` from NpcDialogCreationMessage, the view
             // receives the formatted strings. Prefer a populated list.
-            var ids = (handler && handler.replyIds && handler.replyIds.length)
+            const ids = (handler && handler.replyIds && handler.replyIds.length)
                 ? handler.replyIds
                 : ((ui && ui.replyIds && ui.replyIds.length)
                     ? ui.replyIds
                     : ((handler && handler.replyIds) || (ui && ui.replyIds) || null));
-            var texts = (ui && ui.replies) ? ui.replies : [];
-            var npcData = (handler && handler.npcData) || (ui && ui.npcData) || null;
+            const texts = (ui && ui.replies) ? ui.replies : [];
+            const npcData = (handler && handler.npcData) || (ui && ui.npcData) || null;
             return {
                 in_dialog: !!(pd && pd.isInDialog),
                 ui: ui,
@@ -5843,12 +5867,12 @@
         };
         // Resolve what the policy read back to the index the client sends. Kept
         // separate from the handler so the same rule is testable offline.
-        var _agentReplyIndexForText = function (text) {
-            var ui = (window.gui && window.gui.npcDialogUi) || null;
-            var texts = (ui && ui.replies) || [];
-            var wantText = _agentNormalizeText(text);
-            var hits = [];
-            for (var i = 0; i < texts.length; i++) {
+        const _agentReplyIndexForText = function (text) {
+            const ui = (window.gui && window.gui.npcDialogUi) || null;
+            const texts = (ui && ui.replies) || [];
+            const wantText = _agentNormalizeText(text);
+            const hits = [];
+            for (let i = 0; i < texts.length; i++) {
                 if (_agentNormalizeText(texts[i]) === wantText) hits.push(i);
             }
             return { hits: hits, count: texts.length, texts: texts };
@@ -5862,10 +5886,10 @@
         // wrong, so take it and report the substitution; with several choices the
         // live text is the only evidence of which is which, so refuse rather than
         // pick "Non, merci" for "Oui".
-        var _agentReplyPlan = function (args, resolved) {
-            var hits = (resolved && resolved.hits) || [];
-            var count = Number((resolved && resolved.count) || 0);
-            var texts = (resolved && resolved.texts) || [];
+        const _agentReplyPlan = function (args, resolved) {
+            const hits = (resolved && resolved.hits) || [];
+            let count = Number((resolved && resolved.count) || 0);
+            const texts = (resolved && resolved.texts) || [];
             if (!args || args.reply_text == null) {
                 return { want: 0, fallback: null, error: null, data: null };
             }
@@ -5876,18 +5900,18 @@
                                          live_text: texts[0] != null
                                              ? String(texts[0]) : null } };
                 }
-                var elemWords = {
+                const elemWords = {
                     earth: ['terre', 'force', 'earth', 'strength', 'tierra', 'fuerza', 'erde'],
                     fire: ['feu', 'flamme', 'intelligence', 'fire', 'flame', 'fuego', 'feuer'],
                     water: ['eau', 'chance', 'water', 'luck', 'agua', 'suerte', 'wasser'],
                     air: ['air', 'agilite', 'agility', 'aire', 'agilidad', 'vent', 'wind', 'luft']
                 };
-                var elemIndices = {};
-                for (var ti = 0; ti < texts.length; ti++) {
-                    var normT = String(texts[ti] || '').toLowerCase();
-                    for (var elKey in elemWords) {
-                        var kws = elemWords[elKey];
-                        for (var ki = 0; ki < kws.length; ki++) {
+                const elemIndices = {};
+                for (let ti = 0; ti < texts.length; ti++) {
+                    const normT = String(texts[ti] || '').toLowerCase();
+                    for (const elKey in elemWords) {
+                        const kws = elemWords[elKey];
+                        for (let ki = 0; ki < kws.length; ki++) {
                             if (normT.indexOf(kws[ki]) !== -1) {
                                 elemIndices[elKey] = ti;
                                 break;
@@ -5895,14 +5919,14 @@
                         }
                     }
                 }
-                var foundElems = Object.keys(elemIndices);
+                const foundElems = Object.keys(elemIndices);
                 if (foundElems.length >= 2) {
-                    var pd = window.gui && window.gui.playerData;
-                    var chars = (pd && pd.characters && pd.characters.mainCharacter
+                    const pd = window.gui && window.gui.playerData;
+                    const chars = (pd && pd.characters && pd.characters.mainCharacter
                         && pd.characters.mainCharacter.characteristics) || null;
-                    var cStats = (typeof _agentExtractStats === 'function') ? _agentExtractStats(chars) : {};
-                    var wantedElem = (typeof _agentPrimaryElement === 'function') ? _agentPrimaryElement(cStats, pd) : 'earth';
-                    var pickIdx = (elemIndices[wantedElem] != null) ? elemIndices[wantedElem] : elemIndices[foundElems[0]];
+                    const cStats = (typeof _agentExtractStats === 'function') ? _agentExtractStats(chars) : {};
+                    const wantedElem = (typeof _agentPrimaryElement === 'function') ? _agentPrimaryElement(cStats, pd) : 'earth';
+                    const pickIdx = (elemIndices[wantedElem] != null) ? elemIndices[wantedElem] : elemIndices[foundElems[0]];
                     return { want: pickIdx, error: null, data: null,
                              fallback: { asked_text: String(args.reply_text),
                                          live_text: texts[pickIdx],
@@ -5933,14 +5957,14 @@
         // tag stripped, so an offer the client renders as a clickable word is invisible to the
         // policy -- and 212 of 212 live quest-start attempts were answered with a packet the client
         // never sends for a start (KNOWN_GAPS G32). This is a read: nothing here sends anything.
-        var _agentDialogLinkPayloads = function (raw) {
-            var out = [];
+        const _agentDialogLinkPayloads = function (raw) {
+            const out = [];
             if (raw == null) return out;
-            var anchor = /<a\shref=['"](.*?)['"]\s*>(.*?)<\/a>/gi;
-            var m;
+            const anchor = /<a\shref=['"](.*?)['"]\s*>(.*?)<\/a>/gi;
+            let m;
             while ((m = anchor.exec(String(raw))) !== null && out.length < 12) {
-                var parts = String(m[1]).split(',');
-                var kind = parts[0];
+                const parts = String(m[1]).split(',');
+                let kind = parts[0];
                 if (kind === 'startquest') {
                     out.push({kind: kind, quest_id: Number(parts[1])});
                 } else if (kind === 'validateobjective') {
@@ -5954,24 +5978,24 @@
             }
             return out;
         };
-        var _agentDialogLinks = function (info) {
-            var links = [];
-            var collect = function (raw, from, index) {
-                var found = _agentDialogLinkPayloads(raw);
-                for (var k = 0; k < found.length; k++) {
+        const _agentDialogLinks = function (info) {
+            const links = [];
+            const collect = function (raw, from, index) {
+                const found = _agentDialogLinkPayloads(raw);
+                for (let k = 0; k < found.length; k++) {
                     found[k].from = from;
                     if (index != null) found[k].reply_index = index;
                     links.push(found[k]);
                 }
             };
             collect(info.raw_msg, 'message', null);
-            var texts = info.texts || [];
-            for (var i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);
+            const texts = info.texts || [];
+            for (let i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);
             return links;
         };
-        var _agentStartQuestOffered = function (links) {
-            for (var i = 0; i < links.length; i++) {
-                var q = links[i].quest_id;
+        const _agentStartQuestOffered = function (links) {
+            for (let i = 0; i < links.length; i++) {
+                let q = links[i].quest_id;
                 if (links[i].kind === 'startquest' && typeof q === 'number'
                         && !isNaN(q) && q > 0) return q;
             }
@@ -5982,7 +6006,7 @@
         // does); `dofus.sendMessage` is the fallback. Detection is published instead of assumed,
         // because wiring a verb to a method this build does not expose is the mistake G2 was held
         // back for.
-        var _agentLinkHandlerOwner = function (info) {
+        const _agentLinkHandlerOwner = function (info) {
             if (info.ui && typeof info.ui._linkHandler === 'function') return 'gui.npcDialogUi';
             if (info.handler && typeof info.handler._linkHandler === 'function') {
                 return 'gui.npcDialogHandler';
@@ -5993,8 +6017,8 @@
         // `quest.advance {quest_id}` inside a dialog is refused only for a quest the client
         // has never accepted, because that shape was the start request's (G33); a known
         // quest keeps the reply-0 behaviour the tutorial relies on.
-        var _agentQuestKnown = function (questId) {
-            var q = window.gui && window.gui.playerData && window.gui.playerData.quests
+        const _agentQuestKnown = function (questId) {
+            const q = window.gui && window.gui.playerData && window.gui.playerData.quests
                 && window.gui.playerData.quests.standardQuests;
             if (!q) return false;
             try {
@@ -6004,22 +6028,22 @@
                             && q.isFinishedQuestById(questId)));
             } catch (e) { return false; }
         };
-        var _agentDialogState = function () {
-            var info = _agentDialogInfo();
+        const _agentDialogState = function () {
+            const info = _agentDialogInfo();
             if (!info.in_dialog) return { open: false };
-            var texts = info.texts || [];
-            var ids = info.ids || [];
-            var count = Math.max(texts.length, ids.length);
-            var replies = [];
-            for (var i = 0; i < count && i < 12; i++) {
-                var rid = ids[i] != null ? Number(ids[i]) : null;
+            const texts = info.texts || [];
+            const ids = info.ids || [];
+            const count = Math.max(texts.length, ids.length);
+            const replies = [];
+            for (let i = 0; i < count && i < 12; i++) {
+                const rid = ids[i] != null ? Number(ids[i]) : null;
                 replies.push({
                     index: i,
                     text: texts[i] != null ? _agentPlainText(texts[i]) : null,
                     reply_id: rid != null && !isNaN(rid) ? rid : (ids[i] != null ? ids[i] : null)
                 });
             }
-            var links = _agentDialogLinks(info);
+            const links = _agentDialogLinks(info);
             return {
                 open: true,
                 npc_id: info.npc_id,
@@ -6052,17 +6076,17 @@
         // used to read only that, so a named-monster join could never match on a map the listing
         // showed as full of groups (KNOWN_GAPS G7). `actorList` appears nowhere in the bundle:
         // the manager's collection is `actors`, which its constructor initialises to `{}`.
-        var _groupMembers = function (a) {
-            var d = (a && a.data) || {};
-            var si = d.staticInfos || (a && a.staticInfos) || {};
-            var members = [];
+        const _groupMembers = function (a) {
+            const d = (a && a.data) || {};
+            const si = d.staticInfos || (a && a.staticInfos) || {};
+            let members = [];
             if (si.mainCreatureLightInfos) members.push(si.mainCreatureLightInfos);
             if (Array.isArray(si.underlings)) members = members.concat(si.underlings);
             if (!members.length && d.creatureGenericId != null) {
                 members = [{creatureGenericId: d.creatureGenericId, level: d.level}];
             }
             if (!members.length) {
-                var legacy = si.monsters || d.monsters || [];
+                const legacy = si.monsters || d.monsters || [];
                 if (Array.isArray(legacy)) members = legacy;
             }
             return members;
@@ -6077,27 +6101,27 @@
         // Deliberately wider than the client's own `getActorFromMonsterId`, which only sees the
         // leader: a player is allowed to join a group whose named minion is not its boss, and a
         // goal that arrives as a string still has to match (the client compares with `===`).
-        var _findMonsterGroup = function (wanted) {
-            var am = window.actorManager
+        const _findMonsterGroup = function (wanted) {
+            const am = window.actorManager
                 || (window.isoEngine && window.isoEngine.actorManager) || null;
-            var actors = (am && am.actors) || null;
-            var out = {manager: !!am, path: am ? (am.actors ? 'actors' : 'none') : 'none',
+            const actors = (am && am.actors) || null;
+            const out = {manager: !!am, path: am ? (am.actors ? 'actors' : 'none') : 'none',
                 group: null, key: null, groups: 0, monsters: []};
             if (!actors) return out;
-            for (var k in actors) {
+            for (const k in actors) {
                 if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                var a = actors[k] || {};
-                var ty = (a.data && a.data.type) || a._type || a.type;
+                const a = actors[k] || {};
+                const ty = (a.data && a.data.type) || a._type || a.type;
                 if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
                 out.groups += 1;
                 if (!out.group && wanted == null) { out.group = a; out.key = k; }
-                var members = _groupMembers(a);
-                for (var i = 0; i < members.length; i++) {
-                    var m = members[i] || {};
-                    var mid = m.creatureGenericId != null ? m.creatureGenericId
+                const members = _groupMembers(a);
+                for (let i = 0; i < members.length; i++) {
+                    const m = members[i] || {};
+                    let mid = m.creatureGenericId != null ? m.creatureGenericId
                         : (m.genericId != null ? m.genericId : m.monsterId);
                     if (mid == null) continue;
-                    var idn = Number(mid);
+                    let idn = Number(mid);
                     if (out.monsters.length < 24 && out.monsters.indexOf(idn) < 0) {
                         out.monsters.push(idn);
                     }
@@ -6109,30 +6133,30 @@
             }
             return out;
         };
-        var _listMonsterGroups = function () {
-            var am = window.actorManager
+        const _listMonsterGroups = function () {
+            const am = window.actorManager
                 || (window.isoEngine && window.isoEngine.actorManager) || null;
-            var actors = (am && am.actors) || null;
-            var out = [];
+            const actors = (am && am.actors) || null;
+            const out = [];
             // An empty group list has three very different causes -- no actor collection,
             // a collection whose actors never match the type filter, or a map that really
             // has no group -- and all 4,782 recorded observations returned the same
             // `groups: []`, which is the answer the planner was handed every time it wanted
             // to join a fight. Counting what was iterated makes the next live map say which
             // of the three it was, instead of another guess (KNOWN_GAPS G7).
-            var scan = {manager: !!am, path: null, seen: 0, matched: 0, types: {}};
+            const scan = {manager: !!am, path: null, seen: 0, matched: 0, types: {}};
             if (am) {
                 scan.path = am.actors ? 'actors' : 'none';
             }
             window.__agentGroupScan = scan;
             if (!actors) return out;
-            for (var k in actors) {
+            for (const k in actors) {
                 if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                var a = actors[k] || {};
-                var d = a.data || {};
-                var ty = d.type || a._type || a.type;
+                const a = actors[k] || {};
+                const d = a.data || {};
+                let ty = d.type || a._type || a.type;
                 scan.seen += 1;
-                var tyKey = ty == null ? 'null' : String(ty);
+                const tyKey = ty == null ? 'null' : String(ty);
                 if (scan.types[tyKey] == null && Object.keys(scan.types).length >= 24) {
                     scan.types.other = (scan.types.other || 0) + 1;
                 } else {
@@ -6140,11 +6164,11 @@
                 }
                 if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
                 scan.matched += 1;
-                var members = [];
-                var addMember = function (m) {
+                const members = [];
+                const addMember = function (m) {
                     if (!m) return;
-                    var light = m.staticInfos || m;
-                    var id = m.creatureGenericId != null ? m.creatureGenericId
+                    const light = m.staticInfos || m;
+                    let id = m.creatureGenericId != null ? m.creatureGenericId
                         : (light.creatureGenericId != null
                             ? light.creatureGenericId : null);
                     if (id == null) return;
@@ -6155,16 +6179,16 @@
                         is_mini_boss: !!light.isMiniBoss
                     });
                 };
-                var rawMembers = _groupMembers(a);
-                var si = d.staticInfos || a.staticInfos || {};
-                for (var u = 0; u < rawMembers.length; u++) addMember(rawMembers[u]);
-                var ids = [];
-                var total = 0;
-                var known = 0;
-                var maxLevel = null;
-                var boss = false;
-                for (var mi = 0; mi < members.length; mi++) {
-                    var mem = members[mi];
+                const rawMembers = _groupMembers(a);
+                const si = d.staticInfos || a.staticInfos || {};
+                for (let u = 0; u < rawMembers.length; u++) addMember(rawMembers[u]);
+                const ids = [];
+                let total = 0;
+                let known = 0;
+                let maxLevel = null;
+                let boss = false;
+                for (let mi = 0; mi < members.length; mi++) {
+                    const mem = members[mi];
                     ids.push(mem.monster_id);
                     if (mem.level != null && !isNaN(mem.level)) {
                         total += mem.level;
@@ -6173,11 +6197,11 @@
                     }
                     if (mem.is_boss) boss = true;
                 }
-                var cid = a.actorId != null ? a.actorId
+                const cid = a.actorId != null ? a.actorId
                     : (d.contextualId != null ? d.contextualId
                     : (a.contextualId != null ? a.contextualId
                     : (a.id != null ? a.id : Number(k))));
-                var gid = cid != null ? Number(cid) : null;
+                const gid = cid != null ? Number(cid) : null;
                 out.push({
                     group_id: gid != null && !isNaN(gid) ? gid : null,
                     contextualId: gid != null && !isNaN(gid) ? gid : null,
@@ -6211,15 +6235,15 @@
         // loop reads it as a decision yet, it only stops a refusal from looking
         // like a no-op. The wrapper calls straight through, and the marker on it
         // keeps a reload from stacking a second copy.
-        var _agentClientErrors = [];
-        var _agentMakeErrorHook = function (store) {
+        const _agentClientErrors = [];
+        const _agentMakeErrorHook = function (store) {
             return function (chat) {
                 if (!chat || typeof chat.logError !== 'function') return false;
                 if (chat.logError.__agentHooked) return false;
-                var orig = chat.logError;
-                var wrapped = function (text) {
+                const orig = chat.logError;
+                const wrapped = function (text) {
                     try {
-                        var msg = String(text == null ? '' : text)
+                        const msg = String(text == null ? '' : text)
                             .replace(/\s+/g, ' ').trim();
                         if (msg) {
                             store.push({ at: Date.now(), text: msg.slice(0, 200) });
@@ -6233,7 +6257,7 @@
                 return true;
             };
         };
-        var _agentHookClientErrors = _agentMakeErrorHook(_agentClientErrors);
+        const _agentHookClientErrors = _agentMakeErrorHook(_agentClientErrors);
 
         // What the tutorial currently allows.
         //
@@ -6243,15 +6267,15 @@
         // refuse: a live session walked to the edge cell and then sat there while
         // the agent re-sent the same request. The scenario step is the authority on
         // what may happen next, so expose it instead of guessing from the map.
-        var _agentTutorial = function () {
-            var sm = (window.gui && window.gui.scenarioManager) || null;
+        const _agentTutorial = function () {
+            const sm = (window.gui && window.gui.scenarioManager) || null;
             if (!sm) return null;
-            var iso = window.isoEngine || null;
-            var dirs = ['left', 'right', 'top', 'bottom'];
-            var can = {};
-            for (var i = 0; i < dirs.length; i++) {
-                var d = dirs[i];
-                var blocked = false;
+            const iso = window.isoEngine || null;
+            const dirs = ['left', 'right', 'top', 'bottom'];
+            const can = {};
+            for (let i = 0; i < dirs.length; i++) {
+                const d = dirs[i];
+                let blocked = false;
                 try {
                     blocked = !!(typeof sm.isBehaviourEnabled === 'function'
                         && sm.isBehaviourEnabled('DISABLE_' + d.toUpperCase()
@@ -6259,49 +6283,49 @@
                 } catch (e) {}
                 can[d] = !blocked;
             }
-            var cells = null;
+            let cells = null;
             try {
-                var raw = iso && iso.unblockedCells;
+                let raw = iso && iso.unblockedCells;
                 if (raw && typeof raw === 'object') {
                     // An empty gate is not "no gate": a step that calls
                     // setUnblockedCells({}) forbids every cell, which is how a talk
                     // step pins the character in place. Only a null gate means
                     // "all cells allowed".
                     cells = [];
-                    for (var k in raw) {
+                    for (const k in raw) {
                         if (Object.prototype.hasOwnProperty.call(raw, k) && raw[k]) {
-                            var n = Number(k);
+                            const n = Number(k);
                             if (isFinite(n)) cells.push(n);
                         }
                     }
                     cells.sort(function (a, b) { return a - b; });
                 }
             } catch (e) { cells = null; }
-            var npc = null;
+            let npc = null;
             try {
-                var ni = iso && iso.unblockedNpcId;
+                const ni = iso && iso.unblockedNpcId;
                 // -1 means no NPC restriction; 0 is a real restriction to "no NPC",
                 // and collapsing it to null would tell the planner every tap is open.
                 if (ni != null && Number(ni) !== -1) npc = Number(ni);
             } catch (e) {}
-            var questId = Number(sm.currentQuestId);
-            var stepId = Number(sm.currentStepId);
-            var specialId = Number(sm.currentSpecialStepId);
+            const questId = Number(sm.currentQuestId);
+            const stepId = Number(sm.currentStepId);
+            const specialId = Number(sm.currentSpecialStepId);
             // What the current step itself asks the player to press. A scenario
             // step's executeStart calls a hint helper by name (`pointToChallenge`,
             // `pointToConfirmUpgradeSpell`); those controls have no stable CSS
             // class, so the page resolves them by object path in ui.tap. The
             // checkpoint and the numeric behaviour list are published as data so
             // the planner can tell two steps apart even when both are sub-steps.
-            var checkpoint = null, behaviours = null, hint = null, wantsTap = false;
-            var endNames = null;
-            var menuHint = null, openWindow = null, interactiveHint = null;
+            let checkpoint = null, behaviours = null, hint = null, wantsTap = false;
+            let endNames = null;
+            let menuHint = null, openWindow = null, interactiveHint = null;
             // Every later tutorial points at its control the same way the first one
             // does: an executeStart call to a hint helper. The helper name is the
             // control's identity; a numeric argument is the row it wants. The page
             // resolves each name by the same object path the helper itself walks
             // (see _agentClientTarget); `close:NAME` is a window close, not a tap.
-            var HINTS = [
+            const HINTS = [
                 ['pointToChallenge', 'challenge', null],
                 ['pointToConfirmUpgradeSpell', 'spell_upgrade_confirm', null],
                 ['displayHighlightedSpellButtons', 'spell_plus', null],
@@ -6322,21 +6346,21 @@
                 [/pointToWindowCloseButton\(["']([A-Za-z]+)["']\)/, 'close', 'name'],
             ];
             try {
-                var step = sm.currentStep || null;
+                const step = sm.currentStep || null;
                 if (step) {
-                    var cp = Number(step.questStepCheckpoint);
+                    const cp = Number(step.questStepCheckpoint);
                     if (isFinite(cp)) checkpoint = cp;
-                    var beh = step.behaviours;
+                    const beh = step.behaviours;
                     if (Object.prototype.toString.call(beh) === '[object Array]') {
                         behaviours = [];
-                        for (var bi = 0; bi < beh.length; bi++) {
-                            var bn = Number(beh[bi]);
+                        for (let bi = 0; bi < beh.length; bi++) {
+                            const bn = Number(beh[bi]);
                             if (isFinite(bn)) behaviours.push(bn);
                         }
                     }
-                    var startSrc = '';
+                    let startSrc = '';
                     try { startSrc = String(step.executeStart || ''); } catch (eSrc) {}
-                    var endSrc = '';
+                    let endSrc = '';
                     try { endSrc = String(step.endingCondition || ''); } catch (eEnd) {}
                     wantsTap = endSrc.indexOf('TAP_ANYWHERE') !== -1;
                     // What the step's own condition names, as data: a step that ends on
@@ -6345,31 +6369,31 @@
                     // re-asked crossings for a FIGHTER_TURN step on a map with no
                     // monster group; the name was in this source the whole time.
                     endNames = [];
-                    var erx = /conditionTypeEnum\.([A-Z_]+)/g;
-                    var em;
+                    const erx = /conditionTypeEnum\.([A-Z_]+)/g;
+                    let em;
                     while ((em = erx.exec(endSrc)) !== null) {
                         if (endNames.indexOf(em[1]) === -1) endNames.push(em[1]);
                     }
-                    var mm = startSrc.match(/pointToMenuIcon\(["']([A-Za-z]+)["']\)/);
+                    const mm = startSrc.match(/pointToMenuIcon\(["']([A-Za-z]+)["']\)/);
                     if (mm) menuHint = mm[1];
                     // A step that ends on WINDOW_OPENED names the window it is
                     // waiting for (`WINDOW_OPENED && "characUpdate" === t.windowId`).
                     // The planner presses whatever control opens that window.
-                    var mo = endSrc.match(/WINDOW_OPENED[^;?]{0,100}?["']([A-Za-z]+)["']\s*===\s*t\.windowId/);
+                    const mo = endSrc.match(/WINDOW_OPENED[^;?]{0,100}?["']([A-Za-z]+)["']\s*===\s*t\.windowId/);
                     if (mo) openWindow = mo[1];
                     // The map element a step highlights (playInteractiveElementTap)
                     // is tapped through isoEngine.useInteractive by element id.
-                    var ih = startSrc.match(/playInteractiveElementTap\((\d+)/);
+                    const ih = startSrc.match(/playInteractiveElementTap\((\d+)/);
                     if (ih) interactiveHint = Number(ih[1]);
-                    for (var hi = 0; hi < HINTS.length && !hint; hi++) {
-                        var pat = HINTS[hi][0];
-                        var hname = HINTS[hi][1];
-                        var hkind = HINTS[hi][2];
+                    for (let hi = 0; hi < HINTS.length && !hint; hi++) {
+                        let pat = HINTS[hi][0];
+                        const hname = HINTS[hi][1];
+                        let hkind = HINTS[hi][2];
                         if (typeof pat === 'string') {
                             if (startSrc.indexOf(pat) !== -1) hint = hname;
                             continue;
                         }
-                        var hmt = startSrc.match(pat);
+                        const hmt = startSrc.match(pat);
                         if (!hmt) continue;
                         hint = hkind === 'index' ? hname + ':' + (hmt[1] || '0')
                             : hkind === 'name' ? hname + ':' + hmt[1]
@@ -6414,25 +6438,25 @@
         // Every change (ours or a human's) records (from_map, cell) -> to_map in
         // localStorage, so the second visit to that map needs no discovery. This is
         // what makes entering and leaving a house repeatable instead of a one-off.
-        var _DOOR_STORE = 'dofusFarm.doorCells';
-        var _KNOWN_DOORS = {
+        const _DOOR_STORE = 'dofusFarm.doorCells';
+        const _KNOWN_DOORS = {
             '145490435': { '146276352': 346 },
             '146276352': { '145490435': 451 }
         };
-        var _agentDoorMap = null;
-        var _agentDoorLoad = function() {
+        let _agentDoorMap = null;
+        const _agentDoorLoad = function() {
             if (_agentDoorMap) return _agentDoorMap;
             _agentDoorMap = {};
             try {
-                var raw = window.localStorage && window.localStorage.getItem(_DOOR_STORE);
-                var obj = raw ? JSON.parse(raw) : null;
+                const raw = window.localStorage && window.localStorage.getItem(_DOOR_STORE);
+                let obj = raw ? JSON.parse(raw) : null;
                 if (obj && typeof obj === 'object') _agentDoorMap = obj;
             } catch (e) {}
             return _agentDoorMap;
         };
-        var _agentDoorSave = function() {
+        const _agentDoorSave = function() {
             try {
-                var keys = Object.keys(_agentDoorMap || {});
+                const keys = Object.keys(_agentDoorMap || {});
                 while (keys.length > 400) {
                     delete _agentDoorMap[keys.shift()];
                 }
@@ -6440,16 +6464,16 @@
                     && window.localStorage.setItem(_DOOR_STORE, JSON.stringify(_agentDoorMap));
             } catch (e) {}
         };
-        var _agentDoorNote = function(fromMap, cell, toMap, how) {
+        const _agentDoorNote = function(fromMap, cell, toMap, how) {
             if (fromMap == null || cell == null || toMap == null) return;
             if (Number(fromMap) === Number(toMap)) return;
             // Map id 0 is "the client is between maps" (login, transition, fallout),
             // not a destination: recording it taught a door to nowhere (2026-10-29).
             if (!(Number(fromMap) > 0) || !(Number(toMap) > 0)
                     || !isFinite(Number(cell))) return;
-            var store = _agentDoorLoad();
-            var bucket = store[String(fromMap)] || (store[String(fromMap)] = {});
-            var prior = bucket[String(cell)];
+            const store = _agentDoorLoad();
+            const bucket = store[String(fromMap)] || (store[String(fromMap)] = {});
+            const prior = bucket[String(cell)];
             // A walked transition outranks an inferred one: the cell is known to
             // work, so an arrival guess must not replace it.
             if (prior && prior.via !== 'arrival' && how === 'arrival') return;
@@ -6457,31 +6481,31 @@
                                      via: how || 'walk' };
             _agentDoorSave();
         };
-        var _agentDoorForget = function(mapId, cell) {
-            var store = _agentDoorLoad();
-            var bucket = store[String(mapId)];
+        const _agentDoorForget = function(mapId, cell) {
+            const store = _agentDoorLoad();
+            const bucket = store[String(mapId)];
             if (!bucket || bucket[String(cell)] == null) return;
             delete bucket[String(cell)];
             _agentDoorSave();
         };
-        var _agentDoorList = function(mapId) {
-            var store = _agentDoorLoad();
-            var bucket = store[String(mapId)] || {};
-            var out = [];
-            var seen = {};
-            for (var k in bucket) {
+        const _agentDoorList = function(mapId) {
+            const store = _agentDoorLoad();
+            const bucket = store[String(mapId)] || {};
+            const out = [];
+            const seen = {};
+            for (const k in bucket) {
                 if (!Object.prototype.hasOwnProperty.call(bucket, k)) continue;
-                var v = bucket[k] || {};
-                var toMap = v.to != null ? Number(v.to) : null;
+                const v = bucket[k] || {};
+                const toMap = v.to != null ? Number(v.to) : null;
                 if (toMap != null) seen[toMap] = true;
                 out.push({ cell: Number(k), to_map: toMap,
                            at: v.at || null, via: v.via || 'walk' });
             }
-            var known = _KNOWN_DOORS[String(mapId)];
+            const known = _KNOWN_DOORS[String(mapId)];
             if (known) {
-                for (var to in known) {
+                for (const to in known) {
                     if (!Object.prototype.hasOwnProperty.call(known, to)) continue;
-                    var toNum = Number(to);
+                    const toNum = Number(to);
                     if (!seen[toNum]) {
                         out.push({ cell: Number(known[to]), to_map: toNum,
                                    at: null, via: 'known' });
@@ -6490,11 +6514,11 @@
             }
             return out;
         };
-        var _agentDoorFor = function(mapId, toMap) {
-            var list = _agentDoorList(mapId);
-            var inferred = null;
-            var known = null;
-            for (var i = 0; i < list.length; i++) {
+        const _agentDoorFor = function(mapId, toMap) {
+            const list = _agentDoorList(mapId);
+            let inferred = null;
+            let known = null;
+            for (let i = 0; i < list.length; i++) {
                 if (Number(list[i].to_map) !== Number(toMap)) continue;
                 if (list[i].via === 'walk') return list[i].cell;
                 if (list[i].via === 'known') {
@@ -6513,17 +6537,17 @@
         // move to complete. Neighbours are the client's own cell layout (14 per
         // row), checked with the renderer's walkability; `avoid` keeps the caller
         // off cells that mean something else (another map's border).
-        var _agentStepOffCell = function(cell, avoid) {
+        const _agentStepOffCell = function(cell, avoid) {
             if (cell == null) return null;
-            var mr = (window.isoEngine && window.isoEngine.mapRenderer) || null;
-            var around = [Number(cell) - 1, Number(cell) + 1,
+            const mr = (window.isoEngine && window.isoEngine.mapRenderer) || null;
+            const around = [Number(cell) - 1, Number(cell) + 1,
                           Number(cell) - 14, Number(cell) - 15,
                           Number(cell) - 13, Number(cell) + 13,
                           Number(cell) + 14, Number(cell) + 15];
-            for (var i = 0; i < around.length; i++) {
-                var cand = around[i];
+            for (let i = 0; i < around.length; i++) {
+                const cand = around[i];
                 if (avoid && avoid.indexOf(cand) >= 0) continue;
-                var walkable = false;
+                let walkable = false;
                 try {
                     walkable = !!(mr && typeof mr.isWalkable === 'function'
                         && mr.isWalkable(cand));
@@ -6549,29 +6573,29 @@
         // The failure callback fires synchronously with an error and the success
         // callback fires later on the server's confirmation, so a candidate that is
         // rejected does nothing and the loop simply tries the next one.
-        var _agentWalkBeside = function(targetCell, onArrive) {
-            var iso3 = window.isoEngine;
-            var report = { at: Date.now(), target: targetCell, tried: [], ok: null };
+        const _agentWalkBeside = function(targetCell, onArrive) {
+            const iso3 = window.isoEngine;
+            const report = { at: Date.now(), target: targetCell, tried: [], ok: null };
             window.__agentWalkBeside = report;
             if (targetCell == null || !iso3
                     || typeof iso3._movePlayerOnMap !== 'function') {
                 return null;
             }
-            var mr = (iso3.mapRenderer) || null;
-            var mine = null;
+            const mr = (iso3.mapRenderer) || null;
+            let mine = null;
             try {
-                var ua3 = iso3.actorManager && iso3.actorManager.userActor;
+                const ua3 = iso3.actorManager && iso3.actorManager.userActor;
                 mine = ua3 && ua3.cellId != null ? Number(ua3.cellId) : null;
             } catch (eMine) {}
-            var around = [Number(targetCell) - 1, Number(targetCell) + 1,
+            const around = [Number(targetCell) - 1, Number(targetCell) + 1,
                           Number(targetCell) - 14, Number(targetCell) - 15,
                           Number(targetCell) - 13, Number(targetCell) + 13,
                           Number(targetCell) + 14, Number(targetCell) + 15];
-            var cands = [];
-            for (var i = 0; i < around.length; i++) {
-                var cand = around[i];
+            const cands = [];
+            for (let i = 0; i < around.length; i++) {
+                let cand = around[i];
                 if (cand == null || cand <= 0 || isNaN(cand)) continue;
-                var walkable = false;
+                let walkable = false;
                 try {
                     walkable = !!(mr && typeof mr.isWalkable === 'function'
                         && mr.isWalkable(cand));
@@ -6586,9 +6610,9 @@
                 });
             }
             report.candidates = cands.slice(0);
-            for (var j = 0; j < cands.length; j++) {
-                var chosen = cands[j];
-                var moved = null;
+            for (let j = 0; j < cands.length; j++) {
+                const chosen = cands[j];
+                let moved = null;
                 try {
                     // The cell is bound per candidate rather than read from the loop
                     // variable: the success callback fires on the server's confirmation,
@@ -6620,31 +6644,31 @@
         // from geometry lists every walkable cell on that edge, and only one of them
         // is the crossing the server accepts; without advancing past a cell that was
         // reached and did not transition, the caller repeated it forever.
-        var _agentEdgeTry = {};
+        const _agentEdgeTry = {};
         // The sampler sees the map change but not which of the last cells was the
         // door, so our own walks leave a hint: a nav to a cell that is followed by
         // a change within a few seconds is that cell. A human's walk lands on the
         // star and stops there, which the sampler catches on its own.
-        var _agentDoorHint = null;
-        var _agentDoorWatch = { map: null, cell: null };
-        var _agentDoorTick = function() {
+        let _agentDoorHint = null;
+        const _agentDoorWatch = { map: null, cell: null };
+        const _agentDoorTick = function() {
             try {
-                var pd = window.gui && window.gui.playerData;
-                var pos = pd && pd.position;
-                var iso = window.isoEngine || null;
-                var ua = iso && iso.actorManager && iso.actorManager.userActor;
+                const pd = window.gui && window.gui.playerData;
+                const pos = pd && pd.position;
+                const iso = window.isoEngine || null;
+                const ua = iso && iso.actorManager && iso.actorManager.userActor;
                 // The live cell lives on the user actor (`cellId`); `position.cell`
                 // is not populated in this build and reading it recorded nothing.
-                var cell = ua && ua.cellId != null ? Number(ua.cellId)
+                let cell = ua && ua.cellId != null ? Number(ua.cellId)
                     : (pos && pos.cell != null ? Number(pos.cell) : null);
-                var mapId = pos && pos.mapId != null ? Number(pos.mapId)
+                let mapId = pos && pos.mapId != null ? Number(pos.mapId)
                     : (iso && iso.mapRenderer && iso.mapRenderer.map
                         && iso.mapRenderer.map.id != null
                         ? Number(iso.mapRenderer.map.id) : null);
                 if (mapId == null || !(mapId > 0)) return;
                 if (_agentDoorWatch.map != null && mapId !== _agentDoorWatch.map) {
-                    var from = _agentDoorWatch.cell;
-                    var hint = _agentDoorHint;
+                    let from = _agentDoorWatch.cell;
+                    const hint = _agentDoorHint;
                     if (hint && Number(hint.map) === Number(_agentDoorWatch.map)
                             && Date.now() - hint.at < 6000) {
                         from = hint.cell;
@@ -6660,11 +6684,11 @@
                     if (cell != null) _agentDoorNote(mapId, cell, _agentDoorWatch.map, 'arrival');
                     _agentDoorHint = null;
                 } else if (_agentDoorHint) {
-                    var stale = Date.now() - _agentDoorHint.at;
+                    const stale = Date.now() - _agentDoorHint.at;
                     if (stale > 6000) {
-                        var list = _agentDoorList(_agentDoorHint.map);
+                        const list = _agentDoorList(_agentDoorHint.map);
                         if (Number(_agentDoorHint.map) === Number(mapId)) {
-                            for (var d = 0; d < list.length; d++) {
+                            for (let d = 0; d < list.length; d++) {
                                 if (Number(list[d].cell) === Number(_agentDoorHint.cell)
                                         && list[d].via === 'arrival') {
                                     _agentDoorForget(_agentDoorHint.map, list[d].cell);
@@ -6679,7 +6703,13 @@
                 _agentDoorWatch.cell = cell;
             } catch (e) {}
         };
-        try { window.setInterval(_agentDoorTick, 400); } catch (e) {}
+        try {
+            if (typeof window.__agentRegisterPeriodicTick === 'function') {
+                window.__agentRegisterPeriodicTick(_agentDoorTick);
+            } else {
+                window.setInterval(_agentDoorTick, 500);
+            }
+        } catch (e) {}
 
         // A build that publishes no change-map flags still has borders, and the
         // border is geometry. The client's own `getChangeMapFlags` tests the `c` flag
@@ -6692,13 +6722,13 @@
         // crossing fell through to a ChangeMapMessage sent from an interior cell,
         // which the server refuses. The session sent 958 of those for 128 map
         // changes, most of them reconnects: "nowhere to go" was literal.
-        var _agentBorderCells = function (dir, cells, isWalkable) {
-            var out = [];
+        const _agentBorderCells = function (dir, cells, isWalkable) {
+            const out = [];
             if (!cells || !cells.length) return out;
-            var width = 14;              // the client's MAP_WIDTH
-            var total = cells.length;    // 560 for every map in this build
-            for (var i = 0; i < total; i++) {
-                var on = false;
+            const width = 14;              // the client's MAP_WIDTH
+            const total = cells.length;    // 560 for every map in this build
+            for (let i = 0; i < total; i++) {
+                let on = false;
                 if (dir === 'left') on = (i % width) === 0;
                 else if (dir === 'right') on = (i % width) === width - 1;
                 else if (dir === 'top') on = i <= 2 * width;
@@ -6707,11 +6737,11 @@
                 // A border cell nobody can stand on is not an exit. The renderer's
                 // own `isWalkable` reads bit 0 of `l` out of fight mode, which is
                 // the same test; prefer it so an obstacle update is respected.
-                var ok = false;
+                let ok = false;
                 if (typeof isWalkable === 'function') {
                     try { ok = !!isWalkable(i); } catch (eW) { ok = false; }
                 } else {
-                    var c = cells[i];
+                    const c = cells[i];
                     ok = !!(c && (Number(c.l) & 1));
                 }
                 if (ok) out.push(i);
@@ -6719,36 +6749,36 @@
             return out;
         };
 
-        var _agentMapDetails = function () {
-            var iso = window.isoEngine || null;
-            var pd = (window.gui && window.gui.playerData) || null;
-            var pos = (pd && pd.position) || {};
-            var coords = pos.coordinates || {};
-            var mapId = pos.mapId != null ? pos.mapId
+        const _agentMapDetails = function () {
+            const iso = window.isoEngine || null;
+            const pd = (window.gui && window.gui.playerData) || null;
+            const pos = (pd && pd.position) || {};
+            const coords = pos.coordinates || {};
+            const mapId = pos.mapId != null ? pos.mapId
                 : (iso && iso.mapData && iso.mapData.mapId != null
                     ? iso.mapData.mapId : null);
-            var playerCell = null;
+            let playerCell = null;
             try {
-                var ua = iso && iso.actorManager && iso.actorManager.userActor;
+                const ua = iso && iso.actorManager && iso.actorManager.userActor;
                 if (ua) {
                     playerCell = ua.cellId != null ? ua.cellId
                         : (ua.position && ua.position.cell != null
                             ? ua.position.cell : null);
                 }
             } catch (e) {}
-            var mr = iso && iso.mapRenderer;
-            var map = (mr && mr.map) || (iso && iso.mapData) || {};
-            var dirs = ['left', 'right', 'top', 'bottom'];
-            var keys = { left: 'leftNeighbourId', right: 'rightNeighbourId',
+            const mr = iso && iso.mapRenderer;
+            const map = (mr && mr.map) || (iso && iso.mapData) || {};
+            const dirs = ['left', 'right', 'top', 'bottom'];
+            const keys = { left: 'leftNeighbourId', right: 'rightNeighbourId',
                          top: 'topNeighbourId', bottom: 'bottomNeighbourId' };
-            var byDir = {};
+            const byDir = {};
             try {
-                var cells = map.cells || [];
+                const cells = map.cells || [];
                 if (mr && typeof mr.getChangeMapFlags === 'function') {
-                    for (var c = 0; c < cells.length; c++) {
-                        var flags = mr.getChangeMapFlags(c) || {};
-                        for (var fi = 0; fi < dirs.length; fi++) {
-                            var fd = dirs[fi];
+                    for (let c = 0; c < cells.length; c++) {
+                        const flags = mr.getChangeMapFlags(c) || {};
+                        for (let fi = 0; fi < dirs.length; fi++) {
+                            const fd = dirs[fi];
                             if (!flags[fd]) continue;
                             if (!byDir[fd]) byDir[fd] = [];
                             byDir[fd].push(c);
@@ -6756,24 +6786,24 @@
                     }
                 }
             } catch (e) {}
-            var playerScene = null;
+            let playerScene = null;
             try {
                 if (playerCell != null && mr
                         && typeof mr.getCellSceneCoordinate === 'function') {
                     playerScene = mr.getCellSceneCoordinate(playerCell);
                 }
             } catch (e) {}
-            var nearest = function (list) {
+            const nearest = function (list) {
                 if (!playerScene || !mr
                         || typeof mr.getCellSceneCoordinate !== 'function') {
                     return list.slice();
                 }
                 return list.slice().sort(function (a, b) {
-                    var ca = mr.getCellSceneCoordinate(a) || {};
-                    var cb = mr.getCellSceneCoordinate(b) || {};
-                    var da = (ca.x - playerScene.x) * (ca.x - playerScene.x)
+                    const ca = mr.getCellSceneCoordinate(a) || {};
+                    const cb = mr.getCellSceneCoordinate(b) || {};
+                    const da = (ca.x - playerScene.x) * (ca.x - playerScene.x)
                            + (ca.y - playerScene.y) * (ca.y - playerScene.y);
-                    var db = (cb.x - playerScene.x) * (cb.x - playerScene.x)
+                    const db = (cb.x - playerScene.x) * (cb.x - playerScene.x)
                            + (cb.y - playerScene.y) * (cb.y - playerScene.y);
                     return da - db;
                 });
@@ -6782,22 +6812,22 @@
             // only `left: 1234` cannot know the client will refuse that crossing, so
             // it walks to the edge and stalls. Carrying `blocked` lets the planner
             // route around it before spending the walk.
-            var tutorial = null;
+            let tutorial = null;
             try { tutorial = _agentTutorial(); } catch (e) { tutorial = null; }
-            var gate = (tutorial && tutorial.can_change_map) || null;
-            var neighbours = {};
-            var exits = [];
-            var walkTest = (mr && typeof mr.isWalkable === 'function')
+            const gate = (tutorial && tutorial.can_change_map) || null;
+            const neighbours = {};
+            const exits = [];
+            const walkTest = (mr && typeof mr.isWalkable === 'function')
                 ? function (i) { return mr.isWalkable(i); } : null;
-            var borderCache = {};
-            for (var di = 0; di < dirs.length; di++) {
-                var d = dirs[di];
-                var raw = map[keys[d]];
-                var nid = raw != null && Number(raw) > 0 ? Number(raw) : null;
+            const borderCache = {};
+            for (let di = 0; di < dirs.length; di++) {
+                const d = dirs[di];
+                const raw = map[keys[d]];
+                let nid = raw != null && Number(raw) > 0 ? Number(raw) : null;
                 if (nid != null) neighbours[d] = nid;
                 if (nid == null) continue;
-                var listed = (byDir[d] && byDir[d].length) ? byDir[d] : null;
-                var inferred = false;
+                let listed = (byDir[d] && byDir[d].length) ? byDir[d] : null;
+                let inferred = false;
                 if (!listed) {
                     // No cell carried the flag: fall back to the border geometry.
                     if (!borderCache[d]) {
@@ -6812,7 +6842,7 @@
                              inferred: inferred,
                              cells: nearest(listed).slice(0, 6) });
             }
-            var npcs = [];
+            let npcs = [];
             try {
                 npcs = _listNpcActors().slice(0, 20).map(function (n) {
                     return { npc_id: n.templateId, actor_id: n.contextualId,
@@ -6824,7 +6854,7 @@
                              quests_to_valid: n.quests_to_valid || [] };
                 });
             } catch (e) {}
-            var interactives = [];
+            let interactives = [];
             try {
                 interactives = _interactives().slice(0, 12).map(function (el) {
                     // `enabled_skills` is what tap.interactive needs when the
@@ -6845,20 +6875,20 @@
             // of a cell's `l` is walkable; the flags are static for a map, so pack
             // them once per map object and hand out the same string afterwards.
             // One bit per cell, four cells per hex digit: 560 cells -> 140 chars.
-            var terrain = null;
+            let terrain = null;
             try {
-                var tmap = (mr && mr.map) || (iso && iso.mapData) || null;
-                var tcells = tmap && tmap.cells;
+                const tmap = (mr && mr.map) || (iso && iso.mapData) || null;
+                const tcells = tmap && tmap.cells;
                 if (tcells && tcells.length) {
-                    var tcache = window.__agentTerrainCache;
+                    let tcache = window.__agentTerrainCache;
                     if (!tcache || tcache.map !== tmap || tcache.len !== tcells.length) {
-                        var hex = '';
-                        for (var ts = 0; ts < tcells.length; ts += 4) {
-                            var nibble = 0;
-                            for (var tk = 0; tk < 4; tk++) {
-                                var tix = ts + tk;
+                        let hex = '';
+                        for (let ts = 0; ts < tcells.length; ts += 4) {
+                            let nibble = 0;
+                            for (let tk = 0; tk < 4; tk++) {
+                                const tix = ts + tk;
                                 if (tix >= tcells.length) break;
-                                var tflags = Number(tcells[tix] && tcells[tix].l) || 0;
+                                const tflags = Number(tcells[tix] && tcells[tix].l) || 0;
                                 if (tflags & 1) nibble |= (1 << tk);
                             }
                             hex += nibble.toString(16);
@@ -6869,7 +6899,7 @@
                     terrain = tcache.hex;
                 }
             } catch (eT) { terrain = null; }
-            var allGroups = [];
+            let allGroups = [];
             try { allGroups = _listMonsterGroups(); } catch (e) { allGroups = []; }
             return {
                 map_id: mapId,
@@ -6905,51 +6935,51 @@
         // table. Everything here only reads. No handler spends a point,
         // equips, buys, lists or sells.
         // ------------------------------------------------------------------
-        var _agentDatabases = function() {
+        const _agentDatabases = function() {
             try { return (window.gui && window.gui.databases) || null; }
             catch (e) { return null; }
         };
-        var _agentDbTable = function(name) {
-            var dbs = _agentDatabases();
-            var t = dbs && dbs[name];
+        const _agentDbTable = function(name) {
+            const dbs = _agentDatabases();
+            let t = dbs && dbs[name];
             return (t && typeof t === 'object') ? t : null;
         };
-        var _agentDbRow = function(table, id) {
-            var t = _agentDbTable(table);
+        const _agentDbRow = function(table, id) {
+            const t = _agentDbTable(table);
             if (!t || id == null) return null;
             if (t[id] !== undefined && t[id] !== null) return t[id];
-            var k = String(id);
+            const k = String(id);
             return (t[k] !== undefined && t[k] !== null) ? t[k] : null;
         };
-        var _agentNum = function(v) {
+        const _agentNum = function(v) {
             if (v === null || v === undefined || v === '') return null;
-            var n = Number(v);
+            const n = Number(v);
             return isFinite(n) ? n : null;
         };
-        var _agentPick = function(row, names) {
+        const _agentPick = function(row, names) {
             if (!row || typeof row !== 'object') return null;
-            for (var i = 0; i < names.length; i++) {
-                var v = row[names[i]];
+            for (let i = 0; i < names.length; i++) {
+                const v = row[names[i]];
                 if (v !== undefined && v !== null) return v;
             }
             return null;
         };
-        var _agentCap = function(v, lo, hi, dflt) {
-            var n = _agentNum(v);
+        const _agentCap = function(v, lo, hi, dflt) {
+            let n = _agentNum(v);
             if (n == null) n = dflt;
             return Math.max(lo, Math.min(hi, Math.floor(n)));
         };
-        var _agentUpgradeCost = function(from, to) {
+        const _agentUpgradeCost = function(from, to) {
             // Total cost at grade L is L*(L-1)/2; the marginal L-1 -> L is L-1.
-            var sum = function(n) { return n > 0 ? n * (n - 1) / 2 : 0; };
+            const sum = function(n) { return n > 0 ? n * (n - 1) / 2 : 0; };
             return sum(to) - sum(from);
         };
-        var _agentReadStat = function(v) {
+        const _agentReadStat = function(v) {
             if (v === null || v === undefined) return null;
             if (typeof v === 'number') return { total: v };
-            var out = { total: null, base: null, equipment: null,
+            const out = { total: null, base: null, equipment: null,
                         bonus: null, additional: null };
-            var call = function(fn) {
+            const call = function(fn) {
                 try {
                     return (typeof v[fn] === 'function') ? _agentNum(v[fn]()) : null;
                 } catch (e) { return null; }
@@ -6967,11 +6997,11 @@
             return out;
         };
         function _agentExtractStats(chars) {
-            var stats = { strength: 0, intelligence: 0, chance: 0, agility: 0, vitality: 0, wisdom: 0 };
+            const stats = { strength: 0, intelligence: 0, chance: 0, agility: 0, vitality: 0, wisdom: 0 };
             if (!chars) return stats;
-            var readTotal = function(key) {
+            const readTotal = function(key) {
                 if (!chars[key]) return 0;
-                var r = _agentReadStat(chars[key]);
+                const r = _agentReadStat(chars[key]);
                 if (r) {
                     if (r.total != null && !isNaN(r.total)) return Number(r.total);
                     if (r.base != null && !isNaN(r.base)) return Number(r.base);
@@ -6987,14 +7017,14 @@
             return stats;
         };
         function _agentPrimaryElement(stats, pd) {
-            var s = stats || {};
-            var str = Number(s.strength) || 0;
-            var intl = Number(s.intelligence) || 0;
-            var cha = Number(s.chance) || 0;
-            var agi = Number(s.agility) || 0;
-            var maxVal = Math.max(str, intl, cha, agi);
+            const s = stats || {};
+            let str = Number(s.strength) || 0;
+            let intl = Number(s.intelligence) || 0;
+            let cha = Number(s.chance) || 0;
+            let agi = Number(s.agility) || 0;
+            const maxVal = Math.max(str, intl, cha, agi);
 
-            var highest = [];
+            const highest = [];
             if (str === maxVal && maxVal > 0) highest.push({ elem: 'earth', stat: 'strength', val: str });
             if (intl === maxVal && maxVal > 0) highest.push({ elem: 'fire', stat: 'intelligence', val: intl });
             if (cha === maxVal && maxVal > 0) highest.push({ elem: 'water', stat: 'chance', val: cha });
@@ -7003,23 +7033,23 @@
             if (highest.length === 1) return highest[0].elem;
 
             try {
-                var mc = pd && pd.characters && pd.characters.mainCharacter;
-                var sd = mc && mc.spellData;
+                const mc = pd && pd.characters && pd.characters.mainCharacter;
+                const sd = mc && mc.spellData;
                 if (sd && typeof sd.getSpellListDependingOnGameMode === 'function') {
-                    var elementOf = { 96: 'water', 97: 'earth', 98: 'air', 99: 'fire', 100: 'earth' };
-                    var spells = sd.getSpellListDependingOnGameMode() || {};
-                    var bestElem = null;
-                    var bestScore = -1;
-                    for (var k in spells) {
+                    const elementOf = { 96: 'water', 97: 'earth', 98: 'air', 99: 'fire', 100: 'earth' };
+                    const spells = sd.getSpellListDependingOnGameMode() || {};
+                    let bestElem = null;
+                    let bestScore = -1;
+                    for (const k in spells) {
                         if (!Object.prototype.hasOwnProperty.call(spells, k)) continue;
-                        var sp = spells[k];
+                        const sp = spells[k];
                         if (!sp || !sp.spellLevel) continue;
-                        var fx = sp.spellLevel.effects || [];
-                        for (var i = 0; i < fx.length; i++) {
-                            var e = fx[i] || {};
-                            var el = elementOf[Number(e.effectId)];
+                        const fx = sp.spellLevel.effects || [];
+                        for (let i = 0; i < fx.length; i++) {
+                            const e = fx[i] || {};
+                            const el = elementOf[Number(e.effectId)];
                             if (!el) continue;
-                            var mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
+                            const mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
                             if (mid > bestScore) {
                                 bestScore = mid;
                                 bestElem = el;
@@ -7033,26 +7063,26 @@
             if (highest.length > 0) return highest[0].elem;
             return 'earth';
         };
-        var _agentEffectList = function(list) {
-            var out = [];
+        const _agentEffectList = function(list) {
+            const out = [];
             if (!list) return out;
-            var arr = list;
+            let arr = list;
             if (Object.prototype.toString.call(list) !== '[object Array]') {
                 if (typeof list !== 'object') return out;
                 arr = [];
-                for (var k in list) {
+                for (const k in list) {
                     if (!Object.prototype.hasOwnProperty.call(list, k)) continue;
                     arr.push(list[k]);
                 }
             }
-            for (var i = 0; i < arr.length; i++) {
-                var eff = arr[i];
+            for (let i = 0; i < arr.length; i++) {
+                const eff = arr[i];
                 if (!eff || typeof eff !== 'object') continue;
-                var db = eff.effect || eff.effectData || eff.template || null;
-                var eid = _agentNum(_agentPick(eff, ['effectId', 'effect_id']));
+                const db = eff.effect || eff.effectData || eff.template || null;
+                let eid = _agentNum(_agentPick(eff, ['effectId', 'effect_id']));
                 if (eid == null) eid = _agentNum(_agentPick(eff, ['id']));
                 if (eid == null && db) eid = _agentNum(_agentPick(db, ['id', 'effectId']));
-                var row = {
+                const row = {
                     effect_id: eid,
                     element_id: _agentNum(_agentPick(eff, ['elementId', 'element_id'])),
                     dice_num: _agentNum(_agentPick(eff, ['diceNum', 'dice_num'])),
@@ -7069,8 +7099,8 @@
             }
             return out;
         };
-        var _agentItemType = function(typeId) {
-            var row = _agentDbRow('ItemTypes', typeId);
+        const _agentItemType = function(typeId) {
+            const row = _agentDbRow('ItemTypes', typeId);
             if (!row) return null;
             return {
                 id: _agentNum(_agentPick(row, ['id'])),
@@ -7083,29 +7113,29 @@
         // itemTypePositions table (the chat module). This is the only reliable
         // weapon/hat/cape test: superTypeId is the type family, typeId is the
         // concrete item type.
-        var _agentTypePositions = {
+        const _agentTypePositions = {
             1: [0], 2: [1], 3: [2, 4], 4: [3], 5: [5], 7: [15],
             8: [1], 10: [6], 11: [7], 12: [8],
             13: [9, 10, 11, 12, 13, 14], 15: [20], 16: [21],
             17: [22, 23], 18: [24, 25], 19: [26], 20: [27], 21: [16],
             23: [32], 24: [31], 26: [28], 27: [29], 28: [30]
         };
-        var _agentItemRow = function(gid, withEffects) {
+        const _agentItemRow = function(gid, withEffects) {
             gid = _agentNum(gid);
-            var row = _agentDbRow('Items', gid);
+            const row = _agentDbRow('Items', gid);
             if (!row) return { gid: gid, db: false };
-            var typeId = _agentNum(_agentPick(row, ['typeId', 'type_id']));
-            var typeRow = _agentItemType(typeId);
-            var sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
+            const typeId = _agentNum(_agentPick(row, ['typeId', 'type_id']));
+            const typeRow = _agentItemType(typeId);
+            let sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
             if (Object.prototype.toString.call(sets) !== '[object Array]') {
                 sets = (sets != null) ? [sets] : [];
             }
-            var setIds = [];
-            for (var i = 0; i < sets.length; i++) {
-                var sid = _agentNum(sets[i]);
+            const setIds = [];
+            for (let i = 0; i < sets.length; i++) {
+                const sid = _agentNum(sets[i]);
                 if (sid != null && sid > 0) setIds.push(sid);
             }
-            var out = {
+            const out = {
                 gid: gid,
                 db: true,
                 name_id: _agentNum(_agentPick(row, ['nameId', 'name_id'])),
@@ -7131,11 +7161,11 @@
             }
             return out;
         };
-        var _agentItemInstance = function(item, withEffects) {
+        const _agentItemInstance = function(item, withEffects) {
             if (!item || typeof item !== 'object') return null;
-            var gid = _agentNum(_agentPick(item, ['objectGID', 'objectGid', 'object_gid', 'gid']));
-            var uid = _agentNum(_agentPick(item, ['objectUID', 'objectUid', 'object_uid', 'uid']));
-            var out = {
+            const gid = _agentNum(_agentPick(item, ['objectGID', 'objectGid', 'object_gid', 'gid']));
+            const uid = _agentNum(_agentPick(item, ['objectUID', 'objectUid', 'object_uid', 'uid']));
+            const out = {
                 uid: uid,
                 gid: gid,
                 quantity: _agentNum(_agentPick(item, ['quantity', 'qty'])) || 1,
@@ -7147,41 +7177,41 @@
             }
             return out;
         };
-        var _agentSpellLevelRow = function(spell, levelId) {
+        const _agentSpellLevelRow = function(spell, levelId) {
             try {
-                var tables = spell && spell._tables;
-                var map = tables && (tables.spellLevels || tables.SpellLevels);
+                const tables = spell && spell._tables;
+                let map = tables && (tables.spellLevels || tables.SpellLevels);
                 if (map && typeof map === 'object' && map[levelId] != null) {
                     return map[levelId];
                 }
             } catch (e) {}
             return _agentDbRow('SpellLevels', levelId);
         };
-        var _agentSpellEntry = function(spell, playerLevel, withGrades, withEffects) {
+        const _agentSpellEntry = function(spell, playerLevel, withGrades, withEffects) {
             if (!spell) return null;
-            var id = _agentNum(_agentPick(spell, ['id']));
-            var nameId = null, breed = null, isItem = false, level = null;
+            const id = _agentNum(_agentPick(spell, ['id']));
+            let nameId = null, breed = null, isItem = false, level = null;
             try { if (typeof spell.getProperty === 'function') nameId = _agentNum(spell.getProperty('nameId')); } catch (e) {}
             try { if (typeof spell.getProperty === 'function') breed = _agentNum(spell.getProperty('spellBreed')); } catch (e) {}
             try { isItem = !!spell.isItem; } catch (e) {}
             try { level = _agentNum(spell.level); } catch (e) {}
-            var levelIds = [];
+            let levelIds = [];
             try {
                 if (Object.prototype.toString.call(spell.spellLevels) === '[object Array]') {
                     levelIds = spell.spellLevels;
                 }
             } catch (e) {}
-            var maxGrade = levelIds.length || 6;
-            var maxForLevel = 0;
-            var grades = [];
-            for (var i = 0; i < levelIds.length; i++) {
-                var lr = _agentSpellLevelRow(spell, levelIds[i]);
-                var minLvl = lr ? _agentNum(_agentPick(lr, ['minPlayerLevel', 'min_player_level'])) : null;
+            const maxGrade = levelIds.length || 6;
+            let maxForLevel = 0;
+            const grades = [];
+            for (let i = 0; i < levelIds.length; i++) {
+                const lr = _agentSpellLevelRow(spell, levelIds[i]);
+                const minLvl = lr ? _agentNum(_agentPick(lr, ['minPlayerLevel', 'min_player_level'])) : null;
                 if (lr && minLvl != null && playerLevel != null && playerLevel >= minLvl) {
                     maxForLevel = i + 1;
                 }
                 if (withGrades) {
-                    var grade = {
+                    const grade = {
                         grade: i + 1,
                         level_id: _agentNum(levelIds[i]),
                         min_player_level: minLvl,
@@ -7205,7 +7235,7 @@
                     grades.push(grade);
                 }
             }
-            var cur = level != null ? level : 0;
+            const cur = level != null ? level : 0;
             // A spell that is already at grade 3 was unlockable at that grade even
             // if a level row could not be read; never report a cap below the
             // level the server itself gave us.
@@ -7229,8 +7259,8 @@
                 grades: withGrades ? grades : undefined
             };
         };
-        var _agentPositionName = function(pos) {
-            var names = {
+        const _agentPositionName = function(pos) {
+            const names = {
                 0: 'amulet', 1: 'weapon', 2: 'ring_left', 3: 'belt',
                 4: 'ring_right', 5: 'boots', 6: 'hat', 7: 'cape',
                 8: 'pet', 9: 'dofus_1', 10: 'dofus_2', 11: 'dofus_3',
@@ -7244,18 +7274,18 @@
             };
             return names[pos] || ('position_' + pos);
         };
-        var _agentCharacterReport = function(args) {
+        const _agentCharacterReport = function(args) {
             args = args || {};
-            var pd = null, base = {}, pos = {}, coords = {}, main = null, chars = {};
+            let pd = null, base = {}, pos = {}, coords = {}, main = null, chars = {};
             try { pd = (window.gui && window.gui.playerData) || null; } catch (e) {}
             try { base = (pd && pd.characterBaseInformations) || {}; } catch (e) {}
             try { pos = (pd && pd.position) || {}; } catch (e) {}
             try { coords = pos.coordinates || {}; } catch (e) {}
             try { main = pd && pd.characters && pd.characters.mainCharacter; } catch (e) {}
             try { chars = (main && main.characteristics) || {}; } catch (e) {}
-            var level = _agentNum(_agentPick(base, ['level', 'experienceLevel']));
+            let level = _agentNum(_agentPick(base, ['level', 'experienceLevel']));
             if (level == null) level = _agentNum(_agentPick(chars, ['level']));
-            var statNames = ['strength', 'intelligence', 'chance', 'agility',
+            const statNames = ['strength', 'intelligence', 'chance', 'agility',
                 'wisdom', 'vitality', 'actionPoints', 'movementPoints', 'range',
                 'damagesBonusPercent', 'criticalHit', 'criticalDamageBonus',
                 'healBonus', 'damageBonus', 'earthDamageBonus', 'fireDamageBonus',
@@ -7268,14 +7298,14 @@
                 'actionPointsCurrent', 'movementPointsCurrent', 'lifePoints',
                 'maxLifePoints', 'effectiveMaxLifePoints', 'experience',
                 'experienceLevelFloor', 'experienceNextLevelFloor'];
-            var stats = {};
-            for (var si = 0; si < statNames.length; si++) {
-                var key = statNames[si];
+            const stats = {};
+            for (let si = 0; si < statNames.length; si++) {
+                const key = statNames[si];
                 if (chars[key] !== undefined && chars[key] !== null) {
                     stats[key] = _agentReadStat(chars[key]);
                 }
             }
-            var out = {
+            const out = {
                 at: Date.now(),
                 character: {
                     id: _agentNum(_agentPick(base, ['id'])),
@@ -7293,7 +7323,7 @@
                 stats: stats,
                 stat_keys: Object.keys(chars).slice(0, 100)
             };
-            var inv = null;
+            let inv = null;
             try { inv = pd && pd.inventory; } catch (e) {}
             out.inventory = inv ? {
                 kamas: _agentNum(inv.kamas),
@@ -7308,17 +7338,17 @@
                 gids: {}
             } : null;
 
-            var spellData = null;
+            let spellData = null;
             try { spellData = main && main.spellData; } catch (e) {}
-            var used = null;
+            let used = null;
             try {
                 if (spellData && typeof spellData.getUsedSpellPoints === 'function') {
                     used = _agentNum(spellData.getUsedSpellPoints());
                 }
             } catch (e) {}
-            var rawSpells = _agentNum(_agentPick(chars, ['spellsPoints']));
-            var rawAccount = _agentNum(_agentPick(chars, ['accountSpellsPoints']));
-            var budget = level != null ? level - 1 : null;
+            const rawSpells = _agentNum(_agentPick(chars, ['spellsPoints']));
+            const rawAccount = _agentNum(_agentPick(chars, ['accountSpellsPoints']));
+            const budget = level != null ? level - 1 : null;
             out.points = {
                 level: level,
                 used_spell_points: used,
@@ -7335,15 +7365,15 @@
                       'once on a live character to fix the interpretation.'
             };
 
-            var spells = [];
+            let spells = [];
             try {
-                var smap = spellData && spellData.spells;
-                for (var sid in smap) {
+                const smap = spellData && spellData.spells;
+                for (const sid in smap) {
                     if (!Object.prototype.hasOwnProperty.call(smap, sid)) continue;
-                    var sp = smap[sid];
+                    const sp = smap[sid];
                     if (!sp) continue;
                     if (sp.isItem && !args.include_item_spells) continue;
-                    var entry = _agentSpellEntry(sp, level, args.spell_grades !== false,
+                    const entry = _agentSpellEntry(sp, level, args.spell_grades !== false,
                                                  !!args.spell_effects);
                     if (entry) spells.push(entry);
                 }
@@ -7351,38 +7381,38 @@
             spells.sort(function(a, b) { return (a.spell_id || 0) - (b.spell_id || 0); });
             out.spells = spells;
 
-            var equipment = [];
-            var equippedSets = {};
-            var ownedBySet = {};
+            let equipment = [];
+            const equippedSets = {};
+            const ownedBySet = {};
             try {
-                var eq = (inv && inv.equippedItems) || {};
-                for (var pk in eq) {
+                const eq = (inv && inv.equippedItems) || {};
+                for (const pk in eq) {
                     if (!Object.prototype.hasOwnProperty.call(eq, pk)) continue;
-                    var inst = _agentItemInstance(eq[pk], true);
+                    const inst = _agentItemInstance(eq[pk], true);
                     if (!inst) continue;
                     inst.position_name = _agentPositionName(_agentNum(pk));
                     equipment.push(inst);
-                    var setIds = (inst.template && inst.template.set_ids) || [];
-                    for (var q = 0; q < setIds.length; q++) {
+                    const setIds = (inst.template && inst.template.set_ids) || [];
+                    for (let q = 0; q < setIds.length; q++) {
                         equippedSets[setIds[q]] = (equippedSets[setIds[q]] || 0) + 1;
                     }
                 }
-                var objs = (inv && inv.objects) || {};
-                var seen = 0;
-                for (var ok in objs) {
+                const objs = (inv && inv.objects) || {};
+                let seen = 0;
+                for (const ok in objs) {
                     if (!Object.prototype.hasOwnProperty.call(objs, ok)) continue;
                     if (seen++ > 2000) break;
-                    var oi = objs[ok];
-                    var og = _agentNum(_agentPick(oi, ['objectGID', 'objectGid', 'gid']));
+                    const oi = objs[ok];
+                    let og = _agentNum(_agentPick(oi, ['objectGID', 'objectGid', 'gid']));
                     if (og == null) continue;
-                    var tpl = _agentItemRow(og, false);
-                    var sids = tpl.set_ids || [];
-                    var qty = _agentNum(_agentPick(oi, ['quantity', 'qty'])) || 1;
+                    const tpl = _agentItemRow(og, false);
+                    const sids = tpl.set_ids || [];
+                    let qty = _agentNum(_agentPick(oi, ['quantity', 'qty'])) || 1;
                     if (out.inventory && out.inventory.gids
                             && Object.keys(out.inventory.gids).length < 2000) {
                         out.inventory.gids[og] = (out.inventory.gids[og] || 0) + qty;
                     }
-                    for (var r = 0; r < sids.length; r++) {
+                    for (let r = 0; r < sids.length; r++) {
                         if (!ownedBySet[sids[r]]) ownedBySet[sids[r]] = { gids: {}, qty: 0 };
                         ownedBySet[sids[r]].gids[og] = true;
                         ownedBySet[sids[r]].qty += qty;
@@ -7392,26 +7422,26 @@
             equipment.sort(function(a, b) { return (a.position || 0) - (b.position || 0); });
             out.equipment = equipment;
 
-            var setsOut = [];
+            const setsOut = [];
             try {
-                for (var setId in equippedSets) {
+                for (const setId in equippedSets) {
                     if (!Object.prototype.hasOwnProperty.call(equippedSets, setId)) continue;
-                    var setRow = _agentDbRow('ItemSets', setId) || null;
-                    var count = equippedSets[setId];
-                    var pieces = (setRow && _agentPick(setRow, ['items'])) || [];
+                    const setRow = _agentDbRow('ItemSets', setId) || null;
+                    const count = equippedSets[setId];
+                    let pieces = (setRow && _agentPick(setRow, ['items'])) || [];
                     if (Object.prototype.toString.call(pieces) !== '[object Array]') pieces = [];
-                    var effectsByCount = (setRow && _agentPick(setRow, ['effects'])) || [];
-                    var active = [];
+                    const effectsByCount = (setRow && _agentPick(setRow, ['effects'])) || [];
+                    let active = [];
                     if (Object.prototype.toString.call(effectsByCount) === '[object Array]'
                             && effectsByCount.length) {
-                        var idx = Math.min(Math.max(count - 1, 0), effectsByCount.length - 1);
+                        const idx = Math.min(Math.max(count - 1, 0), effectsByCount.length - 1);
                         active = _agentEffectList(effectsByCount[idx]);
                     }
-                    var missing = [];
-                    for (var pi = 0; pi < pieces.length; pi++) {
-                        var pg = _agentNum(pieces[pi]);
-                        var isOn = false;
-                        for (var ei = 0; ei < equipment.length; ei++) {
+                    const missing = [];
+                    for (let pi = 0; pi < pieces.length; pi++) {
+                        const pg = _agentNum(pieces[pi]);
+                        let isOn = false;
+                        for (let ei = 0; ei < equipment.length; ei++) {
                             if (equipment[ei].gid === pg) { isOn = true; break; }
                         }
                         if (!isOn) missing.push(pg);
@@ -7433,11 +7463,11 @@
             setsOut.sort(function(a, b) { return b.equipped_count - a.equipped_count; });
             out.sets = setsOut;
 
-            var dbs = _agentDatabases();
-            var counts = {};
-            var names = ['Items', 'ItemSets', 'ItemTypes', 'Effects', 'Spells', 'SpellLevels'];
-            for (var ni = 0; ni < names.length; ni++) {
-                var tb = dbs && dbs[names[ni]];
+            const dbs = _agentDatabases();
+            const counts = {};
+            const names = ['Items', 'ItemSets', 'ItemTypes', 'Effects', 'Spells', 'SpellLevels'];
+            for (let ni = 0; ni < names.length; ni++) {
+                let tb = dbs && dbs[names[ni]];
                 counts[names[ni]] = (tb && typeof tb === 'object')
                     ? Object.keys(tb).length : null;
             }
@@ -7449,44 +7479,44 @@
             };
             return _agentResult(!!main, out, main ? null : 'mainCharacter is not loaded (not in world?)');
         };
-        var _agentItemDbReport = function(args) {
+        const _agentItemDbReport = function(args) {
             args = args || {};
-            var dbs = _agentDatabases();
-            var table = dbs && dbs.Items;
+            const dbs = _agentDatabases();
+            const table = dbs && dbs.Items;
             if (!table) return _agentResult(false, null, 'Items database is not loaded');
-            var gid = _agentNum(args.gid);
-            var gids = {};
+            let gid = _agentNum(args.gid);
+            const gids = {};
             if (Object.prototype.toString.call(args.gids) === '[object Array]') {
-                for (var gi = 0; gi < args.gids.length && gi < 200; gi++) {
-                    var gv = _agentNum(args.gids[gi]);
+                for (let gi = 0; gi < args.gids.length && gi < 200; gi++) {
+                    const gv = _agentNum(args.gids[gi]);
                     if (gv != null) gids[gv] = true;
                 }
             }
-            var levelMin = _agentNum(args.level_min);
-            var levelMax = _agentNum(args.level_max);
-            var typeId = _agentNum(args.type_id);
-            var setId = _agentNum(args.set_id);
-            var offset = _agentCap(args.offset, 0, 2147483647, 0);
-            var limit = _agentCap(args.limit, 1, 200, 50);
-            var withEffects = args.with_effects !== false;
-            var matched = [];
-            for (var k in table) {
+            const levelMin = _agentNum(args.level_min);
+            const levelMax = _agentNum(args.level_max);
+            const typeId = _agentNum(args.type_id);
+            const setId = _agentNum(args.set_id);
+            const offset = _agentCap(args.offset, 0, 2147483647, 0);
+            const limit = _agentCap(args.limit, 1, 200, 50);
+            const withEffects = args.with_effects !== false;
+            const matched = [];
+            for (const k in table) {
                 if (!Object.prototype.hasOwnProperty.call(table, k)) continue;
-                var row = table[k];
+                const row = table[k];
                 if (!row || typeof row !== 'object') continue;
-                var id = _agentNum(_agentPick(row, ['id']));
+                let id = _agentNum(_agentPick(row, ['id']));
                 if (id == null) id = _agentNum(k);
                 if (gid != null && id !== gid) continue;
                 if (gid == null && Object.keys(gids).length && !gids[id]) continue;
-                var lvl = _agentNum(_agentPick(row, ['level']));
+                let lvl = _agentNum(_agentPick(row, ['level']));
                 if (levelMin != null && (lvl == null || lvl < levelMin)) continue;
                 if (levelMax != null && (lvl == null || lvl > levelMax)) continue;
                 if (typeId != null && _agentNum(_agentPick(row, ['typeId', 'type_id'])) !== typeId) continue;
                 if (setId != null) {
-                    var sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
+                    let sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
                     if (Object.prototype.toString.call(sets) !== '[object Array]') sets = sets != null ? [sets] : [];
-                    var hit = false;
-                    for (var s = 0; s < sets.length; s++) {
+                    let hit = false;
+                    for (let s = 0; s < sets.length; s++) {
                         if (_agentNum(sets[s]) === setId) { hit = true; break; }
                     }
                     if (!hit) continue;
@@ -7497,9 +7527,9 @@
                 }
             }
             matched.sort(function(a, b) { return a - b; });
-            var page = matched.slice(offset, offset + limit);
-            var rows = [];
-            for (var p = 0; p < page.length; p++) {
+            const page = matched.slice(offset, offset + limit);
+            const rows = [];
+            for (let p = 0; p < page.length; p++) {
                 rows.push(_agentItemRow(page[p], withEffects));
             }
             return _agentResult(true, {
@@ -7509,42 +7539,42 @@
                 rows: rows
             });
         };
-        var _agentEffectDbReport = function(args) {
+        const _agentEffectDbReport = function(args) {
             args = args || {};
-            var dbs = _agentDatabases();
-            var table = dbs && dbs.Effects;
+            const dbs = _agentDatabases();
+            const table = dbs && dbs.Effects;
             if (!table) return _agentResult(false, null, 'Effects database is not loaded');
-            var wanted = [];
-            var seen = {};
+            let wanted = [];
+            const seen = {};
             if (Object.prototype.toString.call(args.ids) === '[object Array]') {
-                for (var i = 0; i < args.ids.length && wanted.length < 60; i++) {
-                    var id = _agentNum(args.ids[i]);
+                for (let i = 0; i < args.ids.length && wanted.length < 60; i++) {
+                    const id = _agentNum(args.ids[i]);
                     if (id != null && !seen[id]) { seen[id] = true; wanted.push(id); }
                 }
             }
-            var allIds = Object.keys(table);
-            var out = {
+            const allIds = Object.keys(table);
+            const out = {
                 count: allIds.length,
                 sample_ids: allIds.slice(0, 40).map(Number),
                 rows: [],
                 keys: null
             };
             if (!wanted.length) {
-                var limit = _agentCap(args.limit, 1, 60, 20);
-                var offset = _agentCap(args.offset, 0, allIds.length, 0);
+                const limit = _agentCap(args.limit, 1, 60, 20);
+                const offset = _agentCap(args.offset, 0, allIds.length, 0);
                 wanted = allIds.slice(offset, offset + limit).map(Number);
             }
-            var keySet = {};
-            for (var w = 0; w < wanted.length; w++) {
-                var row = _agentDbRow('Effects', wanted[w]);
+            const keySet = {};
+            for (let w = 0; w < wanted.length; w++) {
+                const row = _agentDbRow('Effects', wanted[w]);
                 if (!row || typeof row !== 'object') {
                     out.rows.push({ effect_id: wanted[w], db: false });
                     continue;
                 }
-                var item = { effect_id: wanted[w], db: true };
-                for (var f in row) {
+                const item = { effect_id: wanted[w], db: true };
+                for (const f in row) {
                     if (!Object.prototype.hasOwnProperty.call(row, f)) continue;
-                    var v = row[f];
+                    let v = row[f];
                     if (v === null || v === undefined) continue;
                     if (typeof v === 'object') continue;
                     if (Object.keys(keySet).length < 40) keySet[f] = true;
@@ -7555,15 +7585,15 @@
             out.keys = Object.keys(keySet);
             return _agentResult(true, out);
         };
-        var _agentMarketCapture = function(args) {
+        const _agentMarketCapture = function(args) {
             args = args || {};
-            var now = Date.now();
-            var refreshed = false;
-            var requestError = null;
+            const now = Date.now();
+            let refreshed = false;
+            let requestError = null;
             if (args.refresh) {
                 if (!__PriceCache.averageRequestedAt
                         || now - __PriceCache.averageRequestedAt > 120000) {
-                    var r = _cmSend('ObjectAveragePricesGetMessage', {});
+                    const r = _cmSend('ObjectAveragePricesGetMessage', {});
                     if (r.ok) {
                         __PriceCache.averageRequestedAt = now;
                         refreshed = true;
@@ -7572,36 +7602,36 @@
                     }
                 }
             }
-            var avg = __PriceCache.average;
-            var gids = [];
+            const avg = __PriceCache.average;
+            const gids = [];
             if (Object.prototype.toString.call(args.gids) === '[object Array]') {
-                for (var i = 0; i < args.gids.length && i < 500; i++) {
-                    var g = _agentNum(args.gids[i]);
+                for (let i = 0; i < args.gids.length && i < 500; i++) {
+                    const g = _agentNum(args.gids[i]);
                     if (g != null) gids.push(g);
                 }
             }
-            var total = Object.keys(avg).length;
-            var offset = _agentCap(args.offset, 0, Math.max(total, 0), 0);
-            var limit = _agentCap(args.limit, 1, 20000, 2000);
-            var prices = [];
+            const total = Object.keys(avg).length;
+            const offset = _agentCap(args.offset, 0, Math.max(total, 0), 0);
+            const limit = _agentCap(args.limit, 1, 20000, 2000);
+            const prices = [];
             if (gids.length) {
-                for (var gi = 0; gi < gids.length; gi++) {
+                for (let gi = 0; gi < gids.length; gi++) {
                     if (avg[gids[gi]] != null) prices.push([gids[gi], avg[gids[gi]]]);
                 }
             } else {
-                var ids = Object.keys(avg).map(Number).sort(function(a, b) { return a - b; });
-                var page = ids.slice(offset, offset + limit);
-                for (var p = 0; p < page.length; p++) {
+                const ids = Object.keys(avg).map(Number).sort(function(a, b) { return a - b; });
+                const page = ids.slice(offset, offset + limit);
+                for (let p = 0; p < page.length; p++) {
                     prices.push([page[p], avg[page[p]]]);
                 }
             }
-            var listingGids = gids.length ? gids
+            const listingGids = gids.length ? gids
                 : Object.keys(__PriceCache.listings).map(Number).slice(0, limit);
-            var listingLimit = _agentCap(args.listing_limit, 0, 500, 200);
-            var listings = {};
-            var listingCount = 0;
-            for (var li = 0; li < listingGids.length && listingCount < listingLimit; li++) {
-                var st = __PriceCache.stats(listingGids[li]);
+            const listingLimit = _agentCap(args.listing_limit, 0, 500, 200);
+            const listings = {};
+            let listingCount = 0;
+            for (let li = 0; li < listingGids.length && listingCount < listingLimit; li++) {
+                const st = __PriceCache.stats(listingGids[li]);
                 if (st) {
                     listings[listingGids[li]] = st;
                     listingCount++;
@@ -7627,13 +7657,13 @@
 
         // The windows the client itself reports as open, by the names its window
         // manager uses ("grimoire > quests", "worldMap"). Read-only.
-        var _agentWindowManager = function() {
+        const _agentWindowManager = function() {
             try {
-                var wc = window.gui && window.gui.windowsContainer;
-                var mgr = wc && wc.windowManager;
+                const wc = window.gui && window.gui.windowsContainer;
+                let mgr = wc && wc.windowManager;
                 if (!mgr && wc) {
-                    var kids = wc._childrenList || [];
-                    for (var i = 0; i < kids.length && !mgr; i++) {
+                    const kids = wc._childrenList || [];
+                    for (let i = 0; i < kids.length && !mgr; i++) {
                         if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
                     }
                 }
@@ -7641,11 +7671,11 @@
             } catch (e) {}
             return null;
         };
-        var _agentOpenWindows = function() {
+        const _agentOpenWindows = function() {
             try {
-                var mgr = _agentWindowManager();
+                const mgr = _agentWindowManager();
                 if (mgr && typeof mgr.getOpenWindows === 'function') {
-                    var list = mgr.getOpenWindows();
+                    const list = mgr.getOpenWindows();
                     if (Object.prototype.toString.call(list) === '[object Array]') {
                         return list.map(String);
                     }
@@ -7656,26 +7686,26 @@
         // The menu bar as the client renders it: key, localized label, position.
         // The planner used to hold a French→key table; the label is published
         // data, so read it here and let the loop learn it instead.
-        var _agentMenuIcons = function() {
-            var out = [];
-            var nodes = null;
+        const _agentMenuIcons = function() {
+            const out = [];
+            let nodes = null;
             try { nodes = document.querySelectorAll('[class*="menuIcon"]'); }
             catch (e) { nodes = null; }
-            for (var i = 0; nodes && i < nodes.length; i++) {
-                var el = nodes[i];
-                var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            for (let i = 0; nodes && i < nodes.length; i++) {
+                const el = nodes[i];
+                const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
                 if (!r || !r.width || !r.height) continue;
-                var cls = String(el.className || '');
-                var m = cls.match(/menuIcon([A-Za-z]+)/);
-                var label = '';
+                const cls = String(el.className || '');
+                const m = cls.match(/menuIcon([A-Za-z]+)/);
+                let label = '';
                 try {
                     label = String(el.getAttribute('aria-label') || el.getAttribute('title')
                                   || el.getAttribute('data-title') || el.getAttribute('alt') || '');
                 } catch (eLab) { label = ''; }
                 if (!label) {
                     try {
-                        var txt = '';
-                        for (var c = 0; c < el.childNodes.length; c++) {
+                        let txt = '';
+                        for (let c = 0; c < el.childNodes.length; c++) {
                             if (el.childNodes[c].nodeType === 3) txt += el.childNodes[c].nodeValue;
                         }
                         if (!txt && el.textContent) txt = String(el.textContent);
@@ -7697,10 +7727,10 @@
         // e === conditionTypeEnum.SHOP_LOADED }), so re-pressing the floating shop
         // button while "market > shop" is already open is a no-op the step never
         // sees. Closing first makes the press an opening again.
-        var _agentCloseWindow = function(name) {
-            var mgr = _agentWindowManager();
+        const _agentCloseWindow = function(name) {
+            const mgr = _agentWindowManager();
             if (!mgr || typeof mgr.close !== 'function') return false;
-            var win = null;
+            let win = null;
             try {
                 win = typeof mgr.getWindow === 'function' ? mgr.getWindow(name) : null;
             } catch (e) { win = null; }
@@ -7711,17 +7741,17 @@
         // press succeed, and every press is another auth attempt. The client's own
         // popup is the only place this is stated, so read it from the visible text
         // once and let the caller stop instead of retrying.
-        var _agentLoginBanAt = 0;
-        var _agentLoginBanText = { banned: false };
-        var _agentLoginBan = function() {
-            var now = Date.now();
+        let _agentLoginBanAt = 0;
+        let _agentLoginBanText = { banned: false };
+        const _agentLoginBan = function() {
+            const now = Date.now();
             if (now - _agentLoginBanAt < 2000) return _agentLoginBanText;
             _agentLoginBanAt = now;
             _agentLoginBanText = { banned: false };
             try {
-                var body = document.body;
-                var txt = body && typeof body.innerText === 'string' ? body.innerText : '';
-                var m = txt.match(/(?:permanently banned|permanently suspended|account (?:has been|is) banned|banni(?:e)? d[ée]finitivement|compte[^\n]{0,40}banni|access (?:has been )?revoked|accessdenied|ui\.popup\.accessdenied|acc[eè]s r[ée]voqu[ée])/i);
+                const body = document.body;
+                const txt = body && typeof body.innerText === 'string' ? body.innerText : '';
+                const m = txt.match(/(?:permanently banned|permanently suspended|account (?:has been|is) banned|banni(?:e)? d[ée]finitivement|compte[^\n]{0,40}banni|access (?:has been )?revoked|accessdenied|ui\.popup\.accessdenied|acc[eè]s r[ée]voqu[ée])/i);
                 if (m) {
                     _agentLoginBanText = {
                         banned: true,
@@ -7735,8 +7765,8 @@
                 // the popup -- waiting cannot fix it -- so it reads as a ban too.
                 if (!_agentLoginBanText.banned) {
                     try {
-                        var cool = _loginCooldown();
-                        var why = cool && String(cool.reason || '');
+                        const cool = _loginCooldown();
+                        const why = cool && String(cool.reason || '');
                         if (why && /accessdenied|access has been revoked|ui\.popup\.accessdenied/i.test(why)) {
                             _agentLoginBanText = {
                                 banned: true,
@@ -7751,10 +7781,10 @@
         };
         // A window object, but only while it is open: the tutorial helpers all
         // gate on `openState` before pointing at anything inside.
-        var _agentOpenWindowObject = function(name) {
+        const _agentOpenWindowObject = function(name) {
             try {
-                var mgr = _agentWindowManager();
-                var win = mgr && typeof mgr.getWindow === 'function'
+                const mgr = _agentWindowManager();
+                const win = mgr && typeof mgr.getWindow === 'function'
                     ? mgr.getWindow(name) : null;
                 return win && win.openState ? win : null;
             } catch (e) {}
@@ -7779,45 +7809,45 @@
         //   sell_info         -> getWindow("tradeStorage").infoButton
         //   bestiary_monster  -> grimoire tab bestiary: getMonsterWithDrop([drop])
         //   bestiary_drop     -> getDropDomFromMonster(getMonsterWithDrop([drop]))
-        var _agentClientTarget = function(name) {
+        const _agentClientTarget = function(name) {
             try {
-                var parts = String(name || '').split(':');
-                var kind = parts[0];
-                var arg = parts.length > 1 ? parts[1] : null;
-                var idx = arg != null && /^\d+$/.test(arg) ? parseInt(arg, 10) : null;
+                const parts = String(name || '').split(':');
+                let kind = parts[0];
+                const arg = parts.length > 1 ? parts[1] : null;
+                let idx = arg != null && /^\d+$/.test(arg) ? parseInt(arg, 10) : null;
                 if (kind === 'challenge') {
-                    var g = window.gui;
-                    var slot = g && g.challengeIndicator && g.challengeIndicator.challengeSlot;
+                    const g = window.gui;
+                    const slot = g && g.challengeIndicator && g.challengeIndicator.challengeSlot;
                     return slot ? (slot.rootElement || slot) : null;
                 }
                 if (kind === 'contextual_menu' || kind === 'npc_menu') {
-                    var wmC = _agentWindowManager();
-                    var menu = wmC && typeof wmC.getContextMenu === 'function'
+                    const wmC = _agentWindowManager();
+                    const menu = wmC && typeof wmC.getContextMenu === 'function'
                         ? wmC.getContextMenu(kind === 'npc_menu' ? 'npc' : 'interactive')
                         : null;
-                    var kids = menu && menu.actionsContainer
+                    const kids = menu && menu.actionsContainer
                         && typeof menu.actionsContainer.getChildren === 'function'
                         ? menu.actionsContainer.getChildren() : null;
-                    var action = kids ? kids[idx == null ? 0 : idx] : null;
+                    const action = kids ? kids[idx == null ? 0 : idx] : null;
                     return action ? (action.rootElement || action) : null;
                 }
                 if (kind === 'trade_validate') {
-                    var tw = _agentOpenWindowObject('tradeWithNPC');
-                    var vbtn = tw && typeof tw.getValidateBtn === 'function'
+                    const tw = _agentOpenWindowObject('tradeWithNPC');
+                    const vbtn = tw && typeof tw.getValidateBtn === 'function'
                         ? tw.getValidateBtn() : null;
                     return vbtn ? (vbtn.rootElement || vbtn) : null;
                 }
                 if (kind === 'trade_slot') {
-                    var iw = _agentOpenWindowObject('tradeWithPlayerAndNPCInventory');
-                    var islot = iw && typeof iw.getStorageFirstSlotForTuto === 'function'
+                    const iw = _agentOpenWindowObject('tradeWithPlayerAndNPCInventory');
+                    const islot = iw && typeof iw.getStorageFirstSlotForTuto === 'function'
                         ? iw.getStorageFirstSlotForTuto() : null;
                     return islot ? (islot.rootElement || islot) : null;
                 }
                 if (kind === 'craft_recipe' || kind === 'craft_merge') {
-                    var cw = _agentOpenWindowObject('crafting');
-                    var cbtn = null;
+                    const cw = _agentOpenWindowObject('crafting');
+                    let cbtn = null;
                     if (cw && kind === 'craft_recipe') {
-                        var recipe = typeof cw.getFirstRecipe === 'function'
+                        const recipe = typeof cw.getFirstRecipe === 'function'
                             ? cw.getFirstRecipe() : null;
                         cbtn = recipe && recipe.craftButton;
                     } else if (cw && typeof cw.getMergeBtn === 'function') {
@@ -7826,18 +7856,18 @@
                     return cbtn ? (cbtn.rootElement || cbtn) : null;
                 }
                 if (kind === 'craft_slot') {
-                    var invName = null;
+                    let invName = null;
                     try {
                         invName = window.gui.playerData.jobs.getCorrectCraftingInventory();
                     } catch (eInv) { invName = null; }
-                    var cinv = invName ? _agentOpenWindowObject(invName) : null;
-                    var cslot = cinv && typeof cinv.getStorageFirstSlotForTuto === 'function'
+                    const cinv = invName ? _agentOpenWindowObject(invName) : null;
+                    const cslot = cinv && typeof cinv.getStorageFirstSlotForTuto === 'function'
                         ? cinv.getStorageFirstSlotForTuto() : null;
                     return cslot ? (cslot.rootElement || cslot) : null;
                 }
                 if (kind === 'shop_category' || kind === 'shop_item') {
-                    var sw = _agentOpenWindowObject('bidHouseShop');
-                    var sdom = null;
+                    const sw = _agentOpenWindowObject('bidHouseShop');
+                    let sdom = null;
                     if (sw) {
                         if (kind === 'shop_category') {
                             sdom = typeof sw.getCategoryDom === 'function'
@@ -7850,21 +7880,21 @@
                     return sdom ? (sdom.rootElement || sdom) : null;
                 }
                 if (kind === 'sell_info') {
-                    var sew = _agentOpenWindowObject('tradeStorage');
-                    var ibtn = sew && sew.infoButton;
+                    const sew = _agentOpenWindowObject('tradeStorage');
+                    const ibtn = sew && sew.infoButton;
                     return ibtn ? (ibtn.rootElement || ibtn) : null;
                 }
                 if (kind === 'bestiary_monster' || kind === 'bestiary_drop') {
-                    var grimoireW = null;
+                    let grimoireW = null;
                     try {
-                        var wmB = _agentWindowManager();
+                        const wmB = _agentWindowManager();
                         grimoireW = wmB && typeof wmB.getWindow === 'function'
                             ? wmB.getWindow('grimoire') : null;
                     } catch (eGw) { grimoireW = null; }
-                    var btab = grimoireW && grimoireW.tabs && grimoireW.tabs.tabsMap
+                    const btab = grimoireW && grimoireW.tabs && grimoireW.tabs.tabsMap
                         ? grimoireW.tabs.tabsMap.bestiary : null;
-                    var btarget = btab && btab.target;
-                    var monster = null;
+                    const btarget = btab && btab.target;
+                    let monster = null;
                     if (btarget && typeof btarget.getMonsterWithDrop === 'function') {
                         monster = idx != null ? btarget.getMonsterWithDrop(idx)
                             : btarget.getMonsterWithDrop();
@@ -7874,18 +7904,18 @@
                     if (kind === 'bestiary_monster') {
                         return monster.rootElement || monster;
                     }
-                    var drop = typeof btarget.getDropDomFromMonster === 'function'
+                    const drop = typeof btarget.getDropDomFromMonster === 'function'
                         ? btarget.getDropDomFromMonster(monster) : null;
                     return drop ? (drop.rootElement || drop) : null;
                 }
                 if (kind === 'spell_upgrade_confirm') {
-                    var wm = _agentWindowManager();
-                    var grimoire = wm && typeof wm.getWindow === 'function'
+                    const wm = _agentWindowManager();
+                    const grimoire = wm && typeof wm.getWindow === 'function'
                         ? wm.getWindow('grimoire') : null;
-                    var tab = grimoire && grimoire.tabs && grimoire.tabs.tabsMap
+                    const tab = grimoire && grimoire.tabs && grimoire.tabs.tabsMap
                         && grimoire.tabs.tabsMap.spells;
-                    var book = tab && tab.target && tab.target.spellBook;
-                    var button = book && book.confirmButton;
+                    const book = tab && tab.target && tab.target.spellBook;
+                    const button = book && book.confirmButton;
                     return button ? (button.rootElement || button) : null;
                 }
                 if (name === 'spell_plus') {
@@ -7893,25 +7923,25 @@
                     // spell's "+" press to reveal the confirm button. The first
                     // visible, enabled plus in the spell table is that press; the
                     // DOM class is the fallback when the table object is rebuilt.
-                    var wm2 = _agentWindowManager();
-                    var gr2 = wm2 && typeof wm2.getWindow === 'function'
+                    const wm2 = _agentWindowManager();
+                    const gr2 = wm2 && typeof wm2.getWindow === 'function'
                         ? wm2.getWindow('grimoire') : null;
-                    var tab2 = gr2 && gr2.tabs && gr2.tabs.tabsMap
+                    const tab2 = gr2 && gr2.tabs && gr2.tabs.tabsMap
                         && gr2.tabs.tabsMap.spells;
-                    var book2 = tab2 && tab2.target && tab2.target.spellBook;
-                    var table = book2 && book2.table;
-                    var pick = null;
+                    const book2 = tab2 && tab2.target && tab2.target.spellBook;
+                    const table = book2 && book2.table;
+                    let pick = null;
                     try {
-                        for (var sid in (book2 && book2.spellMap) || {}) {
+                        for (const sid in (book2 && book2.spellMap) || {}) {
                             if (!Object.prototype.hasOwnProperty.call(book2.spellMap, sid)) continue;
-                            var cell = table && typeof table.getCell === 'function'
+                            const cell = table && typeof table.getCell === 'function'
                                 ? table.getCell(sid, 'rank') : null;
-                            var btn = cell && cell.plusBtn;
+                            const btn = cell && cell.plusBtn;
                             if (!btn) continue;
                             if (btn._enable === false) continue;
                             try { if (btn.isVisible && !btn.isVisible()) continue; } catch (eVis) {}
-                            var bel = btn.rootElement || btn;
-                            var br = bel && bel.getBoundingClientRect
+                            const bel = btn.rootElement || btn;
+                            const br = bel && bel.getBoundingClientRect
                                 ? bel.getBoundingClientRect() : null;
                             if (!br || !br.width || !br.height) continue;
                             pick = bel;
@@ -7919,11 +7949,11 @@
                         }
                     } catch (ePlus) { pick = null; }
                     if (!pick && typeof document !== 'undefined') {
-                        var plusNodes = document.querySelectorAll('.addSignButton');
-                        for (var pi = 0; pi < plusNodes.length; pi++) {
-                            var pel = plusNodes[pi];
+                        const plusNodes = document.querySelectorAll('.addSignButton');
+                        for (let pi = 0; pi < plusNodes.length; pi++) {
+                            const pel = plusNodes[pi];
                             if (!pel || (pel.className || '').toString().indexOf('disabled') !== -1) continue;
-                            var pr = pel.getBoundingClientRect ? pel.getBoundingClientRect() : null;
+                            const pr = pel.getBoundingClientRect ? pel.getBoundingClientRect() : null;
                             if (!pr || !pr.width || !pr.height) continue;
                             pick = pel;
                             break;
@@ -7936,9 +7966,9 @@
         };
         // The client's own tap path. Not a shortcut into the window manager: this
         // is the event sequence a finger produces on a wui button.
-        var _agentUiTap = function(el) {
-            var r = el.getBoundingClientRect();
-            var o = { clientX: Math.round(r.left + r.width / 2),
+        const _agentUiTap = function(el) {
+            const r = el.getBoundingClientRect();
+            const o = { clientX: Math.round(r.left + r.width / 2),
                       clientY: Math.round(r.top + r.height / 2),
                       bubbles: true, cancelable: true, view: window };
             el.dispatchEvent(new PointerEvent('pointerdown', o));
@@ -7957,33 +7987,33 @@
         // drop target is resolved by the client from the release *coordinates*
         // (document.elementFromPoint inside the manager), so the destination is
         // carried in clientX/clientY rather than by the event target.
-        var _agentUiDrag = function(src, dst) {
-            var rs = src.getBoundingClientRect();
-            var rd = dst.getBoundingClientRect();
-            var sx = Math.round(rs.left + rs.width / 2);
-            var sy = Math.round(rs.top + rs.height / 2);
-            var dx = Math.round(rd.left + rd.width / 2);
-            var dy = Math.round(rd.top + rd.height / 2);
-            var body = null;
+        const _agentUiDrag = function(src, dst) {
+            const rs = src.getBoundingClientRect();
+            const rd = dst.getBoundingClientRect();
+            const sx = Math.round(rs.left + rs.width / 2);
+            const sy = Math.round(rs.top + rs.height / 2);
+            const dx = Math.round(rd.left + rd.width / 2);
+            const dy = Math.round(rd.top + rd.height / 2);
+            let body = null;
             try {
                 body = window.gui && window.gui.wBody && window.gui.wBody.rootElement;
             } catch (eBody) { body = null; }
-            var surface = body || document;
-            var fire = function(el, type, x, y, buttons) {
-                var o = { clientX: x, clientY: y, screenX: x, screenY: y,
+            const surface = body || document;
+            const fire = function(el, type, x, y, buttons) {
+                const o = { clientX: x, clientY: y, screenX: x, screenY: y,
                           button: 0, buttons: buttons, bubbles: true,
                           cancelable: true, view: window };
-                var ev = (type.indexOf('pointer') === 0
+                const ev = (type.indexOf('pointer') === 0
                           && typeof PointerEvent !== 'undefined')
                     ? new PointerEvent(type, o) : new MouseEvent(type, o);
                 el.dispatchEvent(ev);
             };
             fire(src, 'pointerdown', sx, sy, 1);
             fire(src, 'mousedown', sx, sy, 1);
-            var steps = 6;
-            for (var s = 1; s <= steps; s++) {
-                var x = Math.round(sx + (dx - sx) * s / steps);
-                var y = Math.round(sy + (dy - sy) * s / steps);
+            const steps = 6;
+            for (let s = 1; s <= steps; s++) {
+                const x = Math.round(sx + (dx - sx) * s / steps);
+                const y = Math.round(sy + (dy - sy) * s / steps);
                 fire(surface, 'pointermove', x, y, 1);
                 fire(surface, 'mousemove', x, y, 1);
             }
@@ -7993,9 +8023,9 @@
                      surface: body ? 'wBody' : 'document' };
         };
 
-        var _agentHandlers = {
+        const _agentHandlers = {
             'safe.stop': function(args) {
-                var stopped = { auto_fight: false, follow: false };
+                const stopped = { auto_fight: false, follow: false };
                 try {
                     if (window.__FarmBot && window.__FarmBot.enabled) {
                         window.__FarmBot.setEnabled(false);
@@ -8006,19 +8036,19 @@
                 return _agentResult(true, { stopped: stopped, reason: (args && args.reason) || null });
             },
             'farm.start': function(args) {
-                var started = false;
-                var s = null;
-                var harvest = null;
+                let started = false;
+                let s = null;
+                let harvest = null;
                 // A named mob is a focus order. Find a group containing it
                 // before enabling anything: with no match on this map, enabling
                 // the generic bot would farm unrelated groups, which is exactly
                 // what "farm bouftou" must not do. The caller can travel/explore
                 // and ask again.
-                var wanted = args && args.monster ? parseInt(args.monster, 10) : null;
-                var targetGroupId = null;
+                const wanted = args && args.monster ? parseInt(args.monster, 10) : null;
+                let targetGroupId = null;
                 if (wanted) {
-                    var hunt = _findMonsterGroup(wanted);
-                    var targetGroup = hunt.group;
+                    const hunt = _findMonsterGroup(wanted);
+                    const targetGroup = hunt.group;
                     if (!targetGroup) {
                         // "not on this map" is only useful if the answer says what *was* on the
                         // map: a wrong generic id in the goal, a map whose groups hold another
@@ -8048,7 +8078,7 @@
                         // Idempotent: a scheduler that re-issues farm.start must
                         // not wipe kills/kamas every cycle. A fresh session is
                         // explicit (restart) or implicit when the bot was off.
-                        var restart = !!(args && args.restart);
+                        const restart = !!(args && args.restart);
                         if (!window.__FarmBot.enabled || restart) {
                             window.__FarmBot.resetSession();
                         }
@@ -8066,13 +8096,13 @@
                 // agent asked for a resource, take the nearest interactive element
                 // on this map; walking to it is still the client's job.
                 if (started && args && args.resource) {
-                    var list = _interactives();
-                    var target = null;
-                    for (var i = 0; i < list.length; i++) {
+                    const list = _interactives();
+                    let target = null;
+                    for (let i = 0; i < list.length; i++) {
                         if (list[i].skillInstanceUid != null) { target = list[i]; break; }
                     }
                     if (target) {
-                        var r = _cmSend('InteractiveUseRequestMessage',
+                        const r = _cmSend('InteractiveUseRequestMessage',
                             { elemId: target.elemId, skillInstanceUid: target.skillInstanceUid });
                         harvest = r.ok
                             ? { elem_id: target.elemId, skill_instance_uid: target.skillInstanceUid, cell: target.cell }
@@ -8098,7 +8128,7 @@
                 }, started ? null : 'FarmBot unavailable');
             },
             'farm.stop': function() {
-                var s = null;
+                let s = null;
                 try {
                     if (window.__FarmBot) {
                         window.__FarmBot.setEnabled(false);
@@ -8124,9 +8154,9 @@
             // selector (`.join-fight`) that almost certainly does not exist in this
             // client, which is why it returned ok and nothing happened.
             'fight.join': function(args) {
-                var pdF = (window.gui && window.gui.playerData) || null;
-                var fmF = (window.gui && window.gui.fightManager) || null;
-                var managerFight = false;
+                const pdF = (window.gui && window.gui.playerData) || null;
+                const fmF = (window.gui && window.gui.fightManager) || null;
+                let managerFight = false;
                 try { managerFight = !!(fmF && fmF.isInFight && fmF.isInFight()); } catch (e) {}
                 if (!!(pdF && pdF.isFighting) || managerFight) {
                     if (window.__FarmBot) window.__FarmBot.setEnabled(true);
@@ -8135,35 +8165,35 @@
                     return _agentResult(true, { in_fight: true,
                         auto_fight: !!(window.__FarmBot && window.__FarmBot.enabled) });
                 }
-                var lifeF = _agentLife();
+                const lifeF = _agentLife();
                 if (!lifeF.alive) {
                     return _agentResult(false, { life: lifeF.life, max: lifeF.max,
                         life_state: lifeF.state },
                         'the character is dead (life ' + lifeF.life + '); '
                         + 'revive before fighting');
                 }
-                var am = window.actorManager
+                const am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
-                var iso = window.isoEngine || null;
-                var actors = am ? am.actors : null;
+                const iso = window.isoEngine || null;
+                const actors = am ? am.actors : null;
                 if (!actors) return _agentResult(false, null, 'actorManager unavailable');
-                var want = parseInt(args && args.group_id, 10) || null;
+                const want = parseInt(args && args.group_id, 10) || null;
                 // The planner names a monster, not a group: an objective says "fight
                 // monster 447", and only the client knows which group contains it. The
                 // contract used to declare `target` while the planner sent `monster` and
                 // this handler read `group_id` - three names with no overlap, so a fight
                 // objective was rejected by the schema before it reached the game.
-                var wantMonster = parseInt(args && args.monster, 10) || null;
-                var pick = want ? (actors[want] || null) : null;
-                var pickKey = pick ? want : null;
+                const wantMonster = parseInt(args && args.monster, 10) || null;
+                let pick = want ? (actors[want] || null) : null;
+                let pickKey = pick ? want : null;
                 if (!pick) {
                     // The same search the named-mob branch of `farm.start` runs, so a group that
                     // one of them can find cannot be invisible to the other.
-                    var found = _findMonsterGroup(wantMonster);
+                    const found = _findMonsterGroup(wantMonster);
                     pick = found.group;
                     pickKey = found.key;
                     if (!pick && wantMonster) {
-                        var where = found.groups
+                        const where = found.groups
                             ? (found.monsters.length ? 'here: ' + found.monsters.join(',')
                                 : found.groups + ' groups, no member id read')
                             : 'no monster groups on this map';
@@ -8180,7 +8210,7 @@
                 // Actors are keyed by contextual id and carry it as `actorId`;
                 // `contextualId`/`id` are undefined (the NPC reader had the same
                 // defect). Fall back to the map key, which is that same id.
-                var gid = pick.actorId != null ? pick.actorId
+                let gid = pick.actorId != null ? pick.actorId
                     : (pick.contextualId != null ? pick.contextualId
                     : (pick.id != null ? pick.id : Number(pickKey)));
                 if (gid == null || isNaN(Number(gid))) {
@@ -8189,15 +8219,15 @@
                         'monster group actor has no contextual id');
                 }
                 gid = Number(gid);
-                var cell = pick.cellId != null ? pick.cellId : (pick.position && pick.position.cell);
-                var ua = am.userActor;
-                var attack = function () {
-                    var result = _cmSend('GameRolePlayAttackMonsterRequestMessage', { monsterGroupId: gid });
+                const cell = pick.cellId != null ? pick.cellId : (pick.position && pick.position.cell);
+                const ua = am.userActor;
+                const attack = function () {
+                    const result = _cmSend('GameRolePlayAttackMonsterRequestMessage', { monsterGroupId: gid });
                     if (result.ok && window.__FarmBot) window.__FarmBot.setEnabled(true);
                     return result;
                 };
                 if (ua && ua.cellId === cell) {
-                    var r0 = attack();
+                    const r0 = attack();
                     window.__agentLastFight = { at: Date.now(), stage: r0.ok ? 'attacked' : 'attack_failed',
                         group_id: gid, cell: cell, error: r0.ok ? null : String(r0.error || '') };
                     return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked',
@@ -8213,7 +8243,7 @@
                     window.__agentLastFight = { at: Date.now(), stage: 'walk_then_attack',
                         group_id: gid, cell: cell };
                     iso._movePlayerOnMap(cell, false, function () {
-                        var result = attack();
+                        const result = attack();
                         window.__agentLastFight = { at: Date.now(),
                             stage: result.ok ? 'attacked' : 'attack_failed',
                             group_id: gid, cell: cell,
@@ -8228,30 +8258,30 @@
             },
             'fight.pass': function() { return _agentResult(true, _agentCommander('PASS_TURN')); },
             'fight.state': function() {
-                var gui = window.gui || {};
-                var fm = gui.fightManager || null;
-                var pd = gui.playerData || null;
-                var am = window.actorManager
+                const gui = window.gui || {};
+                const fm = gui.fightManager || null;
+                const pd = gui.playerData || null;
+                const am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
                 if (!fm || !pd || !am) {
                     return _agentResult(false, null, 'combat managers unavailable');
                 }
-                var num = function(value) {
+                const num = function(value) {
                     if (value === null || value === undefined || value === '') return null;
-                    var parsed = Number(value);
+                    const parsed = Number(value);
                     return isFinite(parsed) ? parsed : null;
                 };
-                var text = function(value) {
+                const text = function(value) {
                     return typeof value === 'string' && value ? value : null;
                 };
-                var effects = function(list) {
-                    var out = [];
+                const effects = function(list) {
+                    const out = [];
                     if (!list || !list.length) return out;
-                    for (var i = 0; i < list.length; i++) {
-                        var effect = list[i] || {};
-                        var params = [];
-                        for (var p = 1; p <= 3; p++) {
-                            var param = num(effect['param' + p]);
+                    for (let i = 0; i < list.length; i++) {
+                        const effect = list[i] || {};
+                        const params = [];
+                        for (let p = 1; p <= 3; p++) {
+                            const param = num(effect['param' + p]);
                             if (param !== null) params.push(param);
                         }
                         out.push({
@@ -8277,30 +8307,30 @@
                 // level; the object is output-only and never mutated by the caller.
                 // A level-up changes `spell.level`, so it gets a new key; the cap only
                 // exists so a long session cannot grow this without bound.
-                var spellFactsCache = window.__agentSpellFactsCache;
+                let spellFactsCache = window.__agentSpellFactsCache;
                 if (!spellFactsCache) {
                     spellFactsCache = window.__agentSpellFactsCache = { facts: {}, n: 0 };
                 }
-                var fighterSpellFacts = function(spell, spellId) {
+                const fighterSpellFacts = function(spell, spellId) {
                     if (!spell) return { id: num(spellId) };
-                    var spellNum = num(spellId) !== null ? num(spellId) : num(spell.id);
-                    var spellLevel = num(spell.level);
-                    var key = (spellNum !== null && spellLevel !== null)
+                    const spellNum = num(spellId) !== null ? num(spellId) : num(spell.id);
+                    const spellLevel = num(spell.level);
+                    const key = (spellNum !== null && spellLevel !== null)
                         ? spellNum + ':' + spellLevel : null;
                     if (key !== null
                         && Object.prototype.hasOwnProperty.call(spellFactsCache.facts, key)) {
                         return spellFactsCache.facts[key];
                     }
-                    var level = spell.spellLevel || null;
-                    var ap = num(level && level.apCost);
+                    const level = spell.spellLevel || null;
+                    let ap = num(level && level.apCost);
                     if (ap === null) ap = num(spell.apCost);
-                    var name = null;
+                    let name = null;
                     try { name = text(spell.name); } catch (e) {}
                     if (!name && level) name = text(level.name);
                     if (!name) {
                         try { name = text(spell.getName && spell.getName()); } catch (e) {}
                     }
-                    var facts = {
+                    let facts = {
                         id: spellNum,
                         name: name,
                         level: spellLevel,
@@ -8327,15 +8357,15 @@
                     }
                     return facts;
                 };
-                var chars = pd.characters || {};
-                var base = pd.characterBaseInformations || {};
-                var myId = num(chars.controlledCharacterId);
+                const chars = pd.characters || {};
+                const base = pd.characterBaseInformations || {};
+                let myId = num(chars.controlledCharacterId);
                 if (myId === null) myId = num(base.id);
                 if (myId === null && am.userActor) myId = num(am.userActor.actorId);
-                var inFight = false;
+                let inFight = false;
                 try { inFight = !!(pd.isFighting || (fm.isInFight && fm.isInFight())); } catch (e) {}
 
-                var state = {
+                const state = {
                     available: true,
                     in_fight: inFight,
                     in_preparation: false,
@@ -8359,19 +8389,19 @@
                 // is (l & 5) === 1 in the client's own isWalkable(). Read them here so
                 // the planner does not need a second call, a map cache, or a guess.
                 try {
-                    var map = window.isoEngine && window.isoEngine.mapRenderer
+                    const map = window.isoEngine && window.isoEngine.mapRenderer
                         && window.isoEngine.mapRenderer.map;
-                    var mapCells = map && map.cells;
+                    const mapCells = map && map.cells;
                     if (mapCells && mapCells.length) {
                         // Cell flags are static for a map. Converting 560 cells
                         // through num() on every fight decision was repeat work;
                         // cache by the renderer map object and hand out a copy
                         // (the caller owns and may mutate state.cells).
-                        var cellsCache = window.__agentCellsCache;
+                        let cellsCache = window.__agentCellsCache;
                         if (!cellsCache || cellsCache.map !== map
                             || cellsCache.len !== mapCells.length) {
-                            var flags = [];
-                            for (var ci = 0; ci < mapCells.length; ci++) {
+                            const flags = [];
+                            for (let ci = 0; ci < mapCells.length; ci++) {
                                 flags.push(num(mapCells[ci] && mapCells[ci].l));
                             }
                             cellsCache = window.__agentCellsCache = {
@@ -8384,15 +8414,15 @@
                     state.in_preparation = !!(fm.isInFightPreparation
                         && fm.isInFightPreparation());
                 } catch (e) {}
-                var current = num(fm.currentFighterId);
+                let current = num(fm.currentFighterId);
                 state.is_my_turn = current !== null && myId !== null && current === myId;
-                var turnStarted = num(fm.turnStartTime);
+                const turnStarted = num(fm.turnStartTime);
                 if (turnStarted !== null && turnStarted > 0) {
                     state.turn_started_ms_ago = Math.max(0, Date.now() - turnStarted);
                 }
                 if (myId !== null) {
                     try {
-                        var mine = am.getActor ? am.getActor(myId) : null;
+                        const mine = am.getActor ? am.getActor(myId) : null;
                         state.my_cell = mine && mine.cellId != null
                             ? num(mine.cellId)
                             : (pd.position && pd.position.cell != null
@@ -8401,33 +8431,33 @@
                 }
 
                 if (inFight) {
-                    var seen = {};
-                    var ids = [];
-                    var addId = function(id) {
-                        var value = num(id);
+                    const seen = {};
+                    const ids = [];
+                    const addId = function(id) {
+                        let value = num(id);
                         if (value === null || seen[value]) return;
                         seen[value] = true;
                         ids.push(value);
                     };
                     try {
-                        var actorIds = (typeof am.getActorsIDList === 'function')
+                        const actorIds = (typeof am.getActorsIDList === 'function')
                             ? am.getActorsIDList() : [];
-                        for (var i = 0; i < actorIds.length; i++) addId(actorIds[i]);
+                        for (let i = 0; i < actorIds.length; i++) addId(actorIds[i]);
                     } catch (e) {}
                     try {
-                        var fighterIds = fm._fighters ? Object.keys(fm._fighters) : [];
-                        for (var j = 0; j < fighterIds.length; j++) addId(fighterIds[j]);
+                        const fighterIds = fm._fighters ? Object.keys(fm._fighters) : [];
+                        for (let j = 0; j < fighterIds.length; j++) addId(fighterIds[j]);
                     } catch (e) {}
 
-                    for (var k = 0; k < ids.length; k++) {
-                        var id = ids[k];
-                        var actor = null;
-                        var fighter = null;
+                    for (let k = 0; k < ids.length; k++) {
+                        let id = ids[k];
+                        let actor = null;
+                        let fighter = null;
                         try { actor = am.getActor ? am.getActor(id) : null; } catch (e) {}
                         try { fighter = fm.getFighter ? fm.getFighter(id) : null; } catch (e) {}
                         if (!actor && !fighter) continue;
-                        var data = (fighter && fighter.data) || (actor && actor.data) || {};
-                        var stats = data.stats || {};
+                        const data = (fighter && fighter.data) || (actor && actor.data) || {};
+                        const stats = data.stats || {};
                         // One sample per team of the keys this build really puts on each of
                         // the three objects a fighter is made of. The stats maxima are now
                         // read by name below, and this row is what proves that the bundle's
@@ -8437,13 +8467,13 @@
                         // monster-identity and enemy-offence features the model wants have no
                         // known source yet -- looking is cheaper than guessing (G25).
                         // Cached per fight and per bag, so a long fight does not repeat it.
-                        var sampleFightKeys = function (storeName, bag) {
-                            var cache = window[storeName];
+                        const sampleFightKeys = function (storeName, bag) {
+                            let cache = window[storeName];
                             if (!cache || cache.fight !== state.fight_id) {
                                 cache = window[storeName] =
                                     {fight: state.fight_id, me: null, enemy: null};
                             }
-                            var slot = (myId !== null && id === myId) ? 'me' : 'enemy';
+                            const slot = (myId !== null && id === myId) ? 'me' : 'enemy';
                             if (!cache[slot]) {
                                 try { cache[slot] = Object.keys(bag || {}).slice(0, 60); }
                                 catch (e) { cache[slot] = []; }
@@ -8453,7 +8483,7 @@
                         state.stat_keys = sampleFightKeys('__agentFightStatKeys', stats);
                         state.data_keys = sampleFightKeys('__agentFightDataKeys', data);
                         state.fighter_keys = sampleFightKeys('__agentFightObjectKeys', fighter);
-                        var rawSpellList = [];
+                        let rawSpellList = [];
                         try {
                             if (Array.isArray(data.spells)) rawSpellList = data.spells;
                             else if (data.spells && typeof data.spells === 'object') rawSpellList = Object.keys(data.spells);
@@ -8462,34 +8492,34 @@
                                     ? data.spellIds : Object.keys(data.spellIds);
                             }
                         } catch (e) {}
-                        var spellMap = {};
+                        let spellMap = {};
                         try { spellMap = (fighter && fighter.spells) || {}; } catch (e) {}
-                        var spellIds = [];
-                        var seenSpells = {};
-                        var addSpell = function(value) {
-                            var sid = num(value);
+                        const spellIds = [];
+                        const seenSpells = {};
+                        const addSpell = function(value) {
+                            let sid = num(value);
                             if (sid === null || seenSpells[sid]) return;
                             seenSpells[sid] = true;
                             spellIds.push(sid);
                         };
-                        for (var sl = 0; sl < rawSpellList.length; sl++) addSpell(rawSpellList[sl]);
-                        for (var sm in spellMap) {
+                        for (let sl = 0; sl < rawSpellList.length; sl++) addSpell(rawSpellList[sl]);
+                        for (const sm in spellMap) {
                             if (Object.prototype.hasOwnProperty.call(spellMap, sm)) addSpell(sm);
                         }
-                        var fighterSpells = [];
-                        for (var ei = 0; ei < spellIds.length; ei++) {
+                        const fighterSpells = [];
+                        for (let ei = 0; ei < spellIds.length; ei++) {
                             fighterSpells.push(fighterSpellFacts(spellMap[spellIds[ei]], spellIds[ei]));
                         }
-                        var onTeam = false;
+                        let onTeam = false;
                         try { onTeam = !!fm.isFighterOnUsersTeam(id); } catch (e) {}
-                        var cell = actor && actor.cellId != null ? num(actor.cellId) : null;
+                        let cell = actor && actor.cellId != null ? num(actor.cellId) : null;
                         if (cell === null && data.disposition && data.disposition.cellId != null) {
                             cell = num(data.disposition.cellId);
                         }
-                        var states = [];
+                        const states = [];
                         try {
-                            var rawStates = (fighter && fighter.states) || [];
-                            for (var s = 0; s < rawStates.length && states.length < 32; s++) {
+                            const rawStates = (fighter && fighter.states) || [];
+                            for (let s = 0; s < rawStates.length && states.length < 32; s++) {
                                 if (typeof rawStates[s] === 'number'
                                     || typeof rawStates[s] === 'string') {
                                     states.push(rawStates[s]);
@@ -8568,7 +8598,7 @@
                             spells: fighterSpells
                         });
                         if (id !== myId) {
-                            for (var ri = 0; ri < spellIds.length; ri++) {
+                            for (let ri = 0; ri < spellIds.length; ri++) {
                                 if (spellMap[spellIds[ri]]) continue;
                                 // Read-only cache fill: the client's own spell loader.
                                 try { fm.getFighterSpell(spellIds[ri], id, function() {}); } catch (e) {}
@@ -8577,7 +8607,7 @@
                     }
                 }
 
-                var controlled = null;
+                let controlled = null;
                 try {
                     controlled = chars.getControlledCharacter
                         ? chars.getControlledCharacter() : (chars.mainCharacter || null);
@@ -8586,8 +8616,8 @@
                 // getTotalStat() is base + equipment + bonuses, which is what the damage
                 // formula consumes. Reading `.strength` alone would hand the solver an
                 // object and silently poison every estimate.
-                var charStat = function(name) {
-                    var stat = controlled && controlled.characteristics
+                const charStat = function(name) {
+                    const stat = controlled && controlled.characteristics
                         ? controlled.characteristics[name] : null;
                     if (!stat) return null;
                     try {
@@ -8623,10 +8653,10 @@
                 // It reads only sources already in this handler -- the character sheet, and
                 // the my_stats block built above -- and only into slots that are still null.
                 // Nothing here invents a value for another fighter.
-                for (var fi = 0; fi < state.fighters.length; fi++) {
-                    var selfFighter = state.fighters[fi];
+                for (let fi = 0; fi < state.fighters.length; fi++) {
+                    const selfFighter = state.fighters[fi];
                     if (!selfFighter || !selfFighter.is_me) continue;
-                    var sheet = null;
+                    let sheet = null;
                     try {
                         sheet = pd.characters && pd.characters.mainCharacter
                             && pd.characters.mainCharacter.characteristics;
@@ -8644,34 +8674,34 @@
                         }
                     }
                 }
-                var spellList = {};
+                let spellList = {};
                 try {
                     spellList = (controlled && controlled.spellData
                         && controlled.spellData.getSpellListDependingOnGameMode)
                         ? controlled.spellData.getSpellListDependingOnGameMode()
                         : ((controlled && controlled.spells) || {});
                 } catch (e) {}
-                var prop = function(spell, name, fallback) {
+                const prop = function(spell, name, fallback) {
                     try {
-                        var value = spell.getProperty ? spell.getProperty(name) : null;
+                        let value = spell.getProperty ? spell.getProperty(name) : null;
                         return value === undefined ? fallback : value;
                     } catch (e) { return fallback; }
                 };
-                for (var key in spellList) {
+                for (const key in spellList) {
                     if (!Object.prototype.hasOwnProperty.call(spellList, key)) continue;
-                    var spell = spellList[key];
-                    var spellId = num(spell && spell.id);
+                    const spell = spellList[key];
+                    let spellId = num(spell && spell.id);
                     if (spellId === null) spellId = num(key);
                     if (spellId === null || !spell) continue;
-                    var level = spell.spellLevel || null;
-                    var levelId = null;
+                    const level = spell.spellLevel || null;
+                    let levelId = null;
                     try {
                         levelId = typeof spell.getSpellLevelId === 'function'
                             ? num(spell.getSpellLevelId()) : null;
                     } catch (e) {}
                     if (levelId === null && level) levelId = num(level.id);
-                    var castable = false;
-                    var castableError = null;
+                    let castable = false;
+                    let castableError = null;
                     try {
                         castable = myId !== null && !!fm.canCastThisSpell(myId, spellId);
                     } catch (eCast) {
@@ -8686,15 +8716,15 @@
                         castable = null;
                         castableError = String((eCast && eCast.message) || eCast);
                     }
-                    var name = null;
+                    let name = null;
                     try { name = text(spell.getName ? spell.getName() : null); } catch (e) {}
-                    var castsThisTurn = null;
+                    let castsThisTurn = null;
                     try {
                         if (fm.spellCastCounts && fm.spellCastCounts[spellId] != null) {
                             castsThisTurn = num(fm.spellCastCounts[spellId]);
                         }
                     } catch (e) {}
-                    var spellFacts = {
+                    const spellFacts = {
                         id: spellId,
                         name: name,
                         level: num(spell.level) !== null ? num(spell.level) : null,
@@ -8725,7 +8755,7 @@
                     };
                     state.spells.push(spellFacts);
                 }
-                var lastActions = [];
+                const lastActions = [];
                 // The ring first, for the same reason `_battleLog` prefers it: the client
                 // clears `fightMessagesStack` when a fight ends, and this block read the
                 // stack directly, so `last_actions` was [] on all 333 recorded boards while
@@ -8735,11 +8765,11 @@
                 // why the monster-spell table never populated (ARCH_REASSESSMENT XII.18).
                 try {
                     try { _agentHarvestStack(); } catch (eH) {}
-                    var actionRing = window.__agentBattleRing || [];
+                    const actionRing = window.__agentBattleRing || [];
                     if (actionRing.length) {
-                        var ringFrom = Math.max(0, actionRing.length - 48);
-                        for (var ri = ringFrom; ri < actionRing.length; ri++) {
-                            var rr = actionRing[ri];
+                        const ringFrom = Math.max(0, actionRing.length - 48);
+                        for (let ri = ringFrom; ri < actionRing.length; ri++) {
+                            const rr = actionRing[ri];
                             if (!rr) continue;
                             lastActions.push({
                                 type: rr.type,
@@ -8764,11 +8794,11 @@
                     }
                 } catch (eRing) {}
                 if (!lastActions.length) try {
-                    var stack = fm.fightMessagesStack || fm._fightMessagesStack || [];
-                    var start = Math.max(0, stack.length - 48);
-                    for (var ai = start; ai < stack.length; ai++) {
-                        var msg = stack[ai] || {};
-                        var mt = text(msg._messageType);
+                    const stack = fm.fightMessagesStack || fm._fightMessagesStack || [];
+                    const start = Math.max(0, stack.length - 48);
+                    for (let ai = start; ai < stack.length; ai++) {
+                        const msg = stack[ai] || {};
+                        const mt = text(msg._messageType);
                         if (!mt) continue;
                         lastActions.push({
                             type: mt,
@@ -8801,8 +8831,8 @@
                 try { state.battle_log = _battleLog(800); } catch (eBl) { state.battle_log = []; }
                 try { state.challenges = _challenges(); } catch (eCh2) { state.challenges = []; }
                 try { state.spell_cast_counts = fm.spellCastCounts || {}; } catch (e) {}
-                for (var la = 0; la < lastActions.length; la++) {
-                    var lastAction = lastActions[la];
+                for (let la = 0; la < lastActions.length; la++) {
+                    const lastAction = lastActions[la];
                     if (!lastAction.spell_id || lastAction.source_id === null
                         || lastAction.source_id === myId) continue;
                     // Load the spell descriptor the first time a monster casts it.
@@ -8834,19 +8864,19 @@
             //   map_id     go to that map; adjacent maps are left by their edge,
             //              and a far map is reported with the exits of this one
             'nav.goto': function(args) {
-                var iso = window.isoEngine || null;
-                var a = args || {};
-                var details = _agentMapDetails();
-                var here = details.map_id;
-                var wantMap = parseInt(a.map_id !== undefined ? a.map_id : a.mapId, 10) || null;
-                var wantCell = parseInt(a.cell !== undefined ? a.cell : a.cellId, 10);
-                var npcId = parseInt(a.npc_id !== undefined ? a.npc_id : a.npcId, 10) || null;
+                const iso = window.isoEngine || null;
+                const a = args || {};
+                const details = _agentMapDetails();
+                let here = details.map_id;
+                let wantMap = parseInt(a.map_id !== undefined ? a.map_id : a.mapId, 10) || null;
+                let wantCell = parseInt(a.cell !== undefined ? a.cell : a.cellId, 10);
+                const npcId = parseInt(a.npc_id !== undefined ? a.npc_id : a.npcId, 10) || null;
                 if (isNaN(wantCell)) wantCell = null;
                 // An NPC stands on its own cell, so walking there has to stop on a
                 // free neighbour. `_movePlayerOnMap(cell, true, ...)` is the client's
                 // form for exactly that; passing false paths onto the occupied cell.
-                var stopAdjacent = false;
-                var dir = String(a.direction || a.dir || '').toLowerCase().trim();
+                let stopAdjacent = false;
+                let dir = String(a.direction || a.dir || '').toLowerCase().trim();
                 if (dir === 'up') dir = 'top';
                 if (dir === 'down') dir = 'bottom';
                 if (dir && ['left', 'right', 'top', 'bottom'].indexOf(dir) < 0) {
@@ -8854,15 +8884,15 @@
                         'direction must be one of left, right, top, bottom');
                 }
 
-                var exits = details.exits || [];
-                var exitFor = function (d) {
-                    for (var ei = 0; ei < exits.length; ei++) {
+                const exits = details.exits || [];
+                const exitFor = function (d) {
+                    for (let ei = 0; ei < exits.length; ei++) {
                         if (exits[ei].direction === d) return exits[ei];
                     }
                     return null;
                 };
-                var exitTo = function (m) {
-                    for (var ei = 0; ei < exits.length; ei++) {
+                const exitTo = function (m) {
+                    for (let ei = 0; ei < exits.length; ei++) {
                         if (Number(exits[ei].map_id) === Number(m)) return exits[ei];
                     }
                     return null;
@@ -8874,18 +8904,18 @@
                 // Returns true when a walk was actually issued, and leaves
                 // `_agentDoorStepOff` set when the route was "off the door, then back on"
                 // so the caller's `via` says which of the two happened.
-                var _agentDoorStepOff = false;
-                var _agentWalkOntoDoor = function (cell, toMap) {
+                let _agentDoorStepOff = false;
+                const _agentWalkOntoDoor = function (cell, toMap) {
                     if (cell == null || !iso || typeof iso._movePlayerOnMap !== 'function') {
                         return false;
                     }
-                    var hint = function () {
+                    const hint = function () {
                         window.__agentDoorHint = { at: Date.now(), map: here, cell: cell };
                         try { _agentDoorHint = window.__agentDoorHint; } catch (eH) {}
                     };
                     try {
                         if (Number(cell) === Number(details.cell)) {
-                            var off = _agentStepOffCell(cell, null);
+                            let off = _agentStepOffCell(cell, null);
                             if (off == null) return false;
                             _agentDoorStepOff = true;
                             window.__agentLastNav = { at: Date.now(), stage: 'door_step_off',
@@ -8909,8 +8939,8 @@
 
                 // Resolve an NPC to the cell it is standing on.
                 if (wantCell == null && npcId) {
-                    var found = _findNpcActor(npcId);
-                    var actor = found && found.actor;
+                    const found = _findNpcActor(npcId);
+                    const actor = found && found.actor;
                     if (actor && actor.cell != null) {
                         wantCell = actor.cell;
                         stopAdjacent = true;
@@ -8933,13 +8963,13 @@
                 // transition the scenario then refuses, which looks like a stuck
                 // character. Refusing up front names the restriction and hands the
                 // caller the step it should follow instead.
-                var tutorial = null;
+                let tutorial = null;
                 try { tutorial = _agentTutorial(); } catch (e) { tutorial = null; }
-                var tutorialActive = !!(tutorial && tutorial.active);
-                var allowedCells = tutorialActive ? tutorial.unblocked_cells : null;
-                var tutorialHint = function () {
+                const tutorialActive = !!(tutorial && tutorial.active);
+                const allowedCells = tutorialActive ? tutorial.unblocked_cells : null;
+                const tutorialHint = function () {
                     if (!tutorialActive) return '';
-                    var parts = [];
+                    const parts = [];
                     if (tutorial.unblocked_npc_id != null) {
                         parts.push('tap NPC ' + tutorial.unblocked_npc_id);
                     }
@@ -8951,7 +8981,7 @@
                     return parts.length ? ' Follow the tutorial step: '
                         + parts.join(', ') + '.' : '';
                 };
-                var refuseRestricted = function (stage, error, data) {
+                const refuseRestricted = function (stage, error, data) {
                     window.__agentLastNav = { at: Date.now(), stage: stage,
                         from_map: data && data.map_id,
                         direction: data && data.direction,
@@ -8984,7 +9014,7 @@
                 // A direction alone names the exit: the destination is whatever the
                 // client's map data says is on that edge.
                 if (!wantMap && dir) {
-                    var edge = exitFor(dir);
+                    const edge = exitFor(dir);
                     if (!edge) {
                         // An interior map (an inn, a house, a solo area) has neighbours but
                         // no change-map cell: the way out is a door, and the client
@@ -8996,8 +9026,8 @@
                         // do lead out (cells 451 and 346, both -> 145490435) were never
                         // tried. So try the door first, and only ask the server directly
                         // when the map has no door at all.
-                        var nearDir = details.neighbours && details.neighbours[dir];
-                        var doorHere = nearDir != null
+                        const nearDir = details.neighbours && details.neighbours[dir];
+                        let doorHere = nearDir != null
                             ? _agentDoorFor(here, Number(nearDir)) : null;
                         if (doorHere == null) {
                             // No door to that neighbour, but an interior with any door at
@@ -9009,9 +9039,9 @@
                             // unreachable from the rest of the room (map 146276352: the
                             // arrival door at 346 stopped the walk at cell 359, while the
                             // walked door at 451 is the one that leads out).
-                            var allDoors = _agentDoorList(here);
-                            var walkedDoor = null;
-                            for (var dk = 0; dk < allDoors.length; dk++) {
+                            const allDoors = _agentDoorList(here);
+                            let walkedDoor = null;
+                            for (let dk = 0; dk < allDoors.length; dk++) {
                                 if (allDoors[dk].via === 'walk') { walkedDoor = allDoors[dk]; break; }
                             }
                             doorHere = walkedDoor ? walkedDoor.cell
@@ -9019,7 +9049,7 @@
                         }
                         if (doorHere != null && iso
                                 && typeof iso._movePlayerOnMap === 'function') {
-                            var walked = _agentWalkOntoDoor(doorHere, nearDir);
+                            let walked = _agentWalkOntoDoor(doorHere, nearDir);
                             if (walked) {
                                 window.__agentLastNav = { at: Date.now(),
                                     stage: 'walk_to_door_by_direction', from_map: here,
@@ -9061,13 +9091,13 @@
 
                 // Cross to another map through the edge that leads there.
                 if (wantMap && Number(wantMap) !== Number(here)) {
-                    var crossing = dir ? exitFor(dir) : exitTo(wantMap);
+                    const crossing = dir ? exitFor(dir) : exitTo(wantMap);
                     if (!crossing) {
                         // A remembered door on this map reaches the target directly.
                         // Stepping on the cell is the transition, so the walk *is* the
                         // whole request. Checked before the neighbour fallback because
                         // a door names a destination, not a map edge.
-                        var doorCell = _agentDoorFor(here, wantMap);
+                        const doorCell = _agentDoorFor(here, wantMap);
                         if (doorCell != null && _agentWalkOntoDoor(doorCell, wantMap)) {
                             window.__agentLastNav = { at: Date.now(),
                                 stage: 'walk_to_door', from_map: here,
@@ -9081,9 +9111,9 @@
                         }
                         // Same doorless-interior case, addressed by map id: the target
                         // is a known neighbour but the client published no cell for it.
-                        var nearKey = null;
+                        let nearKey = null;
                         try {
-                            for (var nk in (details.neighbours || {})) {
+                            for (const nk in (details.neighbours || {})) {
                                 if (Number(details.neighbours[nk]) === Number(wantMap)) {
                                     nearKey = nk;
                                     break;
@@ -9115,7 +9145,7 @@
                             'the ' + dir + ' exit leads to ' + crossing.map_id
                             + ', not ' + wantMap);
                     }
-                    var changeDir = dir || crossing.direction;
+                    const changeDir = dir || crossing.direction;
                     if (tutorialActive && tutorial.can_change_map
                             && tutorial.can_change_map[changeDir] === false) {
                         return refuseRestricted('tutorial_blocked',
@@ -9125,8 +9155,8 @@
                             { map_id: here, target_map: Number(crossing.map_id),
                               direction: changeDir });
                     }
-                    var exitCell = wantCell;
-                    var pool = (crossing.cells || []).slice();
+                    let exitCell = wantCell;
+                    const pool = (crossing.cells || []).slice();
                     if (exitCell == null || pool.indexOf(exitCell) < 0) {
                         // Advance past a border cell the character actually reached
                         // and the map still did not change: that cell is not the
@@ -9134,16 +9164,16 @@
                         // from the cell, `walk_then_change` is a completed walk that
                         // ended on it. A walk still in flight matches neither, so a
                         // caller polling faster than the walk cannot skip a good cell.
-                        var edgeKey = here + ':' + changeDir;
-                        var lastNav = window.__agentLastNav;
-                        var stalled = !!(lastNav && lastNav.from_map != null
+                        const edgeKey = here + ':' + changeDir;
+                        const lastNav = window.__agentLastNav;
+                        const stalled = !!(lastNav && lastNav.from_map != null
                             && Number(lastNav.from_map) === Number(here)
                             && lastNav.direction === changeDir
                             && (lastNav.stage === 'change_requested_at_edge'
                                 || (lastNav.stage === 'walk_then_change'
                                     && lastNav.cell != null && details.cell != null
                                     && Number(lastNav.cell) === Number(details.cell))));
-                        var idx = _agentEdgeTry[edgeKey] || 0;
+                        let idx = _agentEdgeTry[edgeKey] || 0;
                         if (stalled && pool.length > 1) {
                             idx = (idx + 1) % pool.length;
                             _agentEdgeTry[edgeKey] = idx;
@@ -9159,7 +9189,7 @@
                             'the client reports a ' + changeDir + ' neighbour but no '
                             + changeDir + ' border cell to walk to');
                     }
-                    var outcome = { from_map: here, to_map: Number(crossing.map_id),
+                    const outcome = { from_map: here, to_map: Number(crossing.map_id),
                         requested_map: wantMap, direction: changeDir, cell: exitCell };
                     window.__agentLastNav = { at: Date.now(), stage: 'walking_to_edge',
                         from_map: here, to_map: Number(crossing.map_id),
@@ -9172,8 +9202,8 @@
                         // the loop repeats the same crossing forever. Live tutorial:
                         // cell 322 was the left border cell and stage stayed
                         // `walk_then_change` across every attempt.
-                        var currentCell = details.cell;
-                        var atEdge = currentCell != null && (crossing.cells || [])
+                        const currentCell = details.cell;
+                        const atEdge = currentCell != null && (crossing.cells || [])
                             .some(function (c) { return Number(c) === Number(currentCell); });
                         if (atEdge) {
                             // A change asked for while the character already stands on
@@ -9185,15 +9215,15 @@
                             // client's own walk back trigger the crossing. A tutorial
                             // with a cell gate is left exactly as it was -- stepping off
                             // would leave the cells the step allows.
-                            var edgeAvoid = [];
-                            for (var ea = 0; ea < exits.length; ea++) {
-                                var eaCells = exits[ea].cells || [];
-                                for (var eac = 0; eac < eaCells.length; eac++) {
+                            const edgeAvoid = [];
+                            for (let ea = 0; ea < exits.length; ea++) {
+                                const eaCells = exits[ea].cells || [];
+                                for (let eac = 0; eac < eaCells.length; eac++) {
                                     edgeAvoid.push(Number(eaCells[eac]));
                                 }
                             }
-                            var pin = tutorialActive && allowedCells;
-                            var offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);
+                            const pin = tutorialActive && allowedCells;
+                            const offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);
                             if (offEdge != null && typeof iso._movePlayerOnMap === 'function'
                                     && typeof iso.gotoNeighbourMap === 'function') {
                                 window.__agentLastNav = { at: Date.now(),
@@ -9241,7 +9271,7 @@
                             return _agentResult(false, outcome,
                                 'the client has no map transition method');
                         }
-                        var moved = iso._movePlayerOnMap(exitCell, false,
+                        let moved = iso._movePlayerOnMap(exitCell, false,
                             function (err, reached) {
                                 if (err) {
                                     window.__agentLastNav = { at: Date.now(),
@@ -9297,7 +9327,7 @@
                 if (!iso || typeof iso._movePlayerOnMap !== 'function') {
                     return _agentResult(false, null, 'isoEngine._movePlayerOnMap unavailable');
                 }
-                var walkOutcome = { cell: wantCell, map_id: here,
+                const walkOutcome = { cell: wantCell, map_id: here,
                     via: 'isoEngine._movePlayerOnMap' };
                 window.__agentLastNav = { at: Date.now(), stage: 'walking',
                     from_map: here, cell: wantCell };
@@ -9309,7 +9339,7 @@
                     // The callback fires after the server confirms; the request itself
                     // goes out synchronously inside the call, so ok here means "asked",
                     // and the next state.snapshot says whether the character moved.
-                    var walked = iso._movePlayerOnMap(wantCell, stopAdjacent, function (err) {
+                    let walked = iso._movePlayerOnMap(wantCell, stopAdjacent, function (err) {
                         if (err) {
                             walkOutcome.error = String(err);
                             window.__agentLastNav = { at: Date.now(),
@@ -9323,7 +9353,7 @@
                         // target all take a walk. Fall back to walking onto a free
                         // neighbour ourselves, nearest first, and say which cell it was.
                         if (stopAdjacent) {
-                            var besideNav = _agentWalkBeside(wantCell, null);
+                            const besideNav = _agentWalkBeside(wantCell, null);
                             if (besideNav != null) {
                                 walkOutcome.cell = besideNav;
                                 walkOutcome.adjacent_to = wantCell;
@@ -9337,7 +9367,7 @@
                                 catch (eHint2) {}
                                 return _agentResult(true, walkOutcome);
                             }
-                            var navReport = window.__agentWalkBeside || {};
+                            const navReport = window.__agentWalkBeside || {};
                             return _agentResult(false, walkOutcome,
                                 'no path to cell ' + wantCell + ' on map ' + here
                                 + '; free cells beside it: '
@@ -9372,19 +9402,19 @@
             // which border cell leads off this map; the *destination* ids come from the
             // server's map information, and this reports wherever they landed.
             'debug.scenario': function() {
-                var out = {};
-                var sm = window.gui && window.gui.scenarioManager;
-                var pd = window.gui && window.gui.playerData;
-                var wc = window.gui && window.gui.windowsContainer;
-                var mgr = wc && wc.windowManager;
+                const out = {};
+                const sm = window.gui && window.gui.scenarioManager;
+                const pd = window.gui && window.gui.playerData;
+                const wc = window.gui && window.gui.windowsContainer;
+                let mgr = wc && wc.windowManager;
                 if (!mgr && wc) {
-                    var kids = wc._childrenList || [];
-                    for (var i = 0; i < kids.length && !mgr; i++) {
+                    const kids = wc._childrenList || [];
+                    for (let i = 0; i < kids.length && !mgr; i++) {
                         if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
                     }
                 }
-                var val = function (fn) {
-                    try { var v = fn(); return v === undefined ? '__undefined' : v; }
+                const val = function (fn) {
+                    try { let v = fn(); return v === undefined ? '__undefined' : v; }
                     catch (e) { return 'ERR:' + e; }
                 };
                 out.scenario_keys = val(function () { return sm ? Object.keys(sm).slice(0, 60) : null; });
@@ -9417,33 +9447,33 @@
                 // window container. The tutorial's "open inventory" step waits on the
                 // equipment window's open event, and no agent tool owns a menu tap.
                 args = args || {};
-                var wc = window.gui && window.gui.windowsContainer;
+                const wc = window.gui && window.gui.windowsContainer;
                 if (!wc) return _agentResult(false, null, 'window container is not exposed');
-                var name = String(args.window || args.name || '');
+                const name = String(args.window || args.name || '');
                 // windowsContainer is a UI element; the manager is attached to the
                 // window objects registered with it (`windowManager`).
-                var mgr = wc.windowManager || null;
+                let mgr = wc.windowManager || null;
                 if (!mgr) {
-                    var kids = wc._childrenList || [];
-                    for (var i = 0; i < kids.length && !mgr; i++) {
+                    const kids = wc._childrenList || [];
+                    for (let i = 0; i < kids.length && !mgr; i++) {
                         if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
                     }
                 }
                 if (!mgr) return _agentResult(false, null, 'window manager is not reachable');
-                var w = null;
+                let w = null;
                 try { w = typeof mgr.getWindow === 'function' ? mgr.getWindow(name) : null; }
                 catch (e4) {}
                 if (!name) {
-                    var methods = [];
+                    const methods = [];
                     try {
-                        for (var k in mgr) {
+                        for (const k in mgr) {
                             if (typeof mgr[k] === 'function') methods.push(k);
                         }
                     } catch (e5) {}
                     return _agentResult(true, { methods: methods.slice(0, 40),
                                                 has_getWindow: typeof mgr.getWindow === 'function' });
                 }
-                var result = { window: name, opened: !!(w && w.openState) };
+                const result = { window: name, opened: !!(w && w.openState) };
                 if (args.close) {
                     try {
                         if (typeof mgr.close === 'function') { mgr.close(name); result.via = 'manager.close'; }
@@ -9452,7 +9482,7 @@
                     result.opened = !!(w && w.openState);
                     return _agentResult(true, result);
                 }
-                var params = args.params && typeof args.params === 'object'
+                const params = args.params && typeof args.params === 'object'
                     ? args.params : undefined;
                 try {
                     if (typeof mgr.open === 'function') {
@@ -9471,19 +9501,19 @@
                 // and no agent tool owns the characteristics "+" tap. The packet is
                 // the one the characUpdate window's confirm button sends.
                 args = args || {};
-                var ids = { vitality: 11, wisdom: 12, strength: 10,
+                const ids = { vitality: 11, wisdom: 12, strength: 10,
                             intelligence: 15, chance: 13, agility: 14 };
-                var statId = _agentNum(args.stat_id);
+                let statId = _agentNum(args.stat_id);
                 if (statId == null && typeof args.stat === 'string') {
                     statId = ids[args.stat.toLowerCase()] || null;
                 }
                 if (statId == null) statId = ids.strength;
-                var pd = window.gui && window.gui.playerData;
-                var main = pd && pd.characters && pd.characters.mainCharacter;
-                var charac = main && main.characteristics;
-                var remaining = charac && charac.statsPoints != null
+                const pd = window.gui && window.gui.playerData;
+                const main = pd && pd.characters && pd.characters.mainCharacter;
+                const charac = main && main.characteristics;
+                const remaining = charac && charac.statsPoints != null
                     ? Number(charac.statsPoints) : null;
-                var points = _agentNum(args.points);
+                let points = _agentNum(args.points);
                 if (remaining != null && (points == null || points > remaining)) points = remaining;
                 if (points == null || !(points > 0)) {
                     return _agentResult(false, { stats_points: remaining },
@@ -9491,7 +9521,7 @@
                 }
                 // Measured: this client accepted StatsUpgradeRequestMessage (strength
                 // 0->10); the Hero* variant was ignored. `hero:true` opts into it.
-                var msg = args.hero ? 'HeroStatsUpgradeRequestMessage'
+                const msg = args.hero ? 'HeroStatsUpgradeRequestMessage'
                     : 'StatsUpgradeRequestMessage';
                 window.dofus.sendMessage(msg, { statId: statId,
                     pointsUsed: Math.floor(points), useAdditional: false });
@@ -9506,12 +9536,12 @@
                 // 96 water, 97 earth, 98 air, 99 fire, 100 neutral) and the stat id
                 // is the one the characteristics window's "+" sends.
                 args = args || {};
-                var pd = window.gui && window.gui.playerData;
-                var main = pd && pd.characters && pd.characters.mainCharacter;
-                var chc = main && main.characteristics;
-                var sd = main && main.spellData;
-                var fm = window.gui && window.gui.fightManager;
-                var myId = null;
+                const pd = window.gui && window.gui.playerData;
+                const main = pd && pd.characters && pd.characters.mainCharacter;
+                const chc = main && main.characteristics;
+                const sd = main && main.spellData;
+                const fm = window.gui && window.gui.fightManager;
+                let myId = null;
                 try {
                     myId = (pd.characters && pd.characters.controlledCharacterId != null)
                         ? Number(pd.characters.controlledCharacterId) : null;
@@ -9520,43 +9550,43 @@
                     myId = Number(pd.characterBaseInformations.id);
                 }
                 if (!chc || !sd) return _agentResult(false, null, 'characteristics unavailable');
-                var elementOf = {91: 'water', 92: 'earth', 93: 'air', 94: 'fire',
+                const elementOf = {91: 'water', 92: 'earth', 93: 'air', 94: 'fire',
                                  95: 'neutral', 96: 'water', 97: 'earth',
                                  98: 'air', 99: 'fire', 100: 'neutral'};
-                var statOf = {water: 13, earth: 10, air: 14, fire: 15, neutral: 10};
-                var statName = {water: 'chance', earth: 'strength', air: 'agility',
+                const statOf = {water: 13, earth: 10, air: 14, fire: 15, neutral: 10};
+                const statName = {water: 'chance', earth: 'strength', air: 'agility',
                                 fire: 'intelligence', neutral: 'strength'};
-                var spells = {};
+                let spells = {};
                 try { spells = sd.getSpellListDependingOnGameMode() || {}; } catch (e) {}
-                var best = null;
-                for (var k in spells) {
+                let best = null;
+                for (const k in spells) {
                     if (!Object.prototype.hasOwnProperty.call(spells, k)) continue;
-                    var sp = spells[k];
+                    const sp = spells[k];
                     if (!sp || !sp.spellLevel) continue;
-                    var lvl = sp.spellLevel;
-                    var fx = lvl.effects || [];
-                    var dmg = null;
-                    for (var i = 0; i < fx.length; i++) {
-                        var e = fx[i] || {};
-                        var el = elementOf[Number(e.effectId)];
+                    const lvl = sp.spellLevel;
+                    const fx = lvl.effects || [];
+                    let dmg = null;
+                    for (let i = 0; i < fx.length; i++) {
+                        const e = fx[i] || {};
+                        const el = elementOf[Number(e.effectId)];
                         if (!el) continue;
-                        var mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
+                        const mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
                         if (mid > 0) { dmg = { mid: mid, element: el }; break; }
                     }
                     if (!dmg) continue;
-                    var ap = Number(lvl.apCost) || 1;
-                    var score = dmg.mid / Math.max(1, ap);
-                    var status = null;
+                    const ap = Number(lvl.apCost) || 1;
+                    let score = dmg.mid / Math.max(1, ap);
+                    let status = null;
                     try { status = sd.getSpellStatus(Number(k)); } catch (e2) {}
                     // Prefer a spell the client will actually let us cast; a
                     // state-gated one still counts, because the page casts its
                     // enabler before it (G37).
-                    var castable = false;
+                    let castable = false;
                     try {
                         castable = fm && myId != null
                             ? !!fm.canCastThisSpell(myId, Number(k)) : false;
                     } catch (e3) {}
-                    var bias = castable ? 1.15 : (Number(status) === 2 ? 1.0 : 0.6);
+                    const bias = castable ? 1.15 : (Number(status) === 2 ? 1.0 : 0.6);
                     score *= bias;
                     if (!best || score > best.score) {
                         best = { id: Number(k), score: score, element: dmg.element,
@@ -9564,9 +9594,9 @@
                                  castable: castable };
                     }
                 }
-                var statsLeft = _agentNum(chc.statsPoints);
-                var spellsLeft = _agentNum(chc.spellsPoints);
-                var out = { stats_points: statsLeft, spells_points: spellsLeft,
+                const statsLeft = _agentNum(chc.statsPoints);
+                const spellsLeft = _agentNum(chc.spellsPoints);
+                const out = { stats_points: statsLeft, spells_points: spellsLeft,
                             spell: best ? best.id : null,
                             element: best ? best.element : null };
                 if (!best) {
@@ -9574,10 +9604,10 @@
                         'no damage spell to build around');
                 }
                 if (args.dry_run) return _agentResult(true, out);
-                var spent = 0;
+                let spent = 0;
                 if (statsLeft != null && statsLeft > 0
                         && !(args.stats === false)) {
-                    var statId = best.element ? statOf[best.element] : 10;
+                    const statId = best.element ? statOf[best.element] : 10;
                     window.dofus.sendMessage('StatsUpgradeRequestMessage', {
                         statId: statId, pointsUsed: Math.floor(statsLeft),
                         useAdditional: false });
@@ -9586,9 +9616,9 @@
                     out.stat_id = statId;
                     out.stats_spent = spent;
                 }
-                var upgradedTo = null;
+                let upgradedTo = null;
                 if (spellsLeft != null && spellsLeft > 0 && !(args.spells === false)) {
-                    var next = best.level + 1;
+                    const next = best.level + 1;
                     _cmSend('SpellChangeRequestMessage',
                         { spells: [{ spellId: best.id, spellLevel: next }] });
                     upgradedTo = next;
@@ -9607,20 +9637,20 @@
                 // NPC_INTERACTION condition first (the tutorial's claim) and only then
                 // decides between highlight and action, exactly like a player's tap.
                 args = args || {};
-                var npc = _agentNum(args.npc_id != null ? args.npc_id : args.id);
+                let npc = _agentNum(args.npc_id != null ? args.npc_id : args.id);
                 if (npc == null) return _agentResult(false, null, 'npc_menu needs npc_id');
-                var found = _findNpcActor(npc);
-                var actor = found && found.actor;
+                const found = _findNpcActor(npc);
+                const actor = found && found.actor;
                 if (!actor) {
-                    var here = [];
+                    let here = [];
                     try { here = _listNpcActors(); } catch (e) {}
                     return _agentResult(false, { npc_id: npc, npcs_here: here },
                         'npc ' + npc + ' is not on this map');
                 }
-                var cid = actor.contextualId != null ? Number(actor.contextualId) : null;
-                var am = window.actorManager
+                const cid = actor.contextualId != null ? Number(actor.contextualId) : null;
+                const am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
-                var live = null;
+                let live = null;
                 try { live = (am && cid != null && typeof am.getActor === 'function') ? am.getActor(cid) : null; }
                 catch (e3) { live = null; }
                 if (!live && typeof am.getActorFromNpcId === 'function') {
@@ -9630,7 +9660,7 @@
                     return _agentResult(false, { npc_id: npc, contextual_id: cid },
                         'the live actor has no openNpcContextualMenu');
                 }
-                var res = null;
+                let res = null;
                 try { res = live.openNpcContextualMenu(); } catch (e2) {
                     return _agentResult(false, { npc_id: npc }, 'openNpcContextualMenu threw: ' + e2);
                 }
@@ -9644,12 +9674,12 @@
                 // `scenarioManager.checkCondition(type)`, which is what the UI calls;
                 // the step's own endingCondition then claims its objective.
                 args = args || {};
-                var sm = window.gui && window.gui.scenarioManager;
+                const sm = window.gui && window.gui.scenarioManager;
                 if (!sm || typeof sm.checkCondition !== 'function') {
                     return _agentResult(false, null, 'scenarioManager.checkCondition unavailable');
                 }
-                var enumObj = sm.conditionTypeEnum || {};
-                var type = _agentNum(args.type != null ? args.type : args.condition);
+                const enumObj = sm.conditionTypeEnum || {};
+                let type = _agentNum(args.type != null ? args.type : args.condition);
                 if (type == null && typeof args.name === 'string') {
                     type = enumObj[String(args.name).toUpperCase()];
                 }
@@ -9666,23 +9696,23 @@
                 // level > 1 and no agent tool owns the grimoire's upgrade button.
                 // This sends the same request the button does: {spellId} only.
                 args = args || {};
-                var pd = window.gui && window.gui.playerData;
-                var main = pd && pd.characters && pd.characters.mainCharacter;
-                var sd = main && main.spellData;
-                var charac = main && main.characteristics;
-                var pts = charac && charac.spellsPoints != null
+                const pd = window.gui && window.gui.playerData;
+                const main = pd && pd.characters && pd.characters.mainCharacter;
+                const sd = main && main.spellData;
+                const charac = main && main.characteristics;
+                const pts = charac && charac.spellsPoints != null
                     ? Number(charac.spellsPoints) : null;
                 if (!sd) return _agentResult(false, { spells_points: pts },
                     'spell data unavailable');
-                var want = _agentNum(args.spell_id != null ? args.spell_id : args.id);
-                var chosen = want;
+                const want = _agentNum(args.spell_id != null ? args.spell_id : args.id);
+                let chosen = want;
                 if (chosen == null) {
                     try {
-                        var statuses = sd._spellsStatus || {};
-                        for (var k in statuses) {
+                        const statuses = sd._spellsStatus || {};
+                        for (const k in statuses) {
                             if (!Object.prototype.hasOwnProperty.call(statuses, k)) continue;
                             if (Number(statuses[k]) !== 2) continue;
-                            var sp = sd.spells && sd.spells[k];
+                            const sp = sd.spells && sd.spells[k];
                             if (!sp || Number(sp.level) !== 1) continue;
                             chosen = Number(k);
                             break;
@@ -9697,17 +9727,17 @@
                     return _agentResult(false, { spell_id: chosen, spells_points: pts },
                         'no unspent spell points');
                 }
-                var lvl = _agentNum(args.level);
+                let lvl = _agentNum(args.level);
                 if (lvl == null) lvl = 2;
                 // The grimoire's own path (bundle): SpellChangeRequestMessage with a
                 // list of {spellId, spellLevel}, then checkCondition(CONFIRM_UPGRADE_SPELL)
                 // so the tutorial scenario sees the confirmation. SpellUpgradeRequestMessage
                 // was acked and ignored by this server.
-                var r = _cmSend('SpellChangeRequestMessage',
+                const r = _cmSend('SpellChangeRequestMessage',
                     { spells: [{ spellId: chosen, spellLevel: lvl }] });
-                var confirmed = null;
+                let confirmed = null;
                 try {
-                    var sm = window.gui && window.gui.scenarioManager;
+                    const sm = window.gui && window.gui.scenarioManager;
                     if (sm && typeof sm.checkCondition === 'function'
                             && sm.conditionTypeEnum
                             && sm.conditionTypeEnum.CONFIRM_UPGRADE_SPELL != null) {
@@ -9726,12 +9756,12 @@
                 // closed. This replays each gate per spell and reports the first
                 // one that fails, which is what a planner needs to know.
                 args = args || {};
-                var pd = window.gui && window.gui.playerData;
-                var main = pd && pd.characters && pd.characters.mainCharacter;
-                var sd = main && main.spellData;
-                var fm = window.gui && window.gui.fightManager;
-                var charac = main && main.characteristics;
-                var myId = null;
+                const pd = window.gui && window.gui.playerData;
+                const main = pd && pd.characters && pd.characters.mainCharacter;
+                const sd = main && main.spellData;
+                const fm = window.gui && window.gui.fightManager;
+                const charac = main && main.characteristics;
+                let myId = null;
                 try {
                     myId = (pd.characters && pd.characters.controlledCharacterId != null)
                         ? Number(pd.characters.controlledCharacterId) : null;
@@ -9740,25 +9770,25 @@
                     myId = Number(pd.characterBaseInformations.id);
                 }
                 if (!sd) return _agentResult(false, null, 'spell data unavailable');
-                var apNow = charac && charac.actionPointsCurrent != null
+                const apNow = charac && charac.actionPointsCurrent != null
                     ? Number(charac.actionPointsCurrent) : null;
-                var list = {};
+                let list = {};
                 try { list = sd.getSpellListDependingOnGameMode() || {}; } catch (e) {}
-                var fighter = null, states = [];
+                let fighter = null, states = [];
                 try {
                     fighter = fm && fm.getFighter ? fm.getFighter(myId) : null;
                     states = (fighter && fighter.states) || [];
                 } catch (e) {}
-                var only = args.ids ? String(args.ids).split(',') : null;
-                var rows = [];
-                for (var k in (sd.spells || {})) {
+                const only = args.ids ? String(args.ids).split(',') : null;
+                const rows = [];
+                for (const k in (sd.spells || {})) {
                     if (!Object.prototype.hasOwnProperty.call(sd.spells, k)) continue;
                     if (only && only.indexOf(String(k)) < 0) continue;
-                    var sp = sd.spells[k];
+                    const sp = sd.spells[k];
                     if (!sp) continue;
-                    var row = { id: Number(k), level: sp.level != null ? Number(sp.level) : null };
+                    const row = { id: Number(k), level: sp.level != null ? Number(sp.level) : null };
                     try { row.status = sd.getSpellStatus(Number(k)); } catch (e) { row.status = null; }
-                    var listed = null;
+                    let listed = null;
                     try { listed = list[k] || list[Number(k)] || null; } catch (e) {}
                     row.listed = !!listed;
                     row.is_loaded = listed ? !!listed.isLoaded : null;
@@ -9770,15 +9800,15 @@
                     row.ap_current = apNow;
                     if (listed && listed.getProperty) {
                         try {
-                            var forb = listed.getProperty('statesForbidden');
+                            const forb = listed.getProperty('statesForbidden');
                             if (forb && forb.length) row.states_forbidden = forb;
                         } catch (e) {}
                         try {
-                            var req = listed.getProperty('statesRequired');
+                            const req = listed.getProperty('statesRequired');
                             if (req && req.length) row.states_required = req;
                         } catch (e) {}
                     }
-                    var gate = null;
+                    let gate = null;
                     try {
                         if (fm && typeof fm.canControlCharacterId === 'function'
                                 && !fm.canControlCharacterId(myId)) gate = 'cannot_control';
@@ -9790,7 +9820,7 @@
                     if (!gate && row.ap_cost != null && apNow != null
                             && row.ap_cost > apNow) gate = 'ap_' + row.ap_cost + '>' + apNow;
                     if (!gate && row.states_forbidden && states.length) {
-                        for (var sf = 0; sf < row.states_forbidden.length; sf++) {
+                        for (let sf = 0; sf < row.states_forbidden.length; sf++) {
                             if (states.indexOf(row.states_forbidden[sf]) >= 0) {
                                 gate = 'forbidden_state_' + row.states_forbidden[sf];
                                 break;
@@ -9798,14 +9828,14 @@
                         }
                     }
                     if (!gate && row.states_required) {
-                        for (var sr = 0; sr < row.states_required.length; sr++) {
+                        for (let sr = 0; sr < row.states_required.length; sr++) {
                             if (states.indexOf(row.states_required[sr]) < 0) {
                                 gate = 'missing_state_' + row.states_required[sr];
                                 break;
                             }
                         }
                     }
-                    var fs = null;
+                    let fs = null;
                     try {
                         fs = fighter && fighter.spells ? fighter.spells[k] : null;
                         if (fs) {
@@ -9816,7 +9846,7 @@
                     } catch (e) {}
                     if (!gate && row.cooldown > 0) gate = 'cooldown_' + row.cooldown;
                     row.gate = gate;
-                    var castable = null;
+                    let castable = null;
                     try {
                         castable = fm && myId != null
                             ? !!fm.canCastThisSpell(myId, Number(k)) : null;
@@ -9836,20 +9866,20 @@
                 // screen coordinates from a screenshot. Fires the same synthetic
                 // event sequence debug.tap_text uses.
                 args = args || {};
-                var sel = String(args.selector || '').trim();
+                const sel = String(args.selector || '').trim();
                 if (!sel) return _agentResult(false, null, 'ui_click needs selector');
-                var nodes = null;
+                let nodes = null;
                 try { nodes = document.querySelectorAll(sel); } catch (e) {
                     return _agentResult(false, { selector: sel }, 'bad selector: ' + e);
                 }
-                var found = 0;
-                for (var i = 0; i < nodes.length; i++) {
-                    var el = nodes[i];
-                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                let found = 0;
+                for (let i = 0; i < nodes.length; i++) {
+                    const el = nodes[i];
+                    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
                     if (!r || !r.width || !r.height) continue;
                     found += 1;
                     if (found < (Number(args.index) || 0) + 1) continue;
-                    var o = { clientX: Math.round(r.left + r.width / 2),
+                    const o = { clientX: Math.round(r.left + r.width / 2),
                               clientY: Math.round(r.top + r.height / 2),
                               bubbles: true, cancelable: true, view: window };
                     try {
@@ -9877,23 +9907,23 @@
                 // Two modes, both bounded: a flat scan filtered by `match` (substring on class/id/
                 // text, the fast way to find a window's rows), and a recursive dump of one subtree.
                 args = args || {};
-                var sel = String(args.selector || '*').trim() || '*';
-                var limit = _agentNum(args.limit);
+                const sel = String(args.selector || '*').trim() || '*';
+                let limit = _agentNum(args.limit);
                 if (limit == null || limit <= 0) limit = 40;
                 if (limit > 200) limit = 200;
-                var nodes;
+                let nodes;
                 try { nodes = document.querySelectorAll(sel); } catch (e) {
                     return _agentResult(false, { selector: sel }, 'bad selector: ' + e);
                 }
 
-                var describe = function (el) {
-                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-                    var cls = '';
+                const describe = function (el) {
+                    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    let cls = '';
                     try { cls = String(el.className || ''); } catch (e) { cls = ''; }
-                    var txt = '';
+                    let txt = '';
                     try {
                         // Only the element's own text, so a wrapper does not echo its whole subtree.
-                        for (var c = 0; c < el.childNodes.length; c++) {
+                        for (let c = 0; c < el.childNodes.length; c++) {
                             if (el.childNodes[c].nodeType === 3) txt += el.childNodes[c].nodeValue;
                         }
                         txt = txt.replace(/\s+/g, ' ').trim();
@@ -9912,13 +9942,13 @@
                     };
                 };
 
-                var match = args.match == null ? null : String(args.match).toLowerCase();
+                const match = args.match == null ? null : String(args.match).toLowerCase();
                 if (match) {
-                    var hits = [];
-                    for (var i = 0; i < nodes.length && hits.length < limit; i++) {
-                        var el = nodes[i];
-                        var d = describe(el);
-                        var hay = ((d.class || '') + ' ' + (d.id || '') + ' ' + (d.text || '')).toLowerCase();
+                    const hits = [];
+                    for (let i = 0; i < nodes.length && hits.length < limit; i++) {
+                        const el = nodes[i];
+                        const d = describe(el);
+                        const hay = ((d.class || '') + ' ' + (d.id || '') + ' ' + (d.text || '')).toLowerCase();
                         if (hay.indexOf(match) < 0) continue;
                         hits.push(d);
                     }
@@ -9926,14 +9956,14 @@
                                                 match: match, count: hits.length, nodes: hits });
                 }
 
-                var depth = _agentNum(args.depth);
+                let depth = _agentNum(args.depth);
                 if (depth == null || depth < 0) depth = 2;
                 if (depth > 4) depth = 4;
-                var walk = function (el, d) {
-                    var out = describe(el);
+                const walk = function (el, d) {
+                    const out = describe(el);
                     if (d <= 0 || !el.children) return out;
                     out.kids = [];
-                    for (var j = 0; j < el.children.length && j < limit; j++) {
+                    for (let j = 0; j < el.children.length && j < limit; j++) {
                         out.kids.push(walk(el.children[j], d - 1));
                     }
                     if (el.children.length > out.kids.length) {
@@ -9951,17 +9981,17 @@
                 // Test-only: send the NPC action exactly as given, so a server
                 // refusal can be attributed to the id instead of guessed at.
                 args = args || {};
-                var id = _agentNum(args.npc_id != null ? args.npc_id : args.id);
-                var action = _agentNum(args.action);
+                let id = _agentNum(args.npc_id != null ? args.npc_id : args.id);
+                let action = _agentNum(args.action);
                 if (action == null) action = 3;
-                var mapId = _agentNum(args.map_id);
+                let mapId = _agentNum(args.map_id);
                 if (mapId == null) {
                     try {
                         mapId = window.gui.playerData.position.mapId;
                     } catch (e) { mapId = null; }
                 }
                 if (id == null) return _agentResult(false, null, 'npc_talk needs npc_id');
-                var r = _cmSend('NpcGenericActionRequestMessage',
+                const r = _cmSend('NpcGenericActionRequestMessage',
                     { npcId: id, npcActionId: action, npcMapId: mapId });
                 return _agentResult(r.ok, { npc_id: id, action: action, map_id: mapId },
                     r.ok ? null : r.error);
@@ -9971,23 +10001,23 @@
                 // Used to answer "who owns character selection / logout" without
                 // shipping a new tool for every screen.
                 args = args || {};
-                var gui = window.gui || null;
+                const gui = window.gui || null;
                 if (!gui) return _agentResult(false, null, 'gui is not exposed');
-                var keys = [];
+                const keys = [];
                 try {
-                    for (var k in gui) {
+                    for (const k in gui) {
                         if (typeof gui[k] === 'function') continue;
                         keys.push(k);
                     }
                 } catch (e) { return _agentResult(false, null, 'gui key scan failed: ' + e); }
-                var out = { keys: keys.slice(0, 120) };
-                var match = args.match ? new RegExp(String(args.match), 'i') : null;
+                const out = { keys: keys.slice(0, 120) };
+                const match = args.match ? new RegExp(String(args.match), 'i') : null;
                 if (match) {
                     out.matches = {};
-                    for (var i = 0; i < keys.length; i++) {
+                    for (let i = 0; i < keys.length; i++) {
                         if (!match.test(keys[i])) continue;
                         if (Object.keys(out.matches).length >= 12) break;
-                        var v = null;
+                        let v = null;
                         try { v = gui[keys[i]]; } catch (e2) { continue; }
                         out.matches[keys[i]] = v && typeof v === 'object'
                             ? { type: String((v.constructor && v.constructor.name) || 'object'),
@@ -10003,35 +10033,35 @@
                 // step is an object with no public reader; a stuck tutorial step is
                 // otherwise a guessing game.
                 args = args || {};
-                var path = String(args.path || '').split('.').filter(function (p) { return p; });
-                var depth = _agentNum(args.depth);
+                const path = String(args.path || '').split('.').filter(function (p) { return p; });
+                let depth = _agentNum(args.depth);
                 if (depth == null || depth < 0) depth = 2;
                 if (depth > 4) depth = 4;
-                var node = window;
-                var walked = [];
-                for (var i = 0; i < path.length; i++) {
+                let node = window;
+                const walked = [];
+                for (let i = 0; i < path.length; i++) {
                     if (node == null) break;
                     try { node = node[path[i]]; walked.push(path[i]); }
                     catch (e) { return _agentResult(false, { walked: walked }, 'read failed: ' + e); }
                 }
-                var bounded = function (v, d) {
+                const bounded = function (v, d) {
                     if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
                     if (typeof v === 'string') return v.length > 120 ? v.slice(0, 120) + '...' : v;
                     if (typeof v === 'function') {
                         if (!args.source) return 'function';
-                        var src = '';
+                        let src = '';
                         try { src = Function.prototype.toString.call(v); } catch (eSrc) {}
                         return src.length > 500 ? src.slice(0, 500) + '...' : src;
                     }
                     if (Object.prototype.toString.call(v) === '[object Array]') {
-                        var arr = [];
-                        for (var j = 0; j < v.length && j < 8; j++) arr.push(bounded(v[j], d - 1));
+                        const arr = [];
+                        for (let j = 0; j < v.length && j < 8; j++) arr.push(bounded(v[j], d - 1));
                         return arr;
                     }
                     if (d <= 0) return 'object';
-                    var o = {};
-                    var count = 0;
-                    for (var k in v) {
+                    const o = {};
+                    let count = 0;
+                    for (const k in v) {
                         if (count++ >= 20) break;
                         try { o[k] = bounded(v[k], d - 1); } catch (e2) { o[k] = 'ERR'; }
                     }
@@ -10046,17 +10076,17 @@
                 // the smallest visible element whose text contains the needle, the
                 // same event sequence session.login uses for its buttons.
                 args = args || {};
-                var text = String(args.text || '').toLowerCase().trim();
+                const text = String(args.text || '').toLowerCase().trim();
                 if (!text) return _agentResult(false, null, 'tap_text needs text');
-                var best = null;
-                var nodes = document.querySelectorAll('[class]');
-                for (var i = 0; i < nodes.length; i++) {
-                    var el = nodes[i];
-                    var t = String(el.textContent || '').trim().toLowerCase();
+                let best = null;
+                const nodes = document.querySelectorAll('[class]');
+                for (let i = 0; i < nodes.length; i++) {
+                    const el = nodes[i];
+                    const t = String(el.textContent || '').trim().toLowerCase();
                     if (t.indexOf(text) < 0) continue;
-                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
                     if (!r || !r.width || !r.height) continue;
-                    var area = r.width * r.height;
+                    const area = r.width * r.height;
                     if (!best || area < best.area) {
                         best = { el: el, area: area, r: r, cls: String(el.className || '') };
                     }
@@ -10065,7 +10095,7 @@
                     return _agentResult(false, { text: text },
                         'no visible element contains "' + text + '"');
                 }
-                var o = { clientX: Math.round(best.r.left + best.r.width / 2),
+                const o = { clientX: Math.round(best.r.left + best.r.width / 2),
                           clientY: Math.round(best.r.top + best.r.height / 2),
                           bubbles: true, cancelable: true, view: window };
                 try {
@@ -10083,15 +10113,15 @@
                     box: [Math.round(best.r.width), Math.round(best.r.height)] });
             },
             'debug.map': function() {
-                var iso = window.isoEngine || null;
-                var pd = (window.gui && window.gui.playerData) || null;
-                var md = (iso && iso.mapData) || {};
-                var mr = (iso && iso.mapRenderer && iso.mapRenderer.map) || {};
-                var out = { map_id: pd && pd.position ? pd.position.mapId : null,
+                const iso = window.isoEngine || null;
+                const pd = (window.gui && window.gui.playerData) || null;
+                const md = (iso && iso.mapData) || {};
+                const mr = (iso && iso.mapRenderer && iso.mapRenderer.map) || {};
+                const out = { map_id: pd && pd.position ? pd.position.mapId : null,
                             mapData_keys: Object.keys(md).slice(0, 30),
                             rendererMap_keys: Object.keys(mr).slice(0, 30),
                             candidates: {} };
-                var tryGet = function (label, obj, key) {
+                const tryGet = function (label, obj, key) {
                     try { if (obj && obj[key] !== undefined) out.candidates[label] = obj[key]; }
                     catch (e) {}
                 };
@@ -10103,7 +10133,7 @@
                 // object has one boolean per direction; the old `flags.length` test
                 // was always undefined, so this diagnostic listed no exits at all.
                 try {
-                    var details = _agentMapDetails();
+                    const details = _agentMapDetails();
                     out.exit_cells = details.exits;
                     out.npcs = details.npcs;
                     out.interactives = details.interactives;
@@ -10112,18 +10142,18 @@
                 return _agentResult(true, out);
             },
             'debug.groups': function() {
-                var out = _listMonsterGroups();
+                const out = _listMonsterGroups();
                 return _agentResult(true, { count: out.length, groups: out });
             },
             'debug.npcs': function() {
-                var list = _listNpcActors();
+                const list = _listNpcActors();
                 return _agentResult(true, { count: list.length, npcs: list });
             },
             'debug.reload': function(args) {
                 // A reload at the login screen is a new login attempt: after "Server
                 // busy" it is one more press that re-arms the cooldown, so it is
                 // refused for the same window session.login honours.
-                var cool = _loginCooldown();
+                const cool = _loginCooldown();
                 if (cool && !(args && args.force)) {
                     return _agentResult(false, { login_cooldown: cool },
                         'reload refused: login cooldown has ' + cool.remaining_s + 's left '
@@ -10146,10 +10176,10 @@
                 // arrive, was a ready actually sent, and is the bot driving the
                 // turns. Those four are indistinguishable from the host when
                 // the fight simply sits there.
-                var pdG = (window.gui && window.gui.playerData) || null;
-                var fm = (window.gui && window.gui.fightManager) || null;
-                var fb = window.__FarmBot || null;
-                var st = (fb && fb.state) || null;
+                const pdG = (window.gui && window.gui.playerData) || null;
+                const fm = (window.gui && window.gui.fightManager) || null;
+                const fb = window.__FarmBot || null;
+                const st = (fb && fb.state) || null;
                 return _agentResult(true, {
                     in_fight: !!(pdG && pdG.isFighting) || !!(fm && fm.isInFight && fm.isInFight()),
                     auto_fight: !!(fb && fb.enabled),
@@ -10176,10 +10206,10 @@
                 // way it can break looks identical from the host: "nothing advanced".
                 // This says which step, so the next live session is a reading, not a
                 // guess.
-                var pdT = (window.gui && window.gui.playerData) || null;
-                var uiT = (window.gui && window.gui.npcDialogUi) || null;
-                var hT = (window.gui && window.gui.npcDialogHandler) || null;
-                var canSend = function(o) {
+                const pdT = (window.gui && window.gui.playerData) || null;
+                const uiT = (window.gui && window.gui.npcDialogUi) || null;
+                const hT = (window.gui && window.gui.npcDialogHandler) || null;
+                const canSend = function(o) {
                     return !!(o && (typeof o._uiReplyHandler === 'function'
                         || typeof o.replyHandler === 'function'));
                 };
@@ -10196,7 +10226,7 @@
                 });
             },
             'debug.last_disconnect': function() {
-                var d = window.__agentLastDisconnect || null;
+                const d = window.__agentLastDisconnect || null;
                 return _agentResult(true, d || { none: true,
                     note: 'no disconnect observed since this page loaded' });
             },
@@ -10208,14 +10238,14 @@
             // first; a harvester written from a guess would page a table that
             // does not exist. Sends nothing, writes nothing.
             'debug.dbtables': function() {
-                var dbs = _agentDatabases();
+                const dbs = _agentDatabases();
                 if (!dbs) {
                     return _agentResult(false, null, 'client databases are not loaded');
                 }
-                var tables = [];
-                for (var name in dbs) {
+                const tables = [];
+                for (const name in dbs) {
                     if (!Object.prototype.hasOwnProperty.call(dbs, name)) continue;
-                    var t = dbs[name];
+                    let t = dbs[name];
                     tables.push({
                         table: name,
                         rows: (t && typeof t === 'object') ? Object.keys(t).length : null
@@ -10226,50 +10256,50 @@
             },
             'debug.dbrows': function(args) {
                 args = args || {};
-                var dbs = _agentDatabases();
+                const dbs = _agentDatabases();
                 if (!dbs) {
                     return _agentResult(false, null, 'client databases are not loaded');
                 }
-                var name = args.table != null ? String(args.table) : '';
+                const name = args.table != null ? String(args.table) : '';
                 if (!name || !Object.prototype.hasOwnProperty.call(dbs, name)) {
                     return _agentResult(false, null, 'unknown or missing table: ' + name);
                 }
-                var table = dbs[name];
+                const table = dbs[name];
                 if (!table || typeof table !== 'object') {
                     return _agentResult(false, null, 'table is not an object: ' + name);
                 }
-                var allIds = Object.keys(table);
-                var wanted = [];
+                const allIds = Object.keys(table);
+                let wanted = [];
                 if (Object.prototype.toString.call(args.ids) === '[object Array]') {
-                    for (var i = 0; i < args.ids.length && wanted.length < 200; i++) {
-                        var id = args.ids[i];
+                    for (let i = 0; i < args.ids.length && wanted.length < 200; i++) {
+                        const id = args.ids[i];
                         if (Object.prototype.hasOwnProperty.call(table, id)) {
                             wanted.push(String(id));
                         }
                     }
                 } else {
-                    var offset = _agentCap(args.offset, 0, allIds.length, 0);
-                    var limit = _agentCap(args.limit, 1, 200, 50);
+                    const offset = _agentCap(args.offset, 0, allIds.length, 0);
+                    const limit = _agentCap(args.limit, 1, 200, 50);
                     wanted = allIds.slice(offset, offset + limit);
                 }
-                var keys = {};
-                var rows = [];
-                for (var w = 0; w < wanted.length; w++) {
-                    var row = table[wanted[w]];
+                const keys = {};
+                const rows = [];
+                for (let w = 0; w < wanted.length; w++) {
+                    const row = table[wanted[w]];
                     if (!row || typeof row !== 'object') {
                         rows.push({ id: wanted[w], db: false });
                         continue;
                     }
-                    var item = { id: row.id != null ? row.id : wanted[w], db: true };
-                    for (var f in row) {
+                    const item = { id: row.id != null ? row.id : wanted[w], db: true };
+                    for (const f in row) {
                         if (!Object.prototype.hasOwnProperty.call(row, f)) continue;
-                        var v = row[f];
+                        let v = row[f];
                         if (v === null || v === undefined) continue;
                         if (typeof v === 'object') {
                             if (Object.prototype.toString.call(v) === '[object Array]'
                                     && v.length <= 80) {
-                                var simple = true;
-                                for (var ai = 0; ai < v.length; ai++) {
+                                let simple = true;
+                                for (let ai = 0; ai < v.length; ai++) {
                                     if (v[ai] !== null && typeof v[ai] === 'object') {
                                         simple = false;
                                         break;
@@ -10298,22 +10328,22 @@
             // reading sends the agent walking to a map that does not exist.
             // Read-only: no message is sent and nothing is changed.
             'debug.questdb': function(args) {
-                var out = {};
-                var a = args || {};
-                var qid = Number(a.quest_id || 3841);
-                var oid = Number(a.objective_id || 13541);
-                var mid = Number(a.map_id || 0);
-                var keys = function(o, n) {
+                const out = {};
+                const a = args || {};
+                const qid = Number(a.quest_id || 3841);
+                const oid = Number(a.objective_id || 13541);
+                const mid = Number(a.map_id || 0);
+                const keys = function(o, n) {
                     try { return o ? Object.keys(o).slice(0, n || 60) : null; }
                     catch (e) { return 'ERR:' + e; }
                 };
-                var val = function(fn) {
-                    try { var v = fn(); return (v === undefined) ? '__undefined' : v; }
+                const val = function(fn) {
+                    try { let v = fn(); return (v === undefined) ? '__undefined' : v; }
                     catch (e) { return 'ERR:' + e; }
                 };
-                var pd = window.gui && window.gui.playerData;
-                var sq = pd && pd.quests && pd.quests.standardQuests;
-                var q = (sq && typeof sq.getActiveQuestById === 'function')
+                const pd = window.gui && window.gui.playerData;
+                const sq = pd && pd.quests && pd.quests.standardQuests;
+                const q = (sq && typeof sq.getActiveQuestById === 'function')
                     ? sq.getActiveQuestById(qid) : null;
                 out.quest = null;
                 try {
@@ -10328,7 +10358,7 @@
                     }
                 } catch (e) { out.quest = 'ERR:' + e; }
                 out.objective_db = val(function () {
-                    var dbs = window.gui && window.gui.databases;
+                    const dbs = window.gui && window.gui.databases;
                     return dbs && dbs.QuestObjectives
                         ? (dbs.QuestObjectives[oid] || null) : null;
                 });
@@ -10339,8 +10369,8 @@
                 out.map_position = null;
                 out.map_position_count = null;
                 try {
-                    var dbs2 = window.gui && window.gui.databases;
-                    var mp = dbs2 && dbs2.MapPositions;
+                    const dbs2 = window.gui && window.gui.databases;
+                    const mp = dbs2 && dbs2.MapPositions;
                     if (mp) {
                         out.map_position_count = Object.keys(mp).length;
                         if (mid) out.map_position = mp[mid] || null;
@@ -10351,7 +10381,7 @@
                 });
                 out.gps = null;
                 try {
-                    var g = window.gui && window.gui.GPS;
+                    const g = window.gui && window.gui.GPS;
                     if (g) {
                         out.gps = { keys: keys(g, 40) };
                         ['_currentTarget', 'currentTarget', '_target', 'target',
@@ -10380,23 +10410,24 @@
                 // it a silent no-op for weeks, so this walks what the page can reach
                 // and reports every object carrying the AFK methods, with the path it
                 // was found on. Read-only: it never calls anything.
-                var found = [], visited = [];
+                const found = [], visited = [];
                 function walk(obj, path, depth) {
                     if (!obj || depth > 3) return;
                     if (visited.indexOf(obj) >= 0 || visited.length > 3000) return;
                     visited.push(obj);
-                    var keys;
+                    let keys;
                     try { keys = Object.keys(obj); } catch (e) { return; }
-                    for (var i = 0; i < keys.length && i < 300; i++) {
-                        var k = keys[i], v = null;
+                    for (let i = 0; i < keys.length && i < 300; i++) {
+                                                const k = keys[i];
+                        let v = null;
                         try { v = obj[k]; } catch (eRead) { continue; }
                         if (!v || typeof v !== 'object') continue;
                         if (typeof v.recordActivity === 'function'
                             || typeof v.isActiveSince === 'function') {
-                            var has = [];
-                            var probe = ['recordActivity', 'isActiveSince', '_checkActivity',
+                            const has = [];
+                            const probe = ['recordActivity', 'isActiveSince', '_checkActivity',
                                          'isInactive', 'lastActivityTime', 'isListening'];
-                            for (var h = 0; h < probe.length; h++)
+                            for (let h = 0; h < probe.length; h++)
                                 if (v[probe[h]] !== undefined) has.push(probe[h]);
                             found.push({ path: path + '.' + k, has: has });
                         }
@@ -10418,22 +10449,22 @@
                 // `npcActionId` -- it never hardcodes 3 -- so an unanswered talk is most
                 // likely an action this NPC does not have. Read-only: it lists, it does
                 // not send.
-                var want = Number((args && (args.npc_id || args.npcId)) || 0) || null;
-                var am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
-                var actors = (am && am.actors) || null;
-                var out = { wanted: want, npcs: [], actor_keys: null, data_keys: null };
+                let want = Number((args && (args.npc_id || args.npcId)) || 0) || null;
+                const am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
+                const actors = (am && am.actors) || null;
+                const out = { wanted: want, npcs: [], actor_keys: null, data_keys: null };
                 if (!actors) {
                     out.error = 'no actorManager.actors';
                     return _agentResult(true, out);
                 }
-                for (var k in actors) {
+                for (const k in actors) {
                     if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                    var a = actors[k] || {};
-                    var d = a.data || {};
-                    var template = d.npcId != null ? d.npcId
+                    const a = actors[k] || {};
+                    const d = a.data || {};
+                    let template = d.npcId != null ? d.npcId
                         : (a.npcId != null ? a.npcId : null);
                     if (template == null) continue;
-                    var entry = {
+                    const entry = {
                         npc_id: Number(template),
                         actor_key: k,
                         actorId: a.actorId == null ? null : a.actorId,
@@ -10464,16 +10495,16 @@
                 return _agentResult(true, { build: window.__agentBuild || AGENT_BUILD });
             },
             'debug.probe': function() {
-                var out = {};
-                var keys = function(o, n) {
+                const out = {};
+                const keys = function(o, n) {
                     try { return o ? Object.keys(o).slice(0, n || 40) : null; }
                     catch (e) { return 'ERR:' + e; }
                 };
-                var val = function(fn) {
-                    try { var v = fn(); return (v === undefined) ? '__undefined' : v; }
+                const val = function(fn) {
+                    try { let v = fn(); return (v === undefined) ? '__undefined' : v; }
                     catch (e) { return 'ERR:' + e; }
                 };
-                var pd = null, ch = null;
+                let pd = null, ch = null;
                 try { pd = window.gui && window.gui.playerData; } catch (e) {}
                 try { ch = pd && pd.character; } catch (e) {}
                 out.gui_keys = keys(window.gui, 30);
@@ -10510,7 +10541,7 @@
                 return _agentResult(true, out);
             },
             'inv.list': function() {
-                var snap = _agentSnapshot();
+                const snap = _agentSnapshot();
                 return _agentResult(!!snap.inventory, snap.inventory || null,
                     snap.inventory ? null : 'inventory is not exposed by this client build (probe: playerData.inventory missing)');
             },
@@ -10523,18 +10554,18 @@
             // not open an OAuth popup, and returns what it saw either way, so an operator can
             // read the same evidence the agent acted on. `inspect:true` reports without pressing.
             'session.login': function(args) {
-                var inspectOnly = !!(args && (args.inspect || args.dry_run));
-                var want = String((args && args.target) || 'play').toLowerCase();
-                var cool = _loginCooldown();
+                const inspectOnly = !!(args && (args.inspect || args.dry_run));
+                let want = String((args && args.target) || 'play').toLowerCase();
+                const cool = _loginCooldown();
                 if (!inspectOnly && cool && !(args && args.force)) {
                     return _agentResult(false, { login_cooldown: cool, pressed: null },
                         'login cooldown: the page answered "' + cool.reason + '" and '
                         + cool.remaining_s + 's remain; pressing login inside that '
                         + 'window re-arms the lockout (force:true overrides)');
                 }
-                var seen = [];
-                var pressable = [];
-                var ban = _agentLoginBan();
+                const seen = [];
+                const pressable = [];
+                const ban = _agentLoginBan();
                 if (!inspectOnly && ban && ban.banned) {
                     // A permanent ban answers every press the same way, so the
                     // press is not sent at all: it is another auth attempt, not a
@@ -10553,21 +10584,21 @@
                     // own selectCharacter(id) implements as exactly this message.
                     // Without it a fall-out that lands here waits out the whole
                     // recovery budget (live 2026-10-29: 751.8 s, recovered false).
-                    var snapSel = _agentSnapshot();
+                    const snapSel = _agentSnapshot();
                     if (!snapSel || snapSel.in_world !== false) {
                         return _agentResult(false, {
                             in_world: snapSel ? snapSel.in_world : null
                         }, 'the client is already in the world');
                     }
-                    var selChar = snapSel.character && snapSel.character.id != null
+                    const selChar = snapSel.character && snapSel.character.id != null
                         ? Number(snapSel.character.id) : null;
-                    var wantId = args && args.character_id != null
+                    let wantId = args && args.character_id != null
                         ? Number(args.character_id) : selChar;
                     if (wantId == null || !isFinite(wantId) || wantId <= 0) {
                         return _agentResult(false, { character_id: null },
                             'no character id is known at character selection');
                     }
-                    var selSent = _cmSend('CharacterSelectionMessage', { id: wantId });
+                    const selSent = _cmSend('CharacterSelectionMessage', { id: wantId });
                     return _agentResult(selSent.ok, {
                         target: 'character', character_id: wantId,
                         in_world_before: snapSel.in_world,
@@ -10575,13 +10606,13 @@
                     }, selSent.ok ? null : selSent.error);
                 }
                 try {
-                    var nodes = document.querySelectorAll('[class]');
-                    for (var i = 0; i < nodes.length; i++) {
-                        var el = nodes[i];
-                        var cls = String(el.className || '');
+                    const nodes = document.querySelectorAll('[class]');
+                    for (let i = 0; i < nodes.length; i++) {
+                        const el = nodes[i];
+                        let cls = String(el.className || '');
                         if (!/btnPlay|guest|connect|login|account|server|play/i.test(cls)) continue;
-                        var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-                        var w = r ? Math.round(r.width) : 0, h = r ? Math.round(r.height) : 0;
+                        let r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                        const w = r ? Math.round(r.width) : 0, h = r ? Math.round(r.height) : 0;
                         if (!w || !h) continue;
                         seen.push({ class: cls.slice(0, 70),
                                     text: String(el.textContent || '').trim().slice(0, 40),
@@ -10591,7 +10622,7 @@
                 } catch (e) {
                     return _agentResult(false, null, 'session.login scan failed: ' + e);
                 }
-                var ls = null, lsKeys = null, lsMethod = null;
+                let ls = null, lsKeys = null, lsMethod = null;
                 try {
                     ls = window.gui && window.gui.loginScreen;
                     if (ls) {
@@ -10604,12 +10635,12 @@
                 } catch (e) { lsKeys = 'ERR:' + e; }
                 // The guest button is an object of the game's own UI framework, not just a div:
                 // its registered events are the honest answer to "what does a press mean here".
-                var guestObj = null;
+                let guestObj = null;
                 try {
                     ['_playGuestBtn', '_continueGuestBtn'].forEach(function (k) {
-                        var b = ls && ls[k];
+                        const b = ls && ls[k];
                         if (!b) return;
-                        var ev = null, handlers = null;
+                        let ev = null, handlers = null;
                         try {
                             ev = b._events && typeof b._events === 'object'
                                 ? Object.keys(b._events) : null;
@@ -10617,14 +10648,14 @@
                         try {
                             // What the game actually hooked up to a tap is the only honest answer
                             // to why a press that reports success changes nothing.
-                            var t = b._events && b._events.tap;
+                            const t = b._events && b._events.tap;
                             if (t && typeof t.forEach === 'function') {
                                 handlers = t.slice(0, 2).map(function (e3) {
-                                    var fn = e3 && (e3.listener || e3.callback || e3.fn);
+                                    const fn = e3 && (e3.listener || e3.callback || e3.fn);
                                     return fn ? String(fn).slice(0, 150) : String(e3).slice(0, 60);
                                 });
                             } else if (t) {
-                                var fn2 = t.listener || t.callback || t.fn;
+                                const fn2 = t.listener || t.callback || t.fn;
                                 handlers = [fn2 ? String(fn2).slice(0, 150) : String(t).slice(0, 60)];
                             }
                         } catch (e4) { handlers = 'ERR:' + e4; }
@@ -10642,16 +10673,16 @@
                 } catch (e) { guestObj = 'ERR:' + e; }
                 // Which object in the tree owns the element that is actually on screen? Pressing
                 // a hidden button reports success and changes nothing, so name the visible ones.
-                var tree = [];
+                let tree = [];
                 try {
-                    var walk = function (node, depth) {
+                    const walk = function (node, depth) {
                         if (!node || depth > 4 || tree.length >= 14) return;
                         try {
-                            var re = node.rootElement;
-                            var cls = re ? String(re.className || '') : '';
-                            var vis = re && re.getBoundingClientRect
+                            const re = node.rootElement;
+                            const cls = re ? String(re.className || '') : '';
+                            const vis = re && re.getBoundingClientRect
                                 ? (re.getBoundingClientRect().width > 0) : false;
-                            var hasTap = false;
+                            let hasTap = false;
                             try { hasTap = !!(node._events && node._events.tap); } catch (e6) {}
                             if (cls || hasTap) {
                                 tree.push({ d: depth, name: String(node._name || '').slice(0, 24),
@@ -10661,20 +10692,20 @@
                                                                 catch (e7) { return null; } })()
                                                 : null });
                             }
-                            var kids = node._childrenList || [];
-                            for (var c = 0; c < kids.length; c++) walk(kids[c], depth + 1);
+                            const kids = node._childrenList || [];
+                            for (let c = 0; c < kids.length; c++) walk(kids[c], depth + 1);
                         } catch (e8) {}
                     };
                     walk(ls, 0);
                 } catch (e9) { tree = 'ERR:' + e9; }
                 // A guest is created through a form, so report what a person would see: the
                 // fields, whether they are already filled, and the server picker.
-                var fields = [];
+                let fields = [];
                 try {
-                    var inputs = document.querySelectorAll('input, select');
-                    for (var f2 = 0; f2 < inputs.length && fields.length < 12; f2++) {
-                        var el2 = inputs[f2];
-                        var r2 = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
+                    const inputs = document.querySelectorAll('input, select');
+                    for (let f2 = 0; f2 < inputs.length && fields.length < 12; f2++) {
+                        const el2 = inputs[f2];
+                        const r2 = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
                         if (!r2 || !r2.width || !r2.height) continue;
                         fields.push({ tag: String(el2.tagName || '').toLowerCase(),
                                       type: String(el2.type || ''), name: String(el2.name || ''),
@@ -10682,7 +10713,7 @@
                                       value: String(el2.value || '').slice(0, 24) });
                     }
                 } catch (e) { fields = 'ERR:' + e; }
-                var guestSteps = null;
+                let guestSteps = null;
                 try {
                     // Object.keys does not see prototype methods, and `playWithGuest` is one:
                     // the host's own seeding script calls exactly this to finish a guest login.
@@ -10693,14 +10724,14 @@
                         continueGuestFollow: typeof ls._continueGuestFollow === 'function'
                     } : null;
                 } catch (e8b) { guestSteps = 'ERR:' + e8b; }
-                var saved = null;
+                let saved = null;
                 try {
-                    var raw = window.localStorage && window.localStorage.getItem('dofus.1');
-                    var g = raw && JSON.parse(raw)['all#guestAccount'];
+                    const raw = window.localStorage && window.localStorage.getItem('dofus.1');
+                    const g = raw && JSON.parse(raw)['all#guestAccount'];
                     saved = !!(g && g.login);
                 } catch (e) { saved = false; }
-                var snap = _agentSnapshot();
-                var out = { at_login: !(snap && snap.in_world), seen: seen.slice(0, 16),
+                const snap = _agentSnapshot();
+                const out = { at_login: !(snap && snap.in_world), seen: seen.slice(0, 16),
                             pressable: pressable.length, loginScreen_keys: lsKeys,
                             loginScreen_methods: lsMethod, guest_buttons: guestObj,
                             guest_steps: guestSteps,
@@ -10713,24 +10744,24 @@
                 // isTrusted:false and this UI ignores it (measured: pressing .linkGuest produced
                 // no create-guest fetch at all). Emitting the event the button itself registered
                 // runs the game's own handler — still Ankama's code path, not an invented one.
-                var emitErr = null;
-                var emit = function (which) {
-                    var b = ls && ls[which];
+                let emitErr = null;
+                const emit = function (which) {
+                    const b = ls && ls[which];
                     if (!b) return null;
-                    var names = null;
+                    let names = null;
                     try { names = b._events && Object.keys(b._events); } catch (e) { names = null; }
-                    var order = ['tap', 'click', 'pressup'];
-                    var pick = null;
-                    for (var q = 0; q < order.length; q++) {
+                    const order = ['tap', 'click', 'pressup'];
+                    let pick = null;
+                    for (let q = 0; q < order.length; q++) {
                         if (names && names.indexOf(order[q]) >= 0) { pick = order[q]; break; }
                     }
                     if (!pick && names && names.length) pick = names[0];
                     if (!pick) pick = 'tap';
                     // The handler is written against an event object, so hand it one: a bare
                     // emit() ran the listener and it did nothing visible (measured: no fetch).
-                    var target = null;
+                    let target = null;
                     try { target = b.rootElement || (b.get && b.get('rootElement')); } catch (e2) {}
-                    var ev = { type: pick, target: target || b, currentTarget: target || b,
+                    const ev = { type: pick, target: target || b, currentTarget: target || b,
                                nativeEvent: { isTrusted: true }, relatedTarget: null,
                                detail: null, bubbles: true, cancelable: true,
                                preventDefault: function () {}, stopPropagation: function () {},
@@ -10740,11 +10771,11 @@
                         catch (e3) { emitErr = which + '.emit: ' + e3; }
                     }
                     try {
-                        var reg = b._events && b._events[pick];
-                        var list = (reg && typeof reg.forEach === 'function') ? reg : (reg ? [reg] : []);
-                        var called = 0;
-                        for (var m = 0; m < list.length; m++) {
-                            var fn = list[m] && (list[m].listener || list[m].callback || list[m].fn);
+                        const reg = b._events && b._events[pick];
+                        const list = (reg && typeof reg.forEach === 'function') ? reg : (reg ? [reg] : []);
+                        let called = 0;
+                        for (let m = 0; m < list.length; m++) {
+                            const fn = list[m] && (list[m].listener || list[m].callback || list[m].fn);
                             if (typeof fn !== 'function') continue;
                             fn.call((list[m] && list[m].context) || b, ev);
                             called++;
@@ -10754,15 +10785,15 @@
                         + '.listener: ' + e4; }
                     return null;
                 };
-                var pressed = null;
-                var fire = function (el) {
-                    var r = el.getBoundingClientRect();
-                    var x = r.left + r.width / 2, y = r.top + r.height / 2;
-                    var o = { bubbles: true, cancelable: true, view: window, clientX: x,
+                let pressed = null;
+                const fire = function (el) {
+                    const r = el.getBoundingClientRect();
+                    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+                    const o = { bubbles: true, cancelable: true, view: window, clientX: x,
                               clientY: y, pageX: x, pageY: y };
                     try {
                         if (window.TouchEvent && document.createTouch) {
-                            var t = document.createTouch(window, el, Date.now(), x, y, x, y);
+                            const t = document.createTouch(window, el, Date.now(), x, y, x, y);
                             el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true,
                                 cancelable: true, touches: [t], targetTouches: [t],
                                 changedTouches: [t] }));
@@ -10784,9 +10815,9 @@
                 };
                 // The game's own order: the button whose class says play, then a guest entry,
                 // then anything else visible — and if the login screen exposes a method, use it.
-                var ranked = pressable.slice().sort(function (a, b) {
-                    var score = function (el) {
-                        var c = String(el.className || '').toLowerCase();
+                const ranked = pressable.slice().sort(function (a, b) {
+                    const score = function (el) {
+                        const c = String(el.className || '').toLowerCase();
                         if (c.indexOf('btnplay') >= 0) return 0;
                         if (want === 'guest' && c.indexOf('guest') >= 0) return 1;
                         if (c.indexOf('connect') >= 0 || c.indexOf('login') >= 0) return 2;
@@ -10803,11 +10834,11 @@
                     // the event is only a fallback. `playWithGuest` is tried first because it is
                     // the game's own end-to-end guest path (the host's seeding script calls it),
                     // and it is a prototype method so a key scan cannot see it.
-                    var step = saved ? '_continueGuest' : '_createGuest';
-                    var order = ['playWithGuest', step];
-                    var oi = 0;
+                    const step = saved ? '_continueGuest' : '_createGuest';
+                    const order = ['playWithGuest', step];
+                    let oi = 0;
                     for (; oi < order.length && !pressed; oi++) {
-                        var name = order[oi];
+                        const name = order[oi];
                         if (!ls || typeof ls[name] !== 'function') continue;
                         try {
                             ls[name]();
@@ -10826,7 +10857,7 @@
                 }
                 if (!pressed) {
                     if (ranked.length) {
-                        var pick = want === 'guest'
+                        const pick = want === 'guest'
                             ? (ranked.filter(function (el) {
                                     return String(el.className || '').toLowerCase().indexOf('guest') >= 0;
                                 })[0] || ranked[0])
@@ -10844,13 +10875,13 @@
                 // One call must show the transition it caused, or every step of a login flow
                 // costs a round trip: re-read the screen right after pressing.
                 try {
-                    var after = _agentSnapshot();
-                    var afterScreens = [];
-                    var nodes2 = document.querySelectorAll('[class]');
-                    for (var z = 0; z < nodes2.length && afterScreens.length < 8; z++) {
-                        var n2 = nodes2[z], c2 = String(n2.className || '');
+                    let after = _agentSnapshot();
+                    const afterScreens = [];
+                    const nodes2 = document.querySelectorAll('[class]');
+                    for (let z = 0; z < nodes2.length && afterScreens.length < 8; z++) {
+                        const n2 = nodes2[z], c2 = String(n2.className || '');
                         if (!/Form|Guest|server|Login|btnPlay|Popup|nickname/i.test(c2)) continue;
-                        var r3 = n2.getBoundingClientRect ? n2.getBoundingClientRect() : null;
+                        const r3 = n2.getBoundingClientRect ? n2.getBoundingClientRect() : null;
                         if (!r3 || !r3.width || !r3.height) continue;
                         afterScreens.push(c2.slice(0, 50) + '|'
                             + String(n2.textContent || '').trim().slice(0, 40));
@@ -10865,7 +10896,7 @@
                 return _agentResult(true, out);
             },
             'chat.say': function(args) {
-                var text = (args && args.text) || '';
+                const text = (args && args.text) || '';
                 if (!text) return _agentResult(false, null, 'chat.say needs non-empty text');
                 try {
                     if (window.gui && window.gui.chat && typeof window.gui.chat.sendMessage === 'function') {
@@ -10890,7 +10921,7 @@
                 //
                 // The client exposes the whole dialog: gui.npcDialogUi._uiReplyHandler
                 // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
-                var pd0 = (window.gui && window.gui.playerData) || null;
+                const pd0 = (window.gui && window.gui.playerData) || null;
                 if (args && args.close && !(pd0 && pd0.isInDialog)) {
                     // Closing a dialog that is already gone is the state the caller
                     // asked for. Live 2026-10-29: the close that worked a beat after
@@ -10910,10 +10941,10 @@
                     // dialog is offering right now can reach the wire, so a stale or
                     // invented id is refused (G31's rule) and the read half stays honest.
                     if (args && args.accept === true) {
-                        var acceptState = _agentDialogState();
-                        var offeredId = (acceptState && acceptState.start_quest != null)
+                        const acceptState = _agentDialogState();
+                        let offeredId = (acceptState && acceptState.start_quest != null)
                             ? Number(acceptState.start_quest) : null;
-                        var acceptId = Number(args.quest_id || args.questId || 0) || null;
+                        let acceptId = Number(args.quest_id || args.questId || 0) || null;
                         if (acceptId == null) {
                             return _agentResult(false,
                                 { stage: 'accept_no_quest_id', offered: offeredId },
@@ -10933,9 +10964,9 @@
                         // The same 5 s in-flight window the outside-dialog start uses:
                         // a second accept before the server answers is the 287-refusal
                         // loop's shape, and this request can be re-derived every step.
-                        var acceptStarts = window.__agentQuestStarts
+                        const acceptStarts = window.__agentQuestStarts
                             || (window.__agentQuestStarts = {});
-                        var acceptPending = acceptStarts[acceptId] || null;
+                        const acceptPending = acceptStarts[acceptId] || null;
                         if (acceptPending
                                 && Date.now() - Number(acceptPending.at || 0) < 5000) {
                             return _agentResult(true,
@@ -10943,23 +10974,23 @@
                                   via: 'QuestStartRequestMessage', pending: true,
                                   accepted_offer: true }, null);
                         }
-                        var acceptSend = _cmSend('QuestStartRequestMessage',
+                        const acceptSend = _cmSend('QuestStartRequestMessage',
                             { questId: acceptId });
                         if (acceptSend.ok) acceptStarts[acceptId] = { at: Date.now() };
                         // Close the way a click on the client's own link does. Each
                         // path keeps its own try: one throwing must not lose the other
                         // (the close branch learned that with 148 null-deref failures).
-                        var acceptUi = window.gui && window.gui.npcDialogUi;
-                        var acceptHandler = window.gui && window.gui.npcDialogHandler;
+                        const acceptUi = window.gui && window.gui.npcDialogUi;
+                        const acceptHandler = window.gui && window.gui.npcDialogHandler;
                         if (acceptUi && typeof acceptUi.leaveDialog === 'function') {
                             try { acceptUi.leaveDialog(); } catch (acceptUiErr) {}
                         }
                         if (acceptHandler && typeof acceptHandler._closeDialog === 'function') {
                             try { acceptHandler._closeDialog(); } catch (acceptHErr) {}
                         }
-                        var acceptClosed = false;
+                        let acceptClosed = false;
                         try {
-                            var acceptAfter = _agentDialogState();
+                            const acceptAfter = _agentDialogState();
                             acceptClosed = !!(acceptAfter && acceptAfter.open === false);
                         } catch (acceptStateErr) {}
                         window.__agentLastTalk = { at: Date.now(),
@@ -10987,10 +11018,10 @@
                         // own try (one throwing must not lose the other), and
                         // judge the result by whether the dialog actually
                         // closed - not by which call survived.
-                        var beforeClose = _agentDialogState();
-                        var attempts = [];
-                        var closeUi = window.gui && window.gui.npcDialogUi;
-                        var closeHandler = window.gui && window.gui.npcDialogHandler;
+                        const beforeClose = _agentDialogState();
+                        const attempts = [];
+                        const closeUi = window.gui && window.gui.npcDialogUi;
+                        const closeHandler = window.gui && window.gui.npcDialogHandler;
                         if (closeUi && typeof closeUi.leaveDialog === 'function') {
                             try { closeUi.leaveDialog(); attempts.push('npcDialogUi.leaveDialog:ok'); }
                             catch (uiErr) { attempts.push('npcDialogUi.leaveDialog:' + uiErr); }
@@ -10999,7 +11030,7 @@
                             try { closeHandler._closeDialog(); attempts.push('npcDialogHandler._closeDialog:ok'); }
                             catch (hErr) { attempts.push('npcDialogHandler._closeDialog:' + hErr); }
                         }
-                        var afterClose = _agentDialogState();
+                        const afterClose = _agentDialogState();
                         if (beforeClose && beforeClose.open === false) {
                             return _agentResult(true, { stage: 'dialog_closed', note: 'no dialog was open' },
                                 null);
@@ -11014,8 +11045,8 @@
                         // that worked a failure, and the loop answered a dialog that was
                         // already leaving (8 rows, each retried once). The send is this
                         // call's action; the loop's settle waits for the dialog to go.
-                        var sent = false;
-                        for (var closeIdx = 0; closeIdx < attempts.length; closeIdx++) {
+                        let sent = false;
+                        for (let closeIdx = 0; closeIdx < attempts.length; closeIdx++) {
                             if (/:ok$/.test(attempts[closeIdx])) sent = true;
                         }
                         if (sent) {
@@ -11034,13 +11065,13 @@
                     // a quest this client has never accepted, refuse it: the honest form
                     // is accept=true, which the offer guard above checks. A known quest
                     // keeps the reply-0 behaviour the tutorial relies on.
-                    var bareStartId = (args && (args.quest_id || args.questId)) || null;
+                    const bareStartId = (args && (args.quest_id || args.questId)) || null;
                     if (bareStartId && args.reply === undefined
                             && args.reply_text == null
                             && args.npc_id == null && args.npcId == null
                             && args.objective_id == null && args.objectiveId == null
                             && !_agentQuestKnown(bareStartId)) {
-                        var bareOffer = _agentDialogState();
+                        const bareOffer = _agentDialogState();
                         window.__agentLastTalk = { at: Date.now(),
                             stage: 'dialog_start_not_accept', quest_id: bareStartId,
                             offered: bareOffer ? bareOffer.start_quest : null };
@@ -11050,7 +11081,7 @@
                             'a dialog is open: pass accept=true for the quest it offers, '
                             + 'or reply/reply_text/close');
                     }
-                    var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
+                    let want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;
                     // A reply can be named by the text the policy saw instead of
                     // by an index. Indices are positional and change with the
@@ -11059,10 +11090,10 @@
                     // silently pick "Non, merci" for "Oui". A page that moved on
                     // and offers a single reply is the one exception; the helper
                     // reports the substitution.
-                    var textFallback = null;
+                    let textFallback = null;
                     if (args && args.reply_text != null) {
-                        var resolved = _agentReplyIndexForText(args.reply_text);
-                        var plan = _agentReplyPlan(args, resolved);
+                        const resolved = _agentReplyIndexForText(args.reply_text);
+                        const plan = _agentReplyPlan(args, resolved);
                         if (plan.error) {
                             return _agentResult(false, plan.data, plan.error);
                         }
@@ -11076,8 +11107,8 @@
                     // every open dialog fail with "npcDialogUi is unavailable"
                     // while the handler sat right beside it. Accept either, and
                     // refuse only when neither can send.
-                    var dialogOwners = [];
-                    var addOwner = function(label, owner) {
+                    const dialogOwners = [];
+                    const addOwner = function(label, owner) {
                         if (!owner) return;
                         if (typeof owner._uiReplyHandler === 'function') {
                             dialogOwners.push({ owner: owner, fn: owner._uiReplyHandler,
@@ -11105,16 +11136,16 @@
                     // The ids and the sender can live on different objects: the
                     // handler received the reply list, the view forwards clicks.
                     // Use the first populated list with the first sender.
-                    var pick = dialogOwners[0];
-                    for (var dpi = 0; dpi < dialogOwners.length; dpi++) {
+                    let pick = dialogOwners[0];
+                    for (let dpi = 0; dpi < dialogOwners.length; dpi++) {
                         if (dialogOwners[dpi].ids && dialogOwners[dpi].ids.length) {
                             pick = dialogOwners[dpi];
                             break;
                         }
                     }
-                    var ids = pick.ids || null;
+                    let ids = pick.ids || null;
                     if (!ids) {
-                        for (var dpi2 = 0; dpi2 < dialogOwners.length; dpi2++) {
+                        for (let dpi2 = 0; dpi2 < dialogOwners.length; dpi2++) {
                             if (dialogOwners[dpi2].ids) { ids = dialogOwners[dpi2].ids; break; }
                         }
                     }
@@ -11147,13 +11178,13 @@
                             'dialog has ' + ids.length + ' replies; asked for index ' + want);
                     }
                     try {
-                        var talkUi = (window.gui && window.gui.npcDialogUi) || null;
-                        var talkTexts = (talkUi && talkUi.replies) || [];
-                        var talkQuestion = (talkUi && talkUi.currentMsg != null)
+                        const talkUi = (window.gui && window.gui.npcDialogUi) || null;
+                        const talkTexts = (talkUi && talkUi.replies) || [];
+                        const talkQuestion = (talkUi && talkUi.currentMsg != null)
                             ? _agentPlainText(talkUi.currentMsg) : null;
-                        var talkReply = talkTexts[want] != null
+                        const talkReply = talkTexts[want] != null
                             ? _agentPlainText(talkTexts[want]) : null;
-                        var talkReplyId = ids[want] != null ? ids[want] : null;
+                        const talkReplyId = ids[want] != null ? ids[want] : null;
                         pick.fn.call(pick.owner, want);
                         // Question + chosen reply + server id is the free label
                         // for the dialog policy: an outcome later says whether
@@ -11180,11 +11211,11 @@
                 //   explicit objective -> QuestObjectiveValidationMessage
                 //   otherwise          -> talk to the NPC (npcActionId 3) and let
                 //                         the dialog drive the step.
-                var questId = (args && (args.quest_id || args.questId)) || null;
-                var objectiveId = (args && (args.objective_id || args.objectiveId)) || null;
+                const questId = (args && (args.quest_id || args.questId)) || null;
+                const objectiveId = (args && (args.objective_id || args.objectiveId)) || null;
                 if (questId && objectiveId) {
-                    var qid = Number(questId), oid = Number(objectiveId);
-                    var claim = _questClaimCheck(qid, oid);
+                    const qid = Number(questId), oid = Number(objectiveId);
+                    const claim = _questClaimCheck(qid, oid);
                     // Every attempt is a candidate training row: the reason is the
                     // precondition the gate believes it is enforcing. The trajectory
                     // captures console lines, so this is the feature that lets the
@@ -11201,7 +11232,7 @@
                     }
                     window.__agentLastValidate = { quest_id: qid, objective_id: oid,
                                                    at: Date.now() };
-                    var r = _cmSend('QuestObjectiveValidationMessage',
+                    const r = _cmSend('QuestObjectiveValidationMessage',
                         { questId: qid, objectiveId: oid });
                     return _agentResult(r.ok, { quest_id: qid, objective_id: oid },
                         r.ok ? null : r.error);
@@ -11212,11 +11243,11 @@
                 // that meant "start quest 584" produced the same "no NPC on this map"
                 // failure 70 times in one recorded session. When the client already
                 // knows the quest (active or finished), keep the talk path below.
-                var sq0 = window.gui && window.gui.playerData
+                const sq0 = window.gui && window.gui.playerData
                     && window.gui.playerData.quests
                     && window.gui.playerData.quests.standardQuests;
                 if (questId && sq0) {
-                    var known = false;
+                    let known = false;
                     try {
                         known = (typeof sq0.isActiveQuestById === 'function'
                                     && sq0.isActiveQuestById(questId))
@@ -11230,13 +11261,13 @@
                         // prerequisites are unmet never does, and reporting ok every
                         // step made quest 584 an endless no-op. Check the previous
                         // request before sending another.
-                        var starts = window.__agentQuestStarts
+                        const starts = window.__agentQuestStarts
                             || (window.__agentQuestStarts = {});
-                        var startKey = Number(questId);
-                        var pendingStart = starts[startKey] || null;
-                        var nowStart = Date.now();
+                        const startKey = Number(questId);
+                        const pendingStart = starts[startKey] || null;
+                        const nowStart = Date.now();
                         if (pendingStart) {
-                            var waited = nowStart - Number(pendingStart.at || 0);
+                            const waited = nowStart - Number(pendingStart.at || 0);
                             if (waited < 5000) {
                                 window.__agentLastTalk = {
                                     at: nowStart, stage: 'quest_start_pending',
@@ -11262,7 +11293,7 @@
                                 'the server did not activate quest ' + startKey
                                 + ' after the start request');
                         }
-                        var start = _cmSend('QuestStartRequestMessage',
+                        const start = _cmSend('QuestStartRequestMessage',
                             { questId: Number(questId) });
                         if (start.ok) starts[startKey] = { at: Date.now() };
                         window.__agentLastTalk = {
@@ -11283,14 +11314,14 @@
                 // NPC and reporting ok is worse than failing: it hides the mistake.
                 // Without an npc_id the only honest answer is the list of NPCs here,
                 // so the caller can choose one instead of guessing.
-                var wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
+                let wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
                 if (!wantNpc) {
-                    var hereActors = _listNpcActors().slice(0, 20);
+                    const hereActors = _listNpcActors().slice(0, 20);
                     // If an NPC on this map has an active quest indicator for this quest or has question/exclamation:
-                    var questTarget = null;
+                    let questTarget = null;
                     if (questId) {
-                        for (var iq = 0; iq < hereActors.length; iq++) {
-                            var ha = hereActors[iq];
+                        for (let iq = 0; iq < hereActors.length; iq++) {
+                            const ha = hereActors[iq];
                             if ((ha.quests_to_valid && ha.quests_to_valid.indexOf(questId) >= 0) ||
                                 (ha.quests_to_start && ha.quests_to_start.indexOf(questId) >= 0)) {
                                 questTarget = ha;
@@ -11299,7 +11330,7 @@
                         }
                     }
                     if (!questTarget) {
-                        for (var iq2 = 0; iq2 < hereActors.length; iq2++) {
+                        for (let iq2 = 0; iq2 < hereActors.length; iq2++) {
                             if (hereActors[iq2].has_question || hereActors[iq2].has_exclamation) {
                                 questTarget = hereActors[iq2];
                                 break;
@@ -11311,7 +11342,7 @@
                     }
                 }
                 if (!wantNpc) {
-                    var hereNpcs = _listNpcActors().slice(0, 20).map(function (n) {
+                    const hereNpcs = _listNpcActors().slice(0, 20).map(function (n) {
                         return { npc_id: n.templateId, actor_id: n.contextualId, cell: n.cell };
                     });
                     window.__agentLastTalk = { at: Date.now(), stage: 'npc_id_required',
@@ -11323,14 +11354,14 @@
                             ? hereNpcs.map(function (n) { return n.npc_id; }).join(',')
                             : 'none'));
                 }
-                var found = _findNpcActor(wantNpc);
-                var npc = found.actor;
-                var npcIds = found.seen;
+                const found = _findNpcActor(wantNpc);
+                const npc = found.actor;
+                const npcIds = found.seen;
                 if (wantNpc && !npc) {
                     // The right answer here is "you are on the wrong map", because that
                     // is what the agent can act on. The old code either talked to
                     // somebody else or reported a bare "no NPC".
-                    var here = _currentMapId();
+                    const here = _currentMapId();
                     window.__agentLastTalk = { at: Date.now(), stage: 'npc_not_on_map',
                         wanted_npc: wantNpc, map_id: here, npcs_here: npcIds };
                     return _agentResult(false, { quest_id: questId, wanted_npc: wantNpc,
@@ -11349,11 +11380,11 @@
                 // any id < 0 therefore made every NPC talk impossible. The id
                 // that must never be named is the one with no actor behind it,
                 // so resolve the live actor and require a finite id.
-                var resolvedId = npc.contextualId != null
+                const resolvedId = npc.contextualId != null
                     ? Number(npc.contextualId) : NaN;
-                var liveActor = null;
+                let liveActor = null;
                 try {
-                    var amResolve = window.actorManager
+                    const amResolve = window.actorManager
                         || (window.isoEngine && window.isoEngine.actorManager);
                     if (amResolve && typeof amResolve.getActor === 'function'
                             && isFinite(resolvedId)) {
@@ -11369,11 +11400,11 @@
                             + 'talk request cannot name it');
                 }
                 if (isFinite(resolvedId)) npc.contextualId = resolvedId;
-                var mapId = _currentMapId();
+                const mapId = _currentMapId();
                 // The wire field is the actor's contextual id, which this build
                 // stores as `actorId` (the menu sends `npcId: actorId`). The template
                 // id talks to nobody.
-                var doTalk = function () {
+                const doTalk = function () {
                     // The client's own tap path. `openNpcContextualMenu()` fires the
                     // scenario's NPC_INTERACTION condition (the tutorial's claim) and
                     // prepares the dialog handler before sending the action; the raw
@@ -11382,9 +11413,9 @@
                     // same click through this path opened the dialog and completed the
                     // objective.
                     try {
-                        var am3 = window.actorManager
+                        const am3 = window.actorManager
                             || (window.isoEngine && window.isoEngine.actorManager);
-                        var live = am3 && typeof am3.getActor === 'function'
+                        const live = am3 && typeof am3.getActor === 'function'
                             ? am3.getActor(Number(npc.contextualId)) : null;
                         if (live && typeof live.openNpcContextualMenu === 'function') {
                             live.openNpcContextualMenu();
@@ -11398,21 +11429,21 @@
                 // the planner has no cell to walk to — only the client knows where the
                 // NPC stands. So walk first, then talk, the same way the client does
                 // before attacking a monster group.
-                var ua = null;
+                let ua = null;
                 try {
-                    var am2 = window.actorManager
+                    const am2 = window.actorManager
                         || (window.isoEngine && window.isoEngine.actorManager);
                     ua = am2 && am2.userActor;
                 } catch (e) {}
-                var myCell = ua && ua.cellId != null ? Number(ua.cellId) : null;
-                var npcCell = npc.cell != null ? Number(npc.cell) : null;
-                var talkData = { quest_id: questId, npc_template: npc.templateId,
+                const myCell = ua && ua.cellId != null ? Number(ua.cellId) : null;
+                const npcCell = npc.cell != null ? Number(npc.cell) : null;
+                const talkData = { quest_id: questId, npc_template: npc.templateId,
                     npc_contextual_id: npc.contextualId, map_id: mapId,
                     npc_cell: npcCell, my_cell: myCell };
 
                 // Already next to the NPC: the talk request is valid immediately.
                 if (myCell != null && npcCell != null && _cellsAdjacent(myCell, npcCell)) {
-                    var talkNow = doTalk();
+                    const talkNow = doTalk();
                     window.__agentLastTalk = { at: Date.now(),
                         stage: talkNow.ok ? 'talked' : 'talk_failed',
                         npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
@@ -11427,11 +11458,11 @@
                 // "walk next to this cell, then call me" form — the same one it uses
                 // before harvesting or opening a door. Passing false (the old call)
                 // aimed the path at the occupied cell, which never arrived.
-                var iso2 = window.isoEngine;
+                const iso2 = window.isoEngine;
                 if (myCell != null && npcCell != null && iso2
                         && typeof iso2._movePlayerOnMap === 'function') {
-                    var walkError = null;
-                    var moved = null;
+                    let walkError = null;
+                    let moved = null;
                     try {
                         moved = iso2._movePlayerOnMap(npcCell, true, function (err) {
                             if (err) {
@@ -11457,7 +11488,7 @@
                     // map where the NPC is two cells away, twelve times in one live run.
                     // Do the same job with the form that is verified to work: walk to a
                     // free cell beside the NPC, nearest first, and talk from there.
-                    var beside = _agentWalkBeside(npcCell, doTalk);
+                    const beside = _agentWalkBeside(npcCell, doTalk);
                     if (beside != null) {
                         window.__agentLastTalk = { at: Date.now(), stage: 'walking_beside',
                             npc_template: npc.templateId,
@@ -11471,7 +11502,7 @@
                     // Nothing beside it would take a walk either. Say which cells were
                     // free and which were tried, so the caller learns a fact about this
                     // spot instead of the word "noPath".
-                    var besideReport = window.__agentWalkBeside || {};
+                    const besideReport = window.__agentWalkBeside || {};
                     window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
                         npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
                         map_id: mapId, npc_cell: npcCell, my_cell: myCell,
@@ -11510,18 +11541,18 @@
                 // ObjectAveragePricesMessage) and are cached by __PriceCache. If
                 // the cache already has a number for this item, return it --
                 // asking the server again would just cost a round trip.
-                var type = (args && (args.type || args.category)) || null;
-                var id = (args && (args.id || args.item_type)) || null;
-                var itemName = (args && args.item) || null;
-                var gid = args && args.gid != null ? Number(args.gid) : null;
+                let type = (args && (args.type || args.category)) || null;
+                let id = (args && (args.id || args.item_type)) || null;
+                const itemName = (args && args.item) || null;
+                let gid = args && args.gid != null ? Number(args.gid) : null;
 
                 if (gid == null && itemName) {
-                    var found = _findItem(itemName);
+                    const found = _findItem(itemName);
                     if (found.length && found[0].gid != null) gid = Number(found[0].gid);
                 }
 
                 if (gid != null) {
-                    var stats = __PriceCache.stats(gid) || __PriceCache.averageOf(gid);
+                    const stats = __PriceCache.stats(gid) || __PriceCache.averageOf(gid);
                     if (stats) {
                         return _agentResult(true, { gid: gid, item: itemName, stats: stats,
                             note: 'cached from a server message; age_ms says how fresh' });
@@ -11532,7 +11563,7 @@
                     // No category given but we know the item: ask for the whole
                     // average table, which is one message and covers every item.
                     if (gid != null || itemName) {
-                        var ra = _cmSend('ObjectAveragePricesGetMessage', {});
+                        const ra = _cmSend('ObjectAveragePricesGetMessage', {});
                         if (!ra.ok) return _agentResult(false, { item: itemName }, ra.error);
                         return _agentResult(true, { gid: gid, item: itemName,
                             sent: [{ message: 'ObjectAveragePricesGetMessage' }],
@@ -11541,14 +11572,14 @@
                     return _agentResult(false, null, 'hdv.scan needs an item, a category type or an item type id');
                 }
 
-                var sent = [];
+                const sent = [];
                 if (type != null) {
-                    var r1 = _cmSend('ExchangeBidHouseTypeMessage', { type: Number(type) });
+                    const r1 = _cmSend('ExchangeBidHouseTypeMessage', { type: Number(type) });
                     if (!r1.ok) return _agentResult(false, null, r1.error);
                     sent.push({ message: 'ExchangeBidHouseTypeMessage', type: Number(type) });
                 }
                 if (id != null) {
-                    var r2 = _cmSend('ExchangeBidHouseListMessage', { id: Number(id) });
+                    const r2 = _cmSend('ExchangeBidHouseListMessage', { id: Number(id) });
                     if (!r2.ok) return _agentResult(false, null, r2.error);
                     sent.push({ message: 'ExchangeBidHouseListMessage', id: Number(id) });
                 }
@@ -11556,25 +11587,25 @@
                     note: 'category opened; prices arrive as ExchangeBidHouseInListAddedMessage and are cached for the next hdv.scan' });
             },
             'hdv.list': function(args) {
-                var itemName = (args && args.item) || null;
-                var price = args && (args.price != null ? Number(args.price) : null);
-                var qty = args && (args.quantity != null ? Number(args.quantity) : 1);
+                const itemName = (args && args.item) || null;
+                let price = args && (args.price != null ? Number(args.price) : null);
+                let qty = args && (args.quantity != null ? Number(args.quantity) : 1);
                 if (!itemName) return _agentResult(false, null, 'hdv.list needs an item name');
 
-                var matches = _findItem(itemName);
+                const matches = _findItem(itemName);
                 if (!matches.length) return _agentResult(false, { item: itemName }, 'item not in inventory');
                 if (matches.length > 1 && !matches[0].uid) {
                     return _agentResult(false, { item: itemName, matches: matches.length }, 'ambiguous item name');
                 }
-                var entry = matches[0];
-                var uid = entry.uid;
+                const entry = matches[0];
+                const uid = entry.uid;
 
                 // Price resolution. An explicit price always wins. Otherwise use a
                 // number the SERVER sent (cached by __PriceCache) and say so in
                 // `price_source`; never invent one. A listing at a made-up price is
                 // money lost quietly, which is the one failure nobody notices.
-                var priceSource = 'explicit';
-                var rule = (args && args.price_rule) || 'median_minus_1';
+                let priceSource = 'explicit';
+                let rule = (args && args.price_rule) || 'median_minus_1';
                 if (price == null || !isFinite(price) || price <= 0) {
                     if (rule === 'fixed') {
                         // `fixed` means the caller knows the number. If it did not
@@ -11582,22 +11613,22 @@
                         return _agentResult(false, { item: itemName },
                             'hdv.list price_rule=fixed needs an explicit price');
                     }
-                    var st = entry.gid != null
+                    const st = entry.gid != null
                         ? (__PriceCache.stats(entry.gid) || __PriceCache.averageOf(entry.gid))
                         : null;
                     if (!st) {
                         return _agentResult(false, { item: itemName, gid: entry.gid },
                             'hdv.list needs a price: none was given and no measured market price is cached for this item (run hdv.scan first)');
                     }
-                    var basis = st.median || st.average;
+                    const basis = st.median || st.average;
                     price = Math.max(1, basis - 1);
                     priceSource = rule + ':' + st.source;
                 }
 
-                var have = entry.quantity != null ? Number(entry.quantity) : null;
+                const have = entry.quantity != null ? Number(entry.quantity) : null;
                 if (have != null && have > 0 && qty > have) qty = have;
 
-                var r = _cmSend('ExchangeObjectMovePricedMessage',
+                const r = _cmSend('ExchangeObjectMovePricedMessage',
                     { objectUID: uid, quantity: qty, price: price });
                 return _agentResult(r.ok, { item: entry.name, object_uid: uid, quantity: qty,
                     price: price, price_source: priceSource,
@@ -11606,30 +11637,30 @@
             },
             'hdv.buy': function(args) {
                 args = args || {};
-                var qty = _agentNum(args.quantity != null ? args.quantity : args.qty);
+                let qty = _agentNum(args.quantity != null ? args.quantity : args.qty);
                 if (qty == null || qty < 1) qty = 1;
-                var maxPrice = _agentNum(args.max_price);
-                var explicitPrice = _agentNum(args.price);
-                var uid = _agentNum(args.uid != null ? args.uid : args.listing_uid);
-                var gid = _agentNum(args.gid);
-                var itemName = args.item || null;
+                let maxPrice = _agentNum(args.max_price);
+                let explicitPrice = _agentNum(args.price);
+                let uid = _agentNum(args.uid != null ? args.uid : args.listing_uid);
+                let gid = _agentNum(args.gid);
+                const itemName = args.item || null;
 
                 if (gid == null && itemName) {
-                    var found = _findItem(itemName);
+                    const found = _findItem(itemName);
                     if (found.length && found[0].gid != null) gid = Number(found[0].gid);
                 }
-                var price = explicitPrice;
-                var priceSource = explicitPrice != null ? 'explicit' : 'cache';
+                let price = explicitPrice;
+                let priceSource = explicitPrice != null ? 'explicit' : 'cache';
                 if (uid == null) {
                     if (gid == null) {
                         return _agentResult(false,
                             { item: itemName, reason: 'listing_uid_or_gid_required' },
                             'hdv.buy needs a listing uid, or a gid/item with a cached server price');
                     }
-                    var rows = (__PriceCache.listings && __PriceCache.listings[gid]) || [];
-                    var best = null;
-                    for (var i = 0; i < rows.length; i++) {
-                        var row = rows[i];
+                    const rows = (__PriceCache.listings && __PriceCache.listings[gid]) || [];
+                    let best = null;
+                    for (let i = 0; i < rows.length; i++) {
+                        let row = rows[i];
                         if (row == null || row.uid == null || !(Number(row.price) > 0)) continue;
                         if (maxPrice != null && Number(row.price) > maxPrice) continue;
                         if (best == null || Number(row.price) < Number(best.price)) best = row;
@@ -11655,7 +11686,7 @@
                     return _agentResult(false, { uid: uid, price: price },
                         'hdv.buy needs max_price (or an explicit price) so the purchase is bounded');
                 }
-                var r = _cmSend('ExchangeBidHouseBuyMessage', { uid: uid, qty: qty, price: price });
+                const r = _cmSend('ExchangeBidHouseBuyMessage', { uid: uid, qty: qty, price: price });
                 return _agentResult(r.ok, {
                     listing_uid: uid, gid: gid, item: itemName, quantity: qty,
                     price: price, total: price * qty, price_source: priceSource
@@ -11663,24 +11694,24 @@
             },
             'inv.equip': function(args) {
                 args = args || {};
-                var bag = null;
+                let bag = null;
                 try {
-                    var pd = window.gui && window.gui.playerData;
+                    const pd = window.gui && window.gui.playerData;
                     bag = pd && pd.inventory ? pd.inventory : null;
                     if (bag && bag.presets == null
                             && typeof bag.getCorrectInventory === 'function') {
                         bag = bag.getCorrectInventory(bag._type) || bag;
                     }
                 } catch (e) {}
-                var presets = (bag && bag.presets) || null;
-                var rows = [];
+                let presets = (bag && bag.presets) || null;
+                const rows = [];
                 try {
                     if (presets && typeof presets === 'object') {
-                        var keys = Array.isArray(presets) ? [] : Object.keys(presets);
-                        var limit = Array.isArray(presets) ? presets.length : keys.length;
-                        for (var i = 0; i < limit && rows.length < 24; i++) {
-                            var key = Array.isArray(presets) ? null : keys[i];
-                            var preset = Array.isArray(presets) ? presets[i] : presets[key];
+                        const keys = Array.isArray(presets) ? [] : Object.keys(presets);
+                        const limit = Array.isArray(presets) ? presets.length : keys.length;
+                        for (let i = 0; i < limit && rows.length < 24; i++) {
+                            const key = Array.isArray(presets) ? null : keys[i];
+                            let preset = Array.isArray(presets) ? presets[i] : presets[key];
                             if (preset == null) continue;
                             rows.push({
                                 preset_id: key != null ? Number(key)
@@ -11690,22 +11721,22 @@
                         }
                     }
                 } catch (e2) {}
-                var wanted = _agentNum(args.preset_id != null ? args.preset_id : args.preset);
-                var wantedName = typeof args.name === 'string' ? args.name.toLowerCase() : null;
-                var directUid = _agentNum(args.object_uid);
+                let wanted = _agentNum(args.preset_id != null ? args.preset_id : args.preset);
+                const wantedName = typeof args.name === 'string' ? args.name.toLowerCase() : null;
+                const directUid = _agentNum(args.object_uid);
                 if (directUid != null) {
                     // The client's own context-menu path: getCorrectInventoryByItemInstance
                     // (item).equipItem(objectUID). Measured in the served bundle, so this
                     // sends the game's own equip request instead of a guessed packet.
-                    var manager = window.gui && window.gui.playerData
+                    const manager = window.gui && window.gui.playerData
                         && window.gui.playerData.inventoryManager;
-                    var base = window.gui && window.gui.playerData
+                    const base = window.gui && window.gui.playerData
                         && window.gui.playerData.inventory;
-                    var instance = null;
+                    let instance = null;
                     try {
-                        var objs = base && (base.objects || base.items);
+                        let objs = base && (base.objects || base.items);
                         if (Array.isArray(objs)) {
-                            for (var oi = 0; oi < objs.length; oi++) {
+                            for (let oi = 0; oi < objs.length; oi++) {
                                 if (objs[oi] && Number(objs[oi].objectUID) === directUid) {
                                     instance = objs[oi]; break;
                                 }
@@ -11713,7 +11744,7 @@
                         } else if (objs && typeof objs === 'object') {
                             instance = objs[directUid] || null;
                             if (!instance) {
-                                for (var ok2 in objs) {
+                                for (const ok2 in objs) {
                                     if (objs[ok2] && Number(objs[ok2].objectUID) === directUid) {
                                         instance = objs[ok2]; break;
                                     }
@@ -11726,7 +11757,7 @@
                         return _agentResult(false, { object_uid: directUid },
                             'object_uid_not_found or direct equip unavailable');
                     }
-                    var bag2 = manager.getCorrectInventoryByItemInstance(instance);
+                    const bag2 = manager.getCorrectInventoryByItemInstance(instance);
                     if (!bag2 || typeof bag2.equipItem !== 'function') {
                         return _agentResult(false, { object_uid: directUid },
                             'inventory does not expose equipItem');
@@ -11736,33 +11767,33 @@
                     // missing (`i.item` undefined), or the type category is not
                     // equippable. A plain `ok` cannot tell them apart, so every gate the
                     // call can hit is reported and "sent no message" is a failure.
-                    var template = instance.item || null;
-                    var ttype = template && template.type ? template.type : null;
+                    const template = instance.item || null;
+                    const ttype = template && template.type ? template.type : null;
                     // doDefaultAction (double-tap) branches on `usable` before it ever
                     // reaches isEquippable; the tutorial hammer is a quest type with no
                     // possiblePositions, so its only client path is ObjectUseMessage.
-                    var usable = false;
+                    let usable = false;
                     try {
                         usable = template && typeof template.getProperty === 'function'
                             ? !!template.getProperty('usable') : !!(template && template.usable);
                     } catch (e6a) {}
-                    var bagObj = null;
+                    let bagObj = null;
                     try {
-                        var bObjs = bag2.objects || null;
+                        const bObjs = bag2.objects || null;
                         bagObj = bObjs ? (Array.isArray(bObjs) ? null : bObjs[directUid]) : null;
                         if (!bagObj && bObjs && Array.isArray(bObjs)) {
-                            for (var bi = 0; bi < bObjs.length; bi++) {
+                            for (let bi = 0; bi < bObjs.length; bi++) {
                                 if (bObjs[bi] && Number(bObjs[bi].objectUID) === directUid) {
                                     bagObj = bObjs[bi]; break;
                                 }
                             }
                         }
                     } catch (e6b) {}
-                    var equippedBefore = [];
+                    let equippedBefore = [];
                     try { equippedBefore = bag2.equippedItems ? Object.keys(bag2.equippedItems) : []; } catch (e6c) {}
-                    var sent = [];
-                    var emittedArgs = [];
-                    var dmsg = window.dofus && window.dofus.sendMessage;
+                    const sent = [];
+                    const emittedArgs = [];
+                    let dmsg = window.dofus && window.dofus.sendMessage;
                     if (typeof dmsg === 'function') {
                         window.dofus.sendMessage = function (name) {
                             sent.push(String(name));
@@ -11774,7 +11805,7 @@
                             return dmsg.apply(window.dofus, arguments);
                         };
                     }
-                    var er = null, thrown = null;
+                    let er = null, thrown = null;
                     try { er = bag2.equipItem(directUid); }
                     catch (e7) { thrown = String((e7 && e7.message) || e7); }
                     finally {
@@ -11785,10 +11816,10 @@
                     // Roki's Cap (typeId 16, possiblePositions [6]) came back with
                     // messages:["ObjectSetPositionMessage"], slot:null and equipped_after
                     // unchanged -- reported ok while nothing was worn, and the loop moved on.
-                    var wornNow = false;
+                    let wornNow = false;
                     try {
-                        var eqNow = bag2.equippedItems || {};
-                        for (var wk in eqNow) {
+                        const eqNow = bag2.equippedItems || {};
+                        for (const wk in eqNow) {
                             if (!Object.prototype.hasOwnProperty.call(eqNow, wk)) continue;
                             if (eqNow[wk] && Number(eqNow[wk].objectUID) === directUid) {
                                 wornNow = true; break;
@@ -11798,18 +11829,18 @@
                     // A remove is the other direction: success there is the item becoming
                     // *unworn*, so "worn now" says nothing about whether the send worked. Only
                     // an equip may be retried on the strength of `wornNow`.
-                    var isRemoveEarly = (args.remove === true || args.unequip === true
+                    const isRemoveEarly = (args.remove === true || args.unequip === true
                                          || _agentNum(args.slot) === -1);
-                    var pointless = false;
-                    for (var pe = 0; pe < emittedArgs.length; pe++) {
-                        var pa = emittedArgs[pe];
+                    let pointless = false;
+                    for (let pe = 0; pe < emittedArgs.length; pe++) {
+                        const pa = emittedArgs[pe];
                         // Exactly 63, not "missing": a message with no position is unknown, and
                         // the older rule (one send per click) still applies to it.
                         if (pa && Number(pa.position) === 63) {
                             pointless = true; break;
                         }
                     }
-                    var equipItemEmitted = null;
+                    let equipItemEmitted = null;
                     if (!isRemoveEarly && !wornNow && !thrown && sent.length && pointless) {
                         // Clear the guard so the chain below can try the direct message with the
                         // template's own position, which is the only remaining route.
@@ -11820,7 +11851,7 @@
                     // ObjectSetPositionMessage {objectUID, position, quantity:1}. Positions
                     // are only used when the caller names one or the item's own template
                     // declares them -- never guessed from the gid.
-                    var slotPos = _agentNum(args.slot);
+                    let slotPos = _agentNum(args.slot);
                     if (slotPos == null && typeof args.slot === 'string'
                             && args.slot.toLowerCase() === 'weapon') slotPos = 1;
                     // Removing is equipping's other half, and an occupied slot does not
@@ -11828,7 +11859,7 @@
                     // both items where they were (the recruit weapon still worn, the
                     // tutorial hammer still at position 63). The bundle's own remove
                     // sends the same message with position -1.
-                    var removeWanted = args.remove === true || args.unequip === true
+                    const removeWanted = args.remove === true || args.unequip === true
                         || slotPos === -1;
                     if (removeWanted) slotPos = -1;
                     if (!wornNow && !removeWanted && slotPos == null && !thrown
@@ -11838,8 +11869,8 @@
                         // Live 2026-10-29: the recruit-set ring's equipItem sent nothing
                         // (it can live in another bag) and the caller had no slot, so the
                         // tool failed although the template says exactly where it goes.
-                        for (var pp = 0; pp < ttype.possiblePositions.length; pp++) {
-                            var posv = Number(ttype.possiblePositions[pp]);
+                        for (let pp = 0; pp < ttype.possiblePositions.length; pp++) {
+                            const posv = Number(ttype.possiblePositions[pp]);
                             if (posv >= 0 && posv <= 16) { slotPos = posv; break; }
                         }
                     }
@@ -11852,19 +11883,19 @@
                         // with no declared positions, while the same slot held another
                         // item of that type.
                         try {
-                            var worn = bag2.equippedItems || {};
-                            for (var wk in worn) {
+                            const worn = bag2.equippedItems || {};
+                            for (const wk in worn) {
                                 if (!Object.prototype.hasOwnProperty.call(worn, wk)) continue;
-                                var w = worn[wk];
-                                var wt = w && ((w.item && w.item.type) || w.type);
+                                const w = worn[wk];
+                                const wt = w && ((w.item && w.item.type) || w.type);
                                 if (!wt || wt.id == null) continue;
                                 if (Number(wt.id) !== Number(ttype.id)) continue;
-                                var wp = _agentNum(w.position != null ? w.position : wk);
+                                const wp = _agentNum(w.position != null ? w.position : wk);
                                 if (wp != null && wp >= 0 && wp <= 16) { slotPos = wp; break; }
                             }
                         } catch (e6d) {}
                     }
-                    var via = 'inventoryManager.equipItem';
+                    let via = 'inventoryManager.equipItem';
                     if (!thrown && sent.length === 0 && removeWanted
                             && typeof dmsg === 'function') {
                         dmsg.call(window.dofus, 'ObjectSetPositionMessage',
@@ -11889,7 +11920,7 @@
                         via = 'ObjectUseMessage';
                         sent.push('ObjectUseMessage');
                     }
-                    var data = {
+                    const data = {
                         object_uid: directUid,
                         equip_item_emitted: equipItemEmitted,
                         worn_now: wornNow,
@@ -11921,14 +11952,14 @@
                     }
                     return _agentResult(true, data);
                 }
-                var chosen = null;
-                for (var p = 0; p < rows.length; p++) {
+                let chosen = null;
+                for (let p = 0; p < rows.length; p++) {
                     if (wanted != null && Number(rows[p].preset_id) === wanted) { chosen = rows[p]; break; }
                     if (wanted == null && wantedName && rows[p].name
                             && rows[p].name.toLowerCase() === wantedName) { chosen = rows[p]; break; }
                 }
                 if (chosen == null) {
-                    var reason = wanted != null || wantedName ? 'preset_not_found'
+                    let reason = wanted != null || wantedName ? 'preset_not_found'
                         : (args.object_uid != null ? 'object_uid_invalid' : 'preset_id_required');
                     return _agentResult(false, {
                         reason: reason, presets: rows,
@@ -11940,11 +11971,11 @@
                         ? 'no saved inventory preset matches ' + (wanted != null ? wanted : args.name)
                         : 'inv.equip needs a saved preset_id, or a numeric object_uid from inventory.items');
                 }
-                var blocked = false;
+                let blocked = false;
                 try {
                     blocked = !!(bag && typeof bag.blockPreset === 'function' && bag.blockPreset());
                 } catch (e3) {}
-                var r = _cmSend('InventoryPresetUseMessage', { presetId: chosen.preset_id });
+                const r = _cmSend('InventoryPresetUseMessage', { presetId: chosen.preset_id });
                 return _agentResult(r.ok, {
                     preset_id: chosen.preset_id, name: chosen.name,
                     blocked: blocked, via: 'InventoryPresetUseMessage',
@@ -11960,10 +11991,10 @@
                 // (those objectives are server-counted, see SERVER_TYPES). A menu
                 // press is the same event a player produces.
                 args = args || {};
-                var menu = args.menu == null ? '' : String(args.menu);
-                var sel = args.selector == null ? '' : String(args.selector);
-                var ctarget = args.client_target == null ? '' : String(args.client_target);
-                var nodes = null, target = null;
+                const menu = args.menu == null ? '' : String(args.menu);
+                let sel = args.selector == null ? '' : String(args.selector);
+                let ctarget = args.client_target == null ? '' : String(args.client_target);
+                let nodes = null, target = null;
                 if (ctarget) {
                     if (menu || sel) {
                         return _agentResult(false, {
@@ -11976,14 +12007,14 @@
                     // through the client's manager fires the same event the close
                     // button does.
                     if (ctarget.indexOf('close:') === 0) {
-                        var closeName = ctarget.slice('close:'.length);
+                        const closeName = ctarget.slice('close:'.length);
                         if (!/^[A-Za-z]+$/.test(closeName)) {
                             return _agentResult(false, { client_target: ctarget },
                                 'close: needs a plain window name');
                         }
-                        var closeBefore = _agentOpenWindows();
-                        var didClose = _agentCloseWindow(closeName);
-                        var closeAfter = _agentOpenWindows();
+                        const closeBefore = _agentOpenWindows();
+                        const didClose = _agentCloseWindow(closeName);
+                        const closeAfter = _agentOpenWindows();
                         return _agentResult(didClose, {
                             client_target: ctarget, closed: didClose ? closeName : null,
                             open_before: closeBefore, open_windows: closeAfter,
@@ -12004,24 +12035,24 @@
                         // through the client message char.build already sends, then
                         // fire the condition. While points would remain unspent the
                         // client's button refuses, and so does this.
-                        var smc = window.gui && window.gui.scenarioManager;
-                        var stepSrc = '';
+                        const smc = window.gui && window.gui.scenarioManager;
+                        let stepSrc = '';
                         try { stepSrc = String((smc && smc.currentStep
                             && smc.currentStep.executeStart) || ''); } catch (eS) {}
                         if (stepSrc.indexOf('characUpdate') === -1) {
                             return _agentResult(false, { client_target: ctarget },
                                 'the current tutorial step does not ask for the characteristics update');
                         }
-                        var mainc = window.gui && window.gui.playerData
+                        const mainc = window.gui && window.gui.playerData
                             && window.gui.playerData.characters
                             && window.gui.playerData.characters.mainCharacter;
-                        var chc2 = mainc && mainc.characteristics;
-                        var pts = chc2 ? Number(chc2.statsPoints) : null;
+                        const chc2 = mainc && mainc.characteristics;
+                        let pts = chc2 ? Number(chc2.statsPoints) : null;
                         if (pts == null || !isFinite(pts)) {
                             return _agentResult(false, { client_target: ctarget },
                                 'the character characteristics are not loaded');
                         }
-                        var spent = 0, build = null;
+                        let spent = 0, build = null;
                         if (pts > 0) {
                             build = _agentHandlers['char.build']({ stats: true, spells: false });
                             spent = Number(build && build.data && build.data.stats_spent) || 0;
@@ -12033,7 +12064,7 @@
                                     + String((build && build.error) || 'char.build spent none'));
                             }
                         }
-                        var cond = null, condErr = null;
+                        let cond = null, condErr = null;
                         try {
                             cond = smc && smc.conditionTypeEnum
                                 ? smc.checkCondition(smc.conditionTypeEnum.CHARAC_UPDATE) : null;
@@ -12055,25 +12086,25 @@
                         // a real touchend on the game body. wui turns a left-button
                         // mouseup on wBody's root element into dom.touchend, which is
                         // the event this step's own condition watches.
-                        var smw = window.gui && window.gui.scenarioManager;
-                        var endSrc = '';
+                        const smw = window.gui && window.gui.scenarioManager;
+                        let endSrc = '';
                         try { endSrc = String((smw && smw.currentStep
                             && smw.currentStep.endingCondition) || ''); } catch (eE) {}
                         if (endSrc.indexOf('TAP_ANYWHERE') === -1) {
                             return _agentResult(false, { client_target: ctarget },
                                 'the current tutorial step does not wait for a tap');
                         }
-                        var wbody = window.gui && window.gui.wBody;
-                        var wroot = wbody && wbody.rootElement;
-                        var wr = wroot && wroot.getBoundingClientRect
+                        const wbody = window.gui && window.gui.wBody;
+                        const wroot = wbody && wbody.rootElement;
+                        const wr = wroot && wroot.getBoundingClientRect
                             ? wroot.getBoundingClientRect() : null;
                         if (!wroot || !wr || !wr.width || !wr.height) {
                             return _agentResult(false, { client_target: ctarget },
                                 'the game body is not on screen right now');
                         }
-                        var openBefore = _agentOpenWindows();
+                        const openBefore = _agentOpenWindows();
                         _agentUiTap(wroot);
-                        var openAfter = _agentOpenWindows();
+                        const openAfter = _agentOpenWindows();
                         return _agentResult(true, {
                             client_target: ctarget, via: 'wBody mouseup',
                             open_before: openBefore, open_windows: openAfter,
@@ -12089,43 +12120,43 @@
                         // dragDropItemSlotToCraftActorBox ->
                         // getWindow(craftInv).getStorageFirstSlotForTuto() ->
                         // getWindow("crafting")._mySlotElems).
-                        var invNameD = null;
+                        let invNameD = null;
                         try {
                             invNameD = window.gui.playerData.jobs
                                 .getCorrectCraftingInventory();
                         } catch (eInvD) { invNameD = null; }
-                        var cinvD = invNameD ? _agentOpenWindowObject(invNameD) : null;
-                        var craftD = _agentOpenWindowObject('crafting');
-                        var srcSlot = cinvD
+                        const cinvD = invNameD ? _agentOpenWindowObject(invNameD) : null;
+                        const craftD = _agentOpenWindowObject('crafting');
+                        const srcSlot = cinvD
                             && typeof cinvD.getStorageFirstSlotForTuto === 'function'
                             ? cinvD.getStorageFirstSlotForTuto() : null;
-                        var dstBox = craftD && craftD._mySlotElems;
-                        var srcEl = srcSlot && (srcSlot.rootElement || srcSlot);
-                        var dstEl = dstBox && (dstBox.rootElement || dstBox);
+                        const dstBox = craftD && craftD._mySlotElems;
+                        const srcEl = srcSlot && (srcSlot.rootElement || srcSlot);
+                        const dstEl = dstBox && (dstBox.rootElement || dstBox);
                         if (!srcEl || !dstEl) {
                             return _agentResult(false, {
                                 client_target: ctarget,
                                 source: !!srcEl, destination: !!dstEl
                             }, 'the crafting inventory slot or the crafting box is not open');
                         }
-                        var srd = srcEl.getBoundingClientRect
+                        const srd = srcEl.getBoundingClientRect
                             ? srcEl.getBoundingClientRect() : null;
-                        var drd = dstEl.getBoundingClientRect
+                        const drd = dstEl.getBoundingClientRect
                             ? dstEl.getBoundingClientRect() : null;
                         if (!srd || !srd.width || !srd.height
                                 || !drd || !drd.width || !drd.height) {
                             return _agentResult(false, { client_target: ctarget },
                                 'the crafting slots are not on screen right now');
                         }
-                        var dragSeq = _agentUiDrag(srcEl, dstEl);
+                        const dragSeq = _agentUiDrag(srcEl, dstEl);
                         return _agentResult(true, {
                             client_target: ctarget, via: 'pointer drag',
                             from: dragSeq.from, to: dragSeq.to,
                             open_windows: _agentOpenWindows()
                         });
                     }
-                    var cel = _agentClientTarget(ctarget);
-                    var cr = cel && cel.getBoundingClientRect ? cel.getBoundingClientRect() : null;
+                    const cel = _agentClientTarget(ctarget);
+                    const cr = cel && cel.getBoundingClientRect ? cel.getBoundingClientRect() : null;
                     if (!cel || !cr || !cr.width || !cr.height) {
                         return _agentResult(false, {
                             client_target: ctarget, present: !!cel
@@ -12144,11 +12175,11 @@
                     if (!sel) return _agentResult(false, null, 'ui.tap needs menu, selector or client_target');
                     try { nodes = document.querySelectorAll(sel); }
                     catch (eSel) { return _agentResult(false, { selector: sel }, 'bad selector: ' + eSel); }
-                    var index = Math.max(0, Math.floor(_agentNum(args.index) || 0));
-                    var visible = 0;
-                    for (var i = 0; i < nodes.length; i++) {
-                        var el = nodes[i];
-                        var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    const index = Math.max(0, Math.floor(_agentNum(args.index) || 0));
+                    let visible = 0;
+                    for (let i = 0; i < nodes.length; i++) {
+                        const el = nodes[i];
+                        const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
                         if (!r || !r.width || !r.height) continue;
                         if (visible === index) { target = el; break; }
                         visible += 1;
@@ -12158,26 +12189,26 @@
                             'no visible element matches "' + sel + '"');
                     }
                 }
-                var before = _agentOpenWindows();
+                let before = _agentOpenWindows();
                 // Some steps complete on the window *loading*, not on the press
                 // (the tutorial's shop step ends on SHOP_LOADED, fired when the
                 // shop opens and its articles arrive). A window left open from an
                 // earlier step makes the next press a no-op the step never sees,
                 // so the caller can name windows to close first — the names come
                 // from the client's own mapping (`shopBtn` -> open("market")).
-                var closed = [];
+                const closed = [];
                 if (args.close_first) {
-                    var want = Object.prototype.toString.call(args.close_first) === '[object Array]'
+                    const want = Object.prototype.toString.call(args.close_first) === '[object Array]'
                         ? args.close_first : [args.close_first];
-                    for (var ci = 0; ci < want.length; ci++) {
-                        var wname = String(want[ci] == null ? '' : want[ci]);
+                    for (let ci = 0; ci < want.length; ci++) {
+                        const wname = String(want[ci] == null ? '' : want[ci]);
                         if (wname && _agentCloseWindow(wname)) closed.push(wname);
                     }
                     if (closed.length) before = _agentOpenWindows();
                 }
                 _agentUiTap(target);
-                var after = _agentOpenWindows();
-                var result = {
+                const after = _agentOpenWindows();
+                const result = {
                     selector: ctarget ? null : sel, menu: menu || null,
                     client_target: ctarget || null, matches: nodes.length,
                     class: String(target.className || '').slice(0, 80),
@@ -12185,7 +12216,7 @@
                     changed: JSON.stringify(before) !== JSON.stringify(after)
                 };
                 if (args.close_first) result.closed_before = closed;
-                var cycle = _agentNum(args.cycle_ms);
+                let cycle = _agentNum(args.cycle_ms);
                 if (args.cycle && (cycle == null || cycle <= 0)) cycle = 1200;
                 if (args.cycle && cycle > 0) {
                     // Press, then press again only if the window set really
@@ -12196,7 +12227,7 @@
                     // press has to be given back.
                     setTimeout(function () {
                         try {
-                            var now = _agentOpenWindows();
+                            const now = _agentOpenWindows();
                             if (JSON.stringify(now) === JSON.stringify(before)) return;
                             if (target && target.isConnected !== false) _agentUiTap(target);
                         } catch (e2) {}
@@ -12210,7 +12241,7 @@
                 // picks a menu by the surface a step names; this reports the list
                 // the client itself built rather than a hardcoded guess.
                 args = args || {};
-                var out = _agentMenuIcons();
+                const out = _agentMenuIcons();
                 return _agentResult(true, { icons: out, count: out.length,
                                             open_windows: _agentOpenWindows() });
             },
@@ -12225,7 +12256,7 @@
                 // purchase through an account confirm window, which this tool
                 // must never press by itself.
                 args = args || {};
-                var which = String(args.which == null ? 'first' : args.which).toLowerCase();
+                const which = String(args.which == null ? 'first' : args.which).toLowerCase();
                 if (which !== 'first') {
                     // The schema documents 'first' because that is the only article
                     // the tutorial's fake category carries; accepting another value
@@ -12234,18 +12265,18 @@
                         "shop.buy buys the first article only ('first'); '" + which
                         + "' is not selectable on this build");
                 }
-                var manager = window.gui && window.gui.scenarioManager;
-                var fake = false;
+                const manager = window.gui && window.gui.scenarioManager;
+                let fake = false;
                 try {
                     fake = !!(manager && typeof manager.isBehaviourEnabled === 'function'
                               && manager.isBehaviourEnabled(16));
                 } catch (eFake) { fake = false; }
-                var win = null;
+                let win = null;
                 try {
-                    var wm = _agentWindowManager();
+                    const wm = _agentWindowManager();
                     win = wm && typeof wm.getWindow === 'function' ? wm.getWindow('market') : null;
                 } catch (eWin) { win = null; }
-                var opened = !!(win && win.openState);
+                const opened = !!(win && win.openState);
                 if (!fake) {
                     return _agentResult(false, {
                         fake_shop: false, window_open: opened,
@@ -12257,9 +12288,9 @@
                     return _agentResult(false, { fake_shop: true, window_open: false },
                         'the shop window is not open; open it first');
                 }
-                var article = null, buttons = null;
+                let article = null, buttons = null;
                 try {
-                    var tab = win.tabs && typeof win.tabs.getFirstTab === 'function'
+                    const tab = win.tabs && typeof win.tabs.getFirstTab === 'function'
                         ? win.tabs.getFirstTab() : null;
                     article = tab && tab.target && typeof tab.target.getFirstArticle === 'function'
                         ? tab.target.getFirstArticle() : null;
@@ -12276,9 +12307,9 @@
                     }, 'the shop has no article to buy yet (the fake shop is still '
                         + 'loading its list)');
                 }
-                var target = buttons.hardButton;
-                var el = target && (target.rootElement || target);
-                var seen = {
+                const target = buttons.hardButton;
+                const el = target && (target.rootElement || target);
+                const seen = {
                     article_id: article.id != null ? article.id : null,
                     button: 'hardButton',
                     open_before: _agentOpenWindows()
@@ -12293,13 +12324,13 @@
             },
             'tap.interactive': function(args) {
                 args = args || {};
-                var list = _interactives();
-                var elemId = _agentNum(args.element_id != null ? args.element_id : args.elem_id);
-                var skill = _agentNum(args.skill_id != null ? args.skill_id : args.skill_uid);
-                var cell = _agentNum(args.cell);
-                var target = null;
-                for (var i = 0; i < list.length; i++) {
-                    var el = list[i];
+                const list = _interactives();
+                const elemId = _agentNum(args.element_id != null ? args.element_id : args.elem_id);
+                const skill = _agentNum(args.skill_id != null ? args.skill_id : args.skill_uid);
+                const cell = _agentNum(args.cell);
+                let target = null;
+                for (let i = 0; i < list.length; i++) {
+                    const el = list[i];
                     if (elemId != null && Number(el.elemId) !== elemId) continue;
                     if (cell != null && Number(el.cell) !== cell) continue;
                     if (skill != null && Number(el.skillInstanceUid) !== skill
@@ -12308,7 +12339,7 @@
                     target = el;
                     break;
                 }
-                var visible = list.slice(0, 20).map(function (el) {
+                const visible = list.slice(0, 20).map(function (el) {
                     return { elem_id: el.elemId, skill_uid: el.skillInstanceUid, cell: el.cell,
                              name: el.name, enabled: el.enabled_skills };
                 });
@@ -12320,16 +12351,16 @@
                         ? 'tap.interactive cannot match an element by name on this build; pass element_id or cell'
                         : 'no visible interactive element matches the requested id/cell/skill');
                 }
-                var useSkill = skill != null ? skill : target.skillInstanceUid;
+                let useSkill = skill != null ? skill : target.skillInstanceUid;
                 if (useSkill == null) {
                     return _agentResult(false, {
                         elem_id: target.elemId, cell: target.cell,
                         reason: 'skill_uid_required', elements: visible
                     }, 'interactive element ' + target.elemId + ' has no skillInstanceUid; pass skill_uid');
                 }
-                var myCell = null;
+                let myCell = null;
                 try {
-                    var ua = window.isoEngine && window.isoEngine.actorManager
+                    const ua = window.isoEngine && window.isoEngine.actorManager
                         && window.isoEngine.actorManager.userActor;
                     myCell = ua && ua.cellId != null ? Number(ua.cellId) : null;
                 } catch (eCell) {}
@@ -12337,10 +12368,10 @@
                 // walks to the element when it is not adjacent, then sends
                 // InteractiveUseRequestMessage. Sending the message from afar only
                 // produced a silent server-side refusal.
-                var via = null;
-                var r = null;
+                let via = null;
+                let r = null;
                 try {
-                    var ie = window.isoEngine;
+                    const ie = window.isoEngine;
                     if (ie && typeof ie.useInteractive === 'function'
                             && ie.mapRenderer && ie.mapRenderer.identifiedElements
                             && ie.mapRenderer.identifiedElements[target.elemId]) {
@@ -12368,7 +12399,7 @@
             }
         };
 
-        var _agentDirectiveAliases = {
+        const _agentDirectiveAliases = {
             'SAFE_STOP': 'safe.stop', 'FARM_START': 'farm.start', 'FARM_STOP': 'farm.stop',
             'AUTO_JOIN_COMBAT': 'fight.join', 'PASS_TURN': 'fight.pass',
             'FIGHT_STATE': 'fight.state', 'FOLLOW': 'nav.follow',
@@ -12390,12 +12421,12 @@
                 // Optional on purpose: the page must still work when only this script
                 // was loaded, and the host already refuses a malformed envelope.
                 if (window.DofusContracts && typeof window.DofusContracts.validateBridgeDirective === 'function') {
-                    var contractErrors = window.DofusContracts.validateBridgeDirective(payload);
+                    const contractErrors = window.DofusContracts.validateBridgeDirective(payload);
                     if (contractErrors.length) {
                         return _agentResult(false, null, 'invalid directive: ' + contractErrors.join('; '));
                     }
                 }
-                var key = payload.tool ? String(payload.tool).toLowerCase() : '';
+                let key = payload.tool ? String(payload.tool).toLowerCase() : '';
                 if (!key && payload.directive) {
                     key = _agentDirectiveAliases[String(payload.directive).toUpperCase()] || '';
                 }
@@ -12408,7 +12439,7 @@
                 // and the vanilla AFK timer reached dofus.disconnect("INACTIVITY") ten
                 // minutes into a live run (measured 2026-10-27).
                 try { window.__agentMarkActivity('directive'); } catch (eAct) {}
-                var handler = _agentHandlers[key];
+                const handler = _agentHandlers[key];
                 if (!handler) return _agentResult(false, null, 'no client handler for tool "' + key + '"');
                 return handler(payload.args || {});
             } catch(err) {
@@ -12423,24 +12454,24 @@
         // the exact JSON the bridge used to assemble in C#.
         window.__agentDirectiveWithSnapshot = function(request) {
             request = request || {};
-            var result = null;
-            var error = null;
+            let result = null;
+            let error = null;
             try {
                 result = window.__agentDirective(request.payload || {});
             } catch (err) {
                 error = String(err);
             }
-            var snapshot = null;
+            let snapshot = null;
             try {
                 snapshot = window.__agentSnapshot ? window.__agentSnapshot() : null;
             } catch (err) {
                 snapshot = null;
             }
-            var embedded = result;
+            let embedded = result;
             if (typeof result === 'string') {
                 try { embedded = JSON.parse(result); } catch (e) { embedded = result; }
             }
-            var envelope = {
+            const envelope = {
                 ok: error === null,
                 id: request.id == null ? null : request.id,
                 target: request.target == null ? null : request.target,
@@ -12498,14 +12529,14 @@
     // 21. Visitor Account Persistence Hook (accounts.txt bridge)
     try {
         if (typeof window !== 'undefined' && window.localStorage) {
-            var _origSetItem = window.localStorage.setItem;
+            const _origSetItem = window.localStorage.setItem;
             // Per page, not per storage write: see the post below for why the pair decides.
-            var _lastPersistedGuest = null;
+            let _lastPersistedGuest = null;
             window.localStorage.setItem = function(k, v) {
                 try {
                     if (k === 'dofus.1' && v && window.chrome && window.chrome.webview) {
-                        var parsed = JSON.parse(v);
-                        var g = parsed && parsed['all#guestAccount'];
+                        const parsed = JSON.parse(v);
+                        const g = parsed && parsed['all#guestAccount'];
                         if (g && g.login && g.password
                             && (g.login + '|' + g.password) !== _lastPersistedGuest) {
                             _lastPersistedGuest = g.login + '|' + g.password;

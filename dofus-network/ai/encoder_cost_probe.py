@@ -30,12 +30,19 @@ the comparison in one report.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import json
+
 import statistics
+
 import sys
+
 import time
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -57,7 +64,9 @@ def _win_counters() -> Optional[Tuple[int, int]]:
     """
     try:
         import ctypes
+
         import ctypes.wintypes
+
 
         class _Counters(ctypes.Structure):
             _fields_ = [
@@ -85,8 +94,8 @@ def _win_counters() -> Optional[Tuple[int, int]]:
         if get_info(ctypes.windll.kernel32.GetCurrentProcess(),
                     ctypes.byref(counters), counters.cb):
             return int(counters.WorkingSetSize), int(counters.PeakWorkingSetSize)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     return None
 
 
@@ -95,9 +104,10 @@ def _rss_bytes() -> Optional[int]:
     try:
         import psutil  # type: ignore
 
+
         return int(psutil.Process().memory_info().rss)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     counters = _win_counters()
     return None if counters is None else counters[0]
 
@@ -107,9 +117,10 @@ def _peak_rss_bytes() -> Optional[int]:
     try:
         import psutil  # type: ignore
 
+
         return int(psutil.Process().memory_info().peak_wss)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     counters = _win_counters()
     return None if counters is None else counters[1]
 
@@ -121,6 +132,7 @@ def _mb(value: Optional[int]) -> Optional[float]:
 def _torch_threads() -> Optional[int]:
     try:
         import torch
+
 
         return int(torch.get_num_threads())
     except Exception:
@@ -314,6 +326,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.threads:
         import torch
 
+
         torch.set_num_threads(args.threads)
 
     report = probe(
@@ -339,3 +352,5 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

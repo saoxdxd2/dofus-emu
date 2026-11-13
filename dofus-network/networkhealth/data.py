@@ -28,6 +28,8 @@ import numpy as np
 import requests
 
 from .pagination import collect_ping_ids
+import logging
+logger = logging.getLogger(__name__)
 
 API = "https://atlas.ripe.net/api/v2"
 SOURCE_NAME = "ripe_atlas_ping"
@@ -35,7 +37,7 @@ USER_AGENT = "NetworkHealthResearch/1.0 (public RIPE Atlas data; polite client)"
 
 
 def log(message: str) -> None:
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
+    logger.debug(f"[{datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
 
 
 class RateLimiter:

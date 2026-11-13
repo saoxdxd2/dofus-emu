@@ -4,7 +4,7 @@
 re-deriving this project from 20,000 lines of prose.
 
 This document exists because the repository's knowledge is real but scattered across `resume.md`
-(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (8,211<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
+(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (8,305<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
 (6,768<!--f:arch_lines-->) and five daily memory logs — and a new reader cannot tell which of those is
 authoritative for which question, nor what the private vocabulary means. Read this file first; it
 routes, it does not replace. The three sizes are rendered from the files themselves
@@ -58,7 +58,7 @@ facts. Expected output is stated so a mismatch is visible.
 cd dofus-network
 python -m agent.regression                      # the gate: 2,448<!--f:gate_checks--> checks, exit 0 = green
 python scratch/chain_reachability.py            # which rankers are actually reached
-python tools/sync_kaggle_toolkit.py             # 288 sync, 8 pinned, 0 drift/missing
+python tools/sync_kaggle_toolkit.py --check     # must report 0 drift/missing; sync count moves as the toolkit grows
 python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200
 ```
 
@@ -73,7 +73,7 @@ teaching the rule an exception.
 | 2 | `python -m unittest combat.test_live_policy` | 36 tests, OK (~0.3 s) |
 | 3 | `python -m unittest combat.test_duel_value combat.test_battle_solver combat.test_side_swap` | 102 tests, OK (~38 s) |
 | 4 | `python scratch/chain_reachability.py` | `hp_choice_stats {'asked': 1}` on the adjacent board — proves the shipped ranker is reached |
-| 5 | `python tools/sync_kaggle_toolkit.py` | `288 sync, 8 pinned, 0 drift/missing`. Any drift means a mirrored file was edited without re-syncing. |
+| 5 | `python tools/sync_kaggle_toolkit.py --check` | `0 drift/missing`. The `N sync, M pinned` counts grow as files are added, so only the drift count is the invariant; do not freeze it. Any drift means a mirrored file was edited without re-syncing (`--write`). |
 | 6 | `python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200` | a `benchmark` JSON block. Reproduces the −0.1463 duel result. |
 
 ### The gate's state on 2026-11-11, and what it cost to learn
@@ -171,7 +171,7 @@ and the register keeps a one-line row for each closed one so the pointer survive
 
 **The read budget, stated so it can be checked:** a session that reads HANDOFF plus the three
 indexes has read about 600 lines and knows what each document contains. Reading the three
-documents whole is 6,005<!--f:resume_lines--> + 8,211<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
+documents whole is 6,005<!--f:resume_lines--> + 8,305<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
 correct when the task is to audit one of them.
 
 ---

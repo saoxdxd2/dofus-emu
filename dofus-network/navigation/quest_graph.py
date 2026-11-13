@@ -16,10 +16,16 @@ from __future__ import annotations
 
 import json
 import logging
+
+
 import re
+
 import time
+
 import urllib.parse
+
 import urllib.request
+
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -398,8 +404,8 @@ class QuestKnowledgeGraph:
         if cached_file.exists():
             try:
                 return json.loads(cached_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
 
         logger.info(f"Fetching live Papycha guide: {url}")
         try:
@@ -434,3 +440,5 @@ class QuestKnowledgeGraph:
         except Exception as e:
             logger.warning(f"Error fetching Papycha page {url}: {e}")
             return None
+
+

@@ -43,6 +43,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from combat.fight_estimate import (DEFAULT_CALIBRATOR, FEATURE_NAMES,
                                    MAX_CALIBRATION_ERROR, FightCalibrator,
                                    calibration_report, fit_calibrator)
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROWS = REPO_ROOT / "trajectories" / "fight_outcomes.jsonl"
@@ -568,14 +570,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                   history=calibrator.parent / "fight_calibrator.history.jsonl",
                   pointer=calibrator.parent / "fight_calibrator.incumbent.json")
     if args.rollback:
-        print(json.dumps(rollback(paths), indent=1, sort_keys=True))
+        logger.debug(json.dumps(rollback(paths), indent=1, sort_keys=True))
         return 0
     if args.shadow_report:
-        print(json.dumps(shadow_report(paths, filters), indent=1, sort_keys=True))
+        logger.debug(json.dumps(shadow_report(paths, filters), indent=1, sort_keys=True))
         return 0
     write = bool(args.run)
     verdict = run(paths, write=write, force=bool(args.force), filters=filters)
-    print(json.dumps(verdict, indent=1, sort_keys=True, default=str))
+    logger.debug(json.dumps(verdict, indent=1, sort_keys=True, default=str))
     return 0
 
 

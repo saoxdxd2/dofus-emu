@@ -13,7 +13,7 @@ Measured 2026-11-13 against a daemon 9.7 h old (pid 13592):
     /brain/status -> dofus-02 | state=error | alive=False
                      error: OSError: [Errno 22] Invalid argument
                      traceback: agent/autopilot.py:4719 in _base_policy
-                                print(f"[autopilot] policy: {planner.note}; ...")
+                                logger.debug(f"[autopilot] policy: {planner.note}; ...")
 
 so the policy could not be built and **no loop ever started** -- while the host
 logged "auto started on the brain daemon" and the row correctly said AI OFF. The
@@ -27,6 +27,8 @@ live pipe passes through byte for byte, so nothing a working host sees changes.
 """
 
 import sys
+import logging
+logger = logging.getLogger(__name__)
 
 # How many lines of swallowed output to keep. The host logs the tail when the pipe
 # is found broken, which is the only way to read what the daemon said while it had
@@ -157,7 +159,7 @@ class GuardedStream(object):
         }
 
 
-def install(streams=("stdout", "stderr")):
+def install(streams=("stdout", "stderr")) -> list:
     """Wrap the named std streams. Idempotent; returns the guards installed.
 
     Called before the daemon imports anything that prints, because the first
@@ -172,7 +174,7 @@ def install(streams=("stdout", "stderr")):
             continue
         if current is None:
             # A pythonw/console-less start leaves sys.stdout as None, and every
-            # print() then raises AttributeError. A guard is still the answer.
+            # logger.debug() then raises AttributeError. A guard is still the answer.
             guard = GuardedStream(_NullWriter(), name)
             guard.broken = True
         else:
@@ -183,7 +185,7 @@ def install(streams=("stdout", "stderr")):
     return installed
 
 
-def status():
+def status() -> dict:
     """What the guards know, for /brain/health. Empty when not installed."""
     out = {}
     for name in ("stdout", "stderr"):
@@ -193,7 +195,7 @@ def status():
     return out
 
 
-def is_broken():
+def is_broken() -> bool:
     return any(row.get("broken") for row in status().values())
 
 

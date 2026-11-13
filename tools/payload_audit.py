@@ -219,8 +219,16 @@ REQUIRED = (
 # (102.7 MiB) once runtimes/python_embed.zip stopped duplicating the unpacked interpreter ->
 # 104,958,976 B (100.1 MiB) at the tier split -> 57,171,968 B (54.5 MiB, 506 files) once the five
 # learned weights moved to the opt-in tier with the wheels that read them.
-# The cap leaves ~5.5 MiB for a genuinely new dependency and still trips on a 2018-scale regression.
-BUDGET_BYTES = 60 * 1024 * 1024
+# The 60 MiB cap was sized before the runtime knowledge index arrived. Measured 2026-11-13
+# against the rebuilt artifact AFTER the dev tier was excluded (G129): setup.exe is
+# 63,502,848 B / 60.561 MiB, 659 files, forbidden={} and no missing/secret entries, and the
+# largest surviving entries are all runtime (knowledge sqlite 11.4 MB, items cache 6.5 MB,
+# warp binaries 10.1 MB, python311.zip 4.2 MB). There was no headroom left: the preceding
+# build sat 10,752 B under the cap. The operator chose to recalibrate rather than delete
+# runtime content or recompile the builder for another trim. 64 MiB is the measured floor
+# plus 3,606,016 B / 3.44 MiB of headroom; it still trips on a 2018-scale regression.
+# Quoted in docs/KNOWN_GAPS.md G129; the number is deliberately tagged for doc_facts.
+BUDGET_BYTES = 64 * 1024 * 1024  # 67,108,864
 
 
 def gate(rows, setup_bytes: int, secrets=None) -> dict:

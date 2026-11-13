@@ -49,7 +49,7 @@ from networkhealth.inference import resolve_checkpoint  # noqa: E402
 CHECKPOINT, CHECKPOINT_KIND, CHECKPOINT_NOTE = resolve_checkpoint(ARTIFACTS)
 
 
-def parse(entry: str):
+def parse(entry: str) -> Any:
     m = re.match(r"(?:(http|https|socks5)://)?(?:([^:@/]+):([^@/]*)@)?([^:/]+):(\d+)", entry)
     if not m:
         return None

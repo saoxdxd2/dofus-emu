@@ -23,6 +23,8 @@ from typing import Any
 from . import __version__
 from .data import load_jsonl, log, save_jsonl
 from .provenance import write_manifest
+import logging
+logger = logging.getLogger(__name__)
 
 ARTIFACTS = Path("networkhealth_artifacts")
 
@@ -345,15 +347,15 @@ def cmd_inference(args: argparse.Namespace) -> None:
 
     engine = NetworkHealthInference(checkpoint, threads=args.threads)
     bundle = engine.bundle
-    print(f"Checkpoint loaded: {checkpoint}")
-    print(f"  parameters        : {bundle.metadata.get('best_valid_loss') is not None}")
-    print(f"  features          : {len(bundle.feature_names)}")
-    print(f"  horizons          : {list(bundle.horizons)}")
-    print(f"  model parameters  : {engine.model.parameter_count():,}")
-    print(f"  split summary     : {bundle.metadata.get('split_summary', {}).get('mode', 'n/a')}")
+    logger.debug(f"Checkpoint loaded: {checkpoint}")
+    logger.debug(f"  parameters        : {bundle.metadata.get('best_valid_loss') is not None}")
+    logger.debug(f"  features          : {len(bundle.feature_names)}")
+    logger.debug(f"  horizons          : {list(bundle.horizons)}")
+    logger.debug(f"  model parameters  : {engine.model.parameter_count():,}")
+    logger.debug(f"  split summary     : {bundle.metadata.get('split_summary', {}).get('mode', 'n/a')}")
 
     if not args.input:
-        print("\nNo --input stream given; checkpoint validated only.")
+        logger.debug("\nNo --input stream given; checkpoint validated only.")
         return
 
     stream_path = Path(args.input)
@@ -380,12 +382,12 @@ def cmd_inference(args: argparse.Namespace) -> None:
             if result is not None:
                 forecast = result
 
-    print(f"\nReplayed {count:,} observations from {stream_path}")
+    logger.debug(f"\nReplayed {count:,} observations from {stream_path}")
     if forecast is None:
-        print(f"Window not filled: need {engine.window.seq_len} observations.")
+        logger.debug(f"Window not filled: need {engine.window.seq_len} observations.")
         return
-    print(_json.dumps(forecast.as_dict(), indent=2))
-    print("\nLatency:", _json.dumps(engine.cost_report(), indent=2))
+    logger.debug(_json.dumps(forecast.as_dict(), indent=2))
+    logger.debug("\nLatency:", _json.dumps(engine.cost_report(), indent=2))
 
 
 def cmd_all(args: argparse.Namespace) -> None:
@@ -522,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.func(args)
     except RuntimeError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        logger.debug(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
 

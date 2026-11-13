@@ -193,7 +193,7 @@ def require_disjoint_splits(fit, calib, val) -> Dict[str, Any]:
     return audit
 
 
-def to_arrays(rows: Sequence[Dict[str, Any]]):
+def to_arrays(rows: Sequence[Dict[str, Any]]) -> Any:
     import numpy as np
 
     xs, ys = [], []
@@ -206,7 +206,7 @@ def to_arrays(rows: Sequence[Dict[str, Any]]):
     return np.asarray(xs, dtype="float32"), np.asarray(ys, dtype="int64")
 
 
-def build_model(hidden: int, dropout: float):
+def build_model(hidden: int, dropout: float) -> Any:
     import torch.nn as nn
 
     return nn.Sequential(
@@ -273,7 +273,7 @@ def evaluate(model, x, y, temperature: float = 1.0) -> Dict[str, Any]:
     return metrics_from_probs(probs, y)
 
 
-def knn_probs(query, prototypes, labels, k: int = 7):
+def knn_probs(query, prototypes, labels, k: int = 7) -> Any:
     """Cosine kNN probabilities from the stored fit prototypes."""
     import numpy as np
 
@@ -289,11 +289,11 @@ def knn_probs(query, prototypes, labels, k: int = 7):
     return out
 
 
-def combine_probs(mlp, knn, weight: float):
+def combine_probs(mlp, knn, weight: float) -> Any:
     return weight * knn + (1.0 - weight) * mlp
 
 
-def choose_ensemble(mlp_c, knn_c, cy, mlp_v, knn_v, vy):
+def choose_ensemble(mlp_c, knn_c, cy, mlp_v, knn_v, vy) -> Any:
     """Pick the blend and temperature on calib, then report val once."""
     import numpy as np
 

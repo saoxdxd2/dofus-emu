@@ -79,7 +79,7 @@ namespace DofusStandaloneSetup
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
             return null;
         }
 
@@ -252,7 +252,7 @@ namespace DofusStandaloneSetup
 
                 {
 
-                    try { FarmEngine.ForceDeleteDirectory(tempStageDir); } catch { }
+                    try { FarmEngine.ForceDeleteDirectory(tempStageDir); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                 }
 
@@ -260,9 +260,9 @@ namespace DofusStandaloneSetup
 
                 {
 
-                    try { _singleInstanceMutex.ReleaseMutex(); } catch { }
+                    try { _singleInstanceMutex.ReleaseMutex(); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
-                    try { _singleInstanceMutex.Dispose(); } catch { }
+                    try { _singleInstanceMutex.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                     _singleInstanceMutex = null;
 
@@ -358,7 +358,7 @@ namespace DofusStandaloneSetup
 
                 }
 
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             }
 
@@ -384,7 +384,7 @@ namespace DofusStandaloneSetup
 
             }
 
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             return false;
 
@@ -446,7 +446,7 @@ namespace DofusStandaloneSetup
 
             {
 
-                try { Report(21, "WebView2 runtime bootstrap skipped: " + ex.Message); } catch { }
+                try { Report(21, "WebView2 runtime bootstrap skipped: " + ex.Message); } catch (Exception exInner) { Debug.WriteLine("[WARN] installer: " + exInner.Message); }
 
             }
 
@@ -514,7 +514,7 @@ namespace DofusStandaloneSetup
 
             {
 
-                try { FarmEngine.ForceDeleteDirectory(StageDir); } catch { }
+                try { FarmEngine.ForceDeleteDirectory(StageDir); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             }
 
@@ -674,7 +674,7 @@ namespace DofusStandaloneSetup
 
                             {
 
-                                try { File.SetAttributes(directDest, FileAttributes.Normal); } catch { }
+                                try { File.SetAttributes(directDest, FileAttributes.Normal); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                             }
 
@@ -832,7 +832,7 @@ namespace DofusStandaloneSetup
 
                 {
 
-                    try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
+                    try { File.SetAttributes(destPath, FileAttributes.Normal); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                 }
 
@@ -858,7 +858,7 @@ namespace DofusStandaloneSetup
 
                 string destFile = Path.Combine(destDir, Path.GetFileName(file));
 
-                try { File.Copy(file, destFile, true); } catch { }
+                try { File.Copy(file, destFile, true); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             }
 
@@ -904,7 +904,7 @@ namespace DofusStandaloneSetup
                         }
                         return;
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
                 }
             }
         }
@@ -934,7 +934,7 @@ namespace DofusStandaloneSetup
                 if (Directory.Exists(stagingRoot))
                     FarmEngine.ForceDeleteDirectory(stagingRoot);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
         }
         public void RunInstall(Action onComplete, Action<Exception> onError)
 
@@ -987,7 +987,9 @@ namespace DofusStandaloneSetup
                     Report(50, "Verifying staged payload hashes...");
                     foreach (var file in Directory.GetFiles(stagingRoot, "*.*", SearchOption.AllDirectories))
                     {
-                        var rel = Path.GetRelativePath(stagingRoot, file);
+                        var rel = file.StartsWith(stagingRoot, StringComparison.OrdinalIgnoreCase)
+                            ? file.Substring(stagingRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            : file;
                         VerifyFileHash(rel, file);
                     }
 
@@ -1006,13 +1008,13 @@ namespace DofusStandaloneSetup
                     {
                         if (targetBackup != null && Directory.Exists(targetBackup))
                         {
-                            try { Directory.Move(targetBackup, TargetDir); } catch { }
+                            try { Directory.Move(targetBackup, TargetDir); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
                         }
                         throw;
                     }
                     if (targetBackup != null && Directory.Exists(targetBackup))
                     {
-                        try { FarmEngine.ForceDeleteDirectory(targetBackup); } catch { }
+                        try { FarmEngine.ForceDeleteDirectory(targetBackup); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
                     }
 
 
@@ -1276,7 +1278,7 @@ namespace DofusStandaloneSetup
 
                                     {
 
-                                        try { p7z.Kill(); } catch { }
+                                        try { p7z.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                                         throw new TimeoutException("Android SDK extraction timed out.");
 
@@ -1308,7 +1310,7 @@ namespace DofusStandaloneSetup
 
                             {
 
-                                try { File.Delete(sdkArchive); } catch { }
+                                try { File.Delete(sdkArchive); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                             }
 
@@ -1328,9 +1330,9 @@ namespace DofusStandaloneSetup
 
                                 string subDest = Path.Combine(destSdk, Path.GetFileName(dir));
 
-                                if (Directory.Exists(subDest)) { try { Directory.Delete(subDest, true); } catch { } }
+                                if (Directory.Exists(subDest)) { try { Directory.Delete(subDest, true); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); } }
 
-                                try { Directory.Move(dir, subDest); } catch { }
+                                try { Directory.Move(dir, subDest); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                             }
 
@@ -1340,13 +1342,13 @@ namespace DofusStandaloneSetup
 
                                 string fileDest = Path.Combine(destSdk, Path.GetFileName(file));
 
-                                if (File.Exists(fileDest)) { try { File.Delete(fileDest); } catch { } }
+                                if (File.Exists(fileDest)) { try { File.Delete(fileDest); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); } }
 
-                                try { Directory.Move(file, fileDest); } catch { }
+                                try { Directory.Move(file, fileDest); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                             }
 
-                            try { Directory.Delete(nestedSdk, true); } catch { }
+                            try { Directory.Delete(nestedSdk, true); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                         }
 
@@ -1390,7 +1392,7 @@ namespace DofusStandaloneSetup
 
                             "DofusFarm", "webview2_profiles", slotName);
 
-                        try { Directory.CreateDirectory(wvProf); } catch { }
+                        try { Directory.CreateDirectory(wvProf); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                     }
 
@@ -1455,13 +1457,13 @@ namespace DofusStandaloneSetup
 
                                         }
 
-                                        catch { }
+                                        catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                                         finally
 
                                         {
 
-                                            try { doneEvent.Signal(); } catch { }
+                                            try { doneEvent.Signal(); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                                         }
 
@@ -1570,7 +1572,7 @@ namespace DofusStandaloneSetup
 
                         }
 
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                     }
 
@@ -1614,7 +1616,7 @@ namespace DofusStandaloneSetup
 
                     }
 
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
 
 
@@ -1648,7 +1650,7 @@ namespace DofusStandaloneSetup
 
                     }
 
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
 
 
@@ -1660,7 +1662,7 @@ namespace DofusStandaloneSetup
 
                         {
 
-                            try { Environment.SetEnvironmentVariable(staleVar, null, EnvironmentVariableTarget.Machine); } catch { }
+                            try { Environment.SetEnvironmentVariable(staleVar, null, EnvironmentVariableTarget.Machine); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                         }
 
@@ -1694,7 +1696,7 @@ namespace DofusStandaloneSetup
 
                     }
 
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
 
 
@@ -1828,7 +1830,7 @@ namespace DofusStandaloneSetup
 
                         }
 
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                     }
 
@@ -1867,7 +1869,7 @@ namespace DofusStandaloneSetup
 
                             {
 
-                                try { proc.Kill(); } catch { }
+                                try { proc.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                             }
 
@@ -2025,7 +2027,7 @@ namespace DofusStandaloneSetup
 
             }
 
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
         }
 
@@ -2051,7 +2053,7 @@ namespace DofusStandaloneSetup
 
                         {
 
-                            try { p.Kill(); p.WaitForExit(3000); } catch { }
+                            try { p.Kill(); p.WaitForExit(3000); } catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
                         }
 
@@ -2059,7 +2061,7 @@ namespace DofusStandaloneSetup
 
                 }
 
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             }
 
@@ -2193,7 +2195,7 @@ namespace DofusStandaloneSetup
 
             }
 
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
 
 
@@ -2614,7 +2616,7 @@ namespace DofusStandaloneSetup
 
                 }
 
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             };
 
@@ -2654,7 +2656,7 @@ namespace DofusStandaloneSetup
 
                 }
 
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] installer: " + ex.Message); }
 
             });
 
@@ -2871,6 +2873,8 @@ namespace DofusStandaloneSetup
     }
 
 }
+
+
 
 
 

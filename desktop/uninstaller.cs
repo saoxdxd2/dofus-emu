@@ -85,7 +85,7 @@ namespace DofusUninstall
                         Process.Start(psiRestart);
                         return;
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
 
                 if (waitForPid > 0)
@@ -97,7 +97,7 @@ namespace DofusUninstall
                             parent.WaitForExit(10000);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                     Thread.Sleep(400);
                 }
 
@@ -114,7 +114,7 @@ namespace DofusUninstall
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
 
                 if (!string.IsNullOrEmpty(targetDir) && (File.Exists(Path.Combine(targetDir, @"desktop\MainForm.cs")) || File.Exists(Path.Combine(targetDir, @"builder\Build.cs"))))
@@ -169,7 +169,7 @@ namespace DofusUninstall
                         string baseName = fileName.Substring(0, fileName.Length - 4);
                         if (baseName.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase))
                         {
-                            try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); } catch { }
+                            try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                         }
                     }
                 }
@@ -178,7 +178,7 @@ namespace DofusUninstall
             string androidCache = Path.Combine(userProfile, @".android\cache");
             if (Directory.Exists(androidCache))
             {
-                try { Directory.Delete(androidCache, true); } catch { }
+                try { Directory.Delete(androidCache, true); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
             }
 
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -192,14 +192,14 @@ namespace DofusUninstall
             {
                 foreach (string d in Directory.GetDirectories(tempDir, "DofusSetup_*"))
                 {
-                    try { Directory.Delete(d, true); } catch { }
+                    try { Directory.Delete(d, true); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
                 foreach (string d in Directory.GetDirectories(tempDir, "dofus_build_stage_*"))
                 {
-                    try { Directory.Delete(d, true); } catch { }
+                    try { Directory.Delete(d, true); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
 
             if (onProgress != null) onProgress(65, "Removing desktop shortcuts and registry entries...");
             string[] shortcutDirs = new[]
@@ -217,17 +217,17 @@ namespace DofusUninstall
                     foreach (string sc in new[] { "Dofus Farm Manager.lnk", "Dofus Touch Farm.lnk", "DofusFarm.lnk" })
                     {
                         string p = Path.Combine(sDir, sc);
-                        if (File.Exists(p)) try { File.Delete(p); } catch { }
+                        if (File.Exists(p)) try { File.Delete(p); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                     }
                 }
             }
 
-            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm", false); } catch { }
-            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DofusFarm", false); } catch { }
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm", false); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DofusFarm", false); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
             // The OAuth callback handler (`OAuthBrowserHandoff.EnsureProtocolHandler`).
             // Left behind it would make Windows offer a protocol that points at a binary
             // this uninstaller is deleting -- a broken link in the user's browser.
-            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false); } catch { }
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
 
             try
             {
@@ -248,7 +248,7 @@ namespace DofusUninstall
                     Environment.SetEnvironmentVariable("ANDROID_AVD_HOME", null, EnvironmentVariableTarget.User);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
 
             if (onProgress != null) onProgress(85, "Removing application files and SDK directory...");
             if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
@@ -258,7 +258,7 @@ namespace DofusUninstall
                 {
                     if (isForce || !fi.Name.Equals("setup.exe", StringComparison.OrdinalIgnoreCase))
                     {
-                        try { fi.Attributes = FileAttributes.Normal; fi.Delete(); } catch { }
+                        try { fi.Attributes = FileAttributes.Normal; fi.Delete(); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                     }
                 }
                 foreach (DirectoryInfo sub in di.GetDirectories())
@@ -267,7 +267,7 @@ namespace DofusUninstall
                 }
                 if (isForce || di.GetFiles().Length == 0)
                 {
-                    try { di.Delete(true); } catch { }
+                    try { di.Delete(true); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
             }
 
@@ -285,7 +285,7 @@ namespace DofusUninstall
                     };
                     Process.Start(psiDel);
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
             }
 
             if (onProgress != null) onProgress(100, "Uninstallation complete!");
@@ -309,7 +309,7 @@ namespace DofusUninstall
                                     if (p.MainModule != null && !p.MainModule.FileName.StartsWith(targetDir, StringComparison.OrdinalIgnoreCase))
                                         isOurs = false;
                                 }
-                                catch { }
+                                catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                                 if (isOurs)
                                 {
                                     p.Kill();
@@ -317,7 +317,7 @@ namespace DofusUninstall
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                     }
                     continue;
                 }
@@ -334,7 +334,7 @@ namespace DofusUninstall
                     };
                     using (Process p = Process.Start(psi)) { p.WaitForExit(1000); }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
 
                 foreach (Process p in Process.GetProcessesByName(name))
                 {
@@ -346,7 +346,7 @@ namespace DofusUninstall
                             p.WaitForExit(1000);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
             }
         }
@@ -360,15 +360,15 @@ namespace DofusUninstall
                 DirectoryInfo di = new DirectoryInfo(cleanPath);
                 foreach (FileInfo fi in di.GetFiles("*", SearchOption.AllDirectories))
                 {
-                    try { fi.Attributes = FileAttributes.Normal; fi.Delete(); } catch { }
+                    try { fi.Attributes = FileAttributes.Normal; fi.Delete(); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
                 foreach (DirectoryInfo sub in di.GetDirectories("*", SearchOption.AllDirectories))
                 {
-                    try { sub.Attributes = FileAttributes.Normal; } catch { }
+                    try { sub.Attributes = FileAttributes.Normal; } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
                 Directory.Delete(cleanPath, true);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
 
             if (Directory.Exists(cleanPath))
             {
@@ -384,12 +384,12 @@ namespace DofusUninstall
                     };
                     using (Process p = Process.Start(psi)) { p.WaitForExit(10000); }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
             }
 
             if (Directory.Exists(cleanPath))
             {
-                try { Directory.Delete(cleanPath, true); } catch { }
+                try { Directory.Delete(cleanPath, true); } catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
             }
         }
     }
@@ -512,7 +512,7 @@ namespace DofusUninstall
                             _lblStatus.Text = msg;
                         }));
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 });
 
                 Thread.Sleep(500);
@@ -526,9 +526,11 @@ namespace DofusUninstall
                             this.Close();
                         }));
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                 }
             });
         }
     }
 }
+
+

@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from agent.controller import CAUSES, Controller
 from agent.schema import TOOLS, tool_names
 from agent.verifier import Verdict
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "data" / "constraint_cases.jsonl"
 
@@ -422,22 +424,22 @@ def load_corpus(path: Path) -> List[Dict[str, Any]]:
 
 def _report(label: str, failures: List[str], manifest: Dict[str, Any]) -> bool:
     agreement = manifest.get("agreement") or {}
-    print("\n%s: %d rows, %d tools, causes %s"
+    logger.debug("\n%s: %d rows, %d tools, causes %s"
           % (label, manifest["rows"], manifest.get("tool_count", 0),
              json.dumps(manifest["causes"], sort_keys=True)))
     if agreement:
-        print("  agreement: cause %.4f, action %.4f"
+        logger.debug("  agreement: cause %.4f, action %.4f"
               % (agreement.get("cause", 0.0), agreement.get("action", 0.0)))
     if manifest.get("missing_tools"):
-        print("  MISSING TOOLS:", manifest["missing_tools"])
+        logger.debug("  MISSING TOOLS:", manifest["missing_tools"])
     if manifest.get("missing_causes"):
-        print("  MISSING CAUSES:", manifest["missing_causes"])
+        logger.debug("  MISSING CAUSES:", manifest["missing_causes"])
     if failures:
-        print("  FAILED (%d), first 12:" % len(failures))
+        logger.debug("  FAILED (%d), first 12:" % len(failures))
         for row in failures[:12]:
-            print("   ", row)
+            logger.debug("   ", row)
         return False
-    print("  all cases routed as expected")
+    logger.debug("  all cases routed as expected")
     return True
 
 
@@ -462,7 +464,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         rows = _generated_cases()
         failures, agreement = measure(rows)
         manifest = write_cases(rows, args.out, "constraint_synthetic", agreement)
-        print("wrote", args.out)
+        logger.debug("wrote", args.out)
         ok = _report("generated", failures, manifest) and ok
     else:
         failures, manifest = check()

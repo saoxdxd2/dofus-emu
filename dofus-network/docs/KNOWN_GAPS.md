@@ -163,10 +163,10 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G123** | The learned tool policy can only ever choose 21 of the 28 tools — documented four ways, warned… | measured 2026-11-13 |
 | **G124** | Four exported combat names cannot be imported, because the reasoner needs a wheel this runtime… | measured 2026-11-13 |
 | **G125** | The structure cache was 184 lines nothing constructed | fixed 2026-11-13, measured — closed, archived |
-| **G126** | The whole `planning/` brain is built at startup and never asked to plan or record anything | measured 2026-11-13 |
+| **G126** | The whole `planning/` brain is built at startup and never asked to plan or record anything | measured 2026-11-13, learning half fixed |
 | **G127** | `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work | measured 2026-11-13, partly fixed |
 | **G128** | Three review tasks aimed at dead code: the combat world model has no caller, its buff branch is unreachable, and the Win32 handles are already closed | measured 2026-11-13 |
-| **G129** | The 60 MiB installer cap is now binding on a real knowledge index | measured 2026-11-13, rebuild owed |
+| **G129** | The 60 MiB installer cap is now binding on a real knowledge index | rebuilt and closed 2026-11-13 — measured 64 MiB cap, gate green |
 
 ---
 
@@ -7905,7 +7905,7 @@ refer to, and a deleted design document is harder to find than an unused module.
 **Falsifier.** `python -c "from combat import TinyRecursiveReasoner"` succeeds, and a
 character at `strength=1200` encodes differently from one at `strength=800`.
 
-## G126. The whole `planning/` brain is built at startup and never asked to plan or record anything *(measured 2026-11-13)*
+## G126. The whole `planning/` brain is built at startup and never asked to plan or record anything *(measured 2026-11-13, learning half fixed)*
 
 **Symptom.** None visible, which is why it lasted. `data/kb/experience.jsonl` and
 `data/kb/posteriors.json` do not exist; `data/kb/economy_state.json` still says
@@ -7973,9 +7973,63 @@ produces three posterior updates. The whole gap is that nothing in `agent/` call
 `outcome.signal == "verified"`, which requires the backend payload under `result["data"]`
 — a bare `{"ok": true}` learns nothing, silently.
 
-**The fix is one caller, not a rewrite.** `agent/runtime.py` already holds the executor
-and the observation; it needs to (a) `submit` a goal when the objective changes, and
-(b) `record_action` after each executed step with the result payload it already has.
+**Correction to the diagnosis above.** The original note pointed at `agent/runtime.py`,
+but the host does not launch `serve.py --schedule` at all: `desktop/aipanel.cs:953`
+launches `dofus-network/run_autopilot.py`, whose real loop is `agent/autopilot.py::main`.
+That loop already owns an `ExperienceStore` (for repair decisions) and already has the
+executed `ToolResult` in hand. The caller belongs there, not in `runtime.py`.
+
+**Learning half closed 2026-11-13.** `planning/live_tap.py` is now a production adapter:
+`main()` builds it from `attach_schedule_tap(pilot.experience)` — the loop's *own* store,
+so no second posterior state is forked — and `_note_schedule(call, result, latency_ms,
+before)` feeds every executed step into `ScheduleManager.record_action` immediately after
+the executor returns. Three facts are deliberate:
+
+* All five state files (`schedule_state.json`, `economy_state.json`, `traces.jsonl`,
+  `decision_graph.json`, `thinking_cache.json`) live under `%LOCALAPPDATA%/DofusFarm`,
+  **not** in `dofus-network/data/kb`, which is staged into `setup.exe`. Installing one
+  machine's posteriors into every other machine's payload would be a correctness bug and
+  a 60 MiB-cap problem at the same time.
+* The tap submits **no goal**. It only records. `ScheduleTap.objective()` stays `None`
+  until something explicitly calls `submit_goal`.
+* `DOFUS_SCHEDULE_TAP=0` disables it; construction and every observation are wrapped so
+  the tap can never raise into the live loop.
+
+Three latent bugs in that path were found by driving it, not by reading it:
+
+1. `build_schedule_stack(state_file=X)` passed the *same* path to `Economy` and
+   `ScheduleManager`. `Economy.save()` then overwrote the schedule restore state with
+   `{note, parameters, events_seen, runs}` and `restore()` raised `KeyError: 'goal'`.
+   Fixed with a separate `economy_state_file` argument.
+2. `PlayerState.as_dict()` wrote `"professions"` while `__init__` expects
+   `"profession_levels"`; every `restore()` raised `TypeError`. Fixed, plus a
+   `from_dict()` that still reads pre-2026-11-13 state files.
+3. `_ingest()` passed the caller's bare `entity` to `_learn()` instead of
+   `outcome.entities` (the union `extract()` discovers in args **and** `result["data"]`).
+   An id that arrived only in the result payload silently learned nothing.
+
+**Measured after the fix.** `build_schedule_stack` with app-data state files builds in
+~11.5 ms; `record_action()` is 4.8 ms on the first call and 2.0 ms median / 4.8 ms max
+over 20 calls. One verified farm result produces **2 posterior updates** (`drop:1001`,
+`kpm:68:51-90`) and writes the app-data state files. `planning/test_live_tap.py` is
+19 tests green; `agent.regression.test_live_schedule_tap` is green; five `G126:`
+mutation anchors are registered against the production caller, the shared store, the
+entity-id union, the state-file split and the tool-to-arm map.
+
+**Falsifier.** From `dofus-network/`: `python -m unittest planning.test_live_tap` and
+`python -c "import agent.regression as r; r.test_live_schedule_tap()"`. Removing
+`self._note_schedule(...)`, constructing the tap with `None` instead of `pilot.experience`,
+or moving a state file back into `data/kb` must fail one of them.
+
+**Decision half still open.** Nothing in `agent/` calls `submit_goal()`. The live
+objective is natural-language quest prose; there is no trustworthy `item_id`/`qty` to
+build a `Goal` from, and inventing one would put a fabricated objective in front of the
+policy — worse than `None`. So `active_objective()` still returns `None`, `self.plan`
+stays `None`, and `runtime.objective_provider` is still unset in the live loop. Wiring
+this requires a real goal source (an objective payload with a resolved item id), then a
+`submit()` on objective change. That is a separate, decision-making change and was
+**not** done here. The AND/OR planner, `ThinkingCache` (G125) and `DecisionGraph`
+penalties remain inert for planning decisions; only learning is now live.
 
 ## G127. `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work *(measured 2026-11-13, partly fixed)*
 
@@ -8209,3 +8263,55 @@ reader was excluded, the installed KB/LOS/PCA paths fail at load. The projected
 63,227,112 B is a computation over the current zip's central directory, not a claim
 about a binary that has been built — if the rebuilt artifact differs materially, this
 section's numbers are wrong and must be remeasured.
+
+**Rebuilt and remeasured 2026-11-13 08:58 (the falsifier fired).** The operator rebuilt
+`setup.exe` with the dev-tier staging rules above. Measured, not projected:
+
+```
+setup.exe                 63,502,848 B (60.561 MiB)   659 entries / 659 files
+compressed zip            63,140,859 B
+SFX + directory overhead    361,989 B
+forbidden                 {}          <- the dev tier is genuinely gone
+missing_required          []          secrets {}
+BUDGET_BYTES              62,914,560 B (60 MiB)
+over by                     588,288 B (574.5 KiB / 0.561 MiB)
+```
+
+So the exclusion worked exactly as designed (726 -> 659 files, 64.9 -> 60.6 MiB,
+`forbidden` empty), but the projection of 63,227,112 B was **275,736 B low** — the
+rebuilt binary also picked up operator edits made between the projection and the build.
+The remaining overage is therefore **588,288 B, not 312,552 B**, and option 1 above no
+longer closes it: dropping `agent/regression.py` alone removes 333,558 B in-zip and
+still leaves ~254,730 B over. A trim that closes the gap needs a *set* of dev-only
+entries (`agent/regression.py` 333,558 + `tools/mutate_cause_gate.py` 64,866 +
+`models/foresight_live_v1/` 117,453 + `tools/test_*.py` 47,385 >= 563,262 B, still
+short), and each new probe must be added to both `SkipDevPayload` and `DEV_TIER` and
+then recompiled into `Build.exe` — which this sandbox cannot do.
+
+Largest surviving entries are all runtime: `data/knowledge/dofus_knowledge.sqlite`
+11,402,555 B, `data/cache/items_full.json` 6,494,288 B, `bin/warp/wgcf.exe` 5,992,218 B,
+`runtimes/python/python311.zip` 4,231,930 B, `bin/warp/wireproxy.exe` 4,139,316 B.
+`runtimes/python/get-pip.py` (1,804,212 B) is **not** junk: `desktop/installer.cs:1801`
+runs it at install time. `dofus-network/tools/session_close.py` is **not** junk either:
+`agent/autopilot.py` spawns it at session close. `models/foresight_live_v1/` is safe to
+drop because `session_close.py:131` creates its output directory itself.
+
+**Decision taken by the operator 2026-11-13: recalibrate the cap.** `BUDGET_BYTES` in
+`tools/payload_audit.py` is now **64 MiB (67,108,864 B)**, the measured 60.561 MiB floor
+plus **3,606,016 B / 3.44 MiB** of headroom. The alternative — keeping 60 MiB and adding
+another trim — was rejected because the remaining entries are runtime content, the trim
+would need a `Build.exe` recompile this sandbox cannot do, and the previous build sat only
+10,752 B under the cap. Re-running the same command against the same binary now gives:
+
+```
+{"setup_bytes": 63502848, "over_budget": false, "budget_bytes": 67108864,
+ "forbidden": {}, "missing_required": [], "entries": 659, "files": 659,
+ "empty_dir_entries": 0, "shipped_bytes": 63140859, "secrets": {}, "ok": true}
+payload gate PASS: 659 files, 60.6 MiB <= 64.0 MiB budget
+```
+
+So `agent.regression.test_installed_payload_and_dependencies` is no longer a known live
+failure. **What is still owed:** the 64 MiB figure must be re-earned if the payload grows
+again — `DEV_TIER` stays in force, and `test_dev_tier_staging_parity` still proves the
+builder and the gate agree. This gap is **closed on the measurement, open on the policy**:
+the cap is now a measured floor plus headroom, not a fixed 105 -> 60 MiB decision.

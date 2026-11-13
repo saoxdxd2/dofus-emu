@@ -255,7 +255,7 @@ def main() -> int:
 
     if args.once:
         data = bridge.poll_once()
-        print(json.dumps(data, indent=2))
+        logger.debug(json.dumps(data, indent=2))
         return 0
 
     bridge.run_forever()

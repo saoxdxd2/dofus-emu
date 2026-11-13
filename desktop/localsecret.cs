@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Diagnostics;
 
 namespace DofusFarm.Engine
 {
@@ -69,7 +70,7 @@ namespace DofusFarm.Engine
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] LocalSecret.Value: " + ex.Message); }
 
                     string candidate = NewToken();
                     try
@@ -96,9 +97,9 @@ namespace DofusFarm.Engine
                                 return _cached;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] LocalSecret.Value: " + ex.Message); }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] LocalSecret.Value: " + ex.Message); }
 
                     // The file could not be persisted. Returning a value still lets
                     // the services this process launches agree with each other; the
@@ -138,3 +139,4 @@ namespace DofusFarm.Engine
         }
     }
 }
+

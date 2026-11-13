@@ -124,7 +124,7 @@ class ScheduleManager:
         except (json.JSONDecodeError, OSError):
             return None
         goal = Goal(**payload["goal"])
-        player = PlayerState(**payload["player"])
+        player = PlayerState.from_dict(payload.get("player") or {})
         self.submit(goal, player)
         self.pointer = int(payload.get("pointer") or 0)
         return self.plan
@@ -304,7 +304,12 @@ class ScheduleManager:
 
         updates: List[ParamUpdate] = []
         if outcome.signal == "verified" and action in ARMS:
-            updates = self._learn(action, outcome, entity, source, level,
+            # `_learn` keys its posteriors off entity ids (item_id / monster_id).
+            # `extract` discovers those in args *and* in the result payload, and
+            # `outcome.entities` is that union with the caller's values winning.
+            # Passing the caller's bare `entity` here silently learned nothing
+            # whenever the id arrived in `result["data"]` -- measured 2026-11-13.
+            updates = self._learn(action, outcome, outcome.entities, source, level,
                                   predicted_minutes)
 
         trace = Trace(
@@ -495,7 +500,8 @@ class ScheduleManager:
 
 
 def build_schedule_stack(kb=None, *, experience=None, state_file: Path = STATE_FILE,
-                         ranker=None, graph=None, traces=None, cache="default"):
+                         economy_state_file: Optional[Path] = None,
+                         ranker=None, graph=None, traces=None, cache="default") -> Any:
     """The one place that knows how the planning stack is assembled.
 
     This exists because the assembly was wrong in two places at once and nobody noticed: the live
@@ -513,18 +519,29 @@ def build_schedule_stack(kb=None, *, experience=None, state_file: Path = STATE_F
     explores up to 3,000 nodes. Pass ``None`` for an uncached planner (deterministic tests),
     or a ``Path`` to place the cache file somewhere other than ``data/kb``.
 
+    ``economy_state_file`` is separate from ``state_file`` on purpose. Measured 2026-11-13:
+    handing one custom path to both made ``Economy.save()`` rewrite ``ScheduleManager``'s
+    restore state with ``{note, parameters, events_seen, runs}``, so the very first
+    ``record_action()`` destroyed the goal and the next ``restore()`` raised
+    ``KeyError: 'goal'``. The two writers are now distinct; with the default paths they
+    always were. When only a custom ``state_file`` is given, the economy writes
+    ``economy_state.json`` beside it.
+
     Returns the manager. Callers that need the pieces can read them off it: ``manager.planner``,
     ``manager.economy``, ``manager.economy.experience``.
     """
     from planning.bandit import StrategyRanker
-    from planning.economy import CostModel, Economy
+    from planning.economy import CostModel, Economy, STATE_FILE as ECONOMY_STATE_FILE
     from planning.kb import KnowledgeBase
     from planning.planner import Planner
     from planning.thinking_cache import ThinkingCache
 
+    if economy_state_file is None:
+        economy_state_file = (ECONOMY_STATE_FILE if Path(state_file) == STATE_FILE
+                              else Path(state_file).parent / "economy_state.json")
     knowledge = kb if kb is not None else KnowledgeBase()
     cost = CostModel(knowledge, experience=experience)
-    economy = Economy(cost, experience=experience, state_file=state_file)
+    economy = Economy(cost, experience=experience, state_file=economy_state_file)
     store = economy.experience
     ranker = ranker if ranker is not None else StrategyRanker(store)
     if cache == "default":

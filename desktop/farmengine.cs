@@ -175,7 +175,7 @@ namespace DofusFarm.Engine {
             string baseCand = (!string.IsNullOrEmpty(explicitBaseDir) ? explicitBaseDir : AppDomain.CurrentDomain.BaseDirectory).TrimEnd('\\');
             string parentCand = Directory.GetParent(baseCand) != null ? Directory.GetParent(baseCand).FullName.TrimEnd('\\') : null;
             string asmCand = null;
-            try { string loc = Assembly.GetExecutingAssembly().Location; if (!string.IsNullOrEmpty(loc)) asmCand = Path.GetDirectoryName(loc).TrimEnd('\\'); } catch { }
+            try { string loc = Assembly.GetExecutingAssembly().Location; if (!string.IsNullOrEmpty(loc)) asmCand = Path.GetDirectoryName(loc).TrimEnd('\\'); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             AppBaseDir = new[] { baseCand, parentCand, asmCand, Directory.GetCurrentDirectory().TrimEnd('\\') }
                 .FirstOrDefault(d => !string.IsNullOrEmpty(d) && File.Exists(Path.Combine(d, @"scripts\mobile-disguise.js"))) ?? baseCand;
             AvdHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".android\avd");
@@ -207,7 +207,7 @@ namespace DofusFarm.Engine {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SafeDeleteFile(string path) {
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-            try { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); } catch { }
+            try { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private static void DeleteFiles(string dir, params string[] names) {
@@ -217,8 +217,8 @@ namespace DofusFarm.Engine {
         private static void KillProcessesByName(string name, int waitMs = 0) {
             try {
                 foreach (Process p in Process.GetProcessesByName(name))
-                    using (p) { try { if (!p.HasExited) { p.Kill(); if (waitMs > 0) p.WaitForExit(waitMs); } } catch { } }
-            } catch { }
+                    using (p) { try { if (!p.HasExited) { p.Kill(); if (waitMs > 0) p.WaitForExit(waitMs); } } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private static bool HasRunningProcess(params string[] names) {
@@ -226,7 +226,7 @@ namespace DofusFarm.Engine {
                 foreach (string n in names) {
                     Process[] procs = Process.GetProcessesByName(n);
                     bool any = procs != null && procs.Length > 0;
-                    if (procs != null) foreach (Process p in procs) { try { p.Dispose(); } catch { } }
+                    if (procs != null) foreach (Process p in procs) { try { p.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                     if (any) return true;
                 }
                 return false;
@@ -249,12 +249,12 @@ namespace DofusFarm.Engine {
                     var mo = raw as IDisposable;
                     try { onObject(new ManagementObject(raw)); } finally { if (mo != null) mo.Dispose(); }
                 }
-            } catch { } finally { if (searcher != null) searcher.Dispose(); }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } finally { if (searcher != null) searcher.Dispose(); }
         }
 
         private static void QueryWmiProcesses(string whereClause, Action<int, string> onProc) {
             QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE " + whereClause, 2, mo => {
-                try { onProc(Convert.ToInt32(mo["ProcessId"]), (mo["CommandLine"] ?? "").ToString()); } catch { }
+                try { onProc(Convert.ToInt32(mo["ProcessId"]), (mo["CommandLine"] ?? "").ToString()); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             });
         }
 
@@ -294,9 +294,14 @@ namespace DofusFarm.Engine {
                         return;
                     }
                 }
-            } catch { }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] LoadInstanceIdentity failed: " + ex.Message);
+            }
             NewRandomIds(serialPrefix, out serialNo, out androidId);
-            try { if (path != null) File.WriteAllText(path, serialNo + "|" + androidId); } catch { }
+            try { if (path != null) File.WriteAllText(path, serialNo + "|" + androidId); }
+            catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] WriteInstanceIdentity failed: " + ex.Message);
+            }
         }
 
         private void ReadIdentity(string avdDir, ref string customName, ref string serialNo, ref string androidId, ref string mac, ref string proxy, ref string phoneModel) {
@@ -310,7 +315,9 @@ namespace DofusFarm.Engine {
                 string m = MatchVal(RxMac, j); if (m != null && !m.StartsWith("52:54:00")) mac = m;
                 proxy = MatchVal(RxProxy, j) ?? proxy;
                 phoneModel = MatchVal(RxPhoneModel, j) ?? phoneModel;
-            } catch { }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] ReadIdentity failed: " + ex.Message);
+            }
         }
 
         private static void WriteIdentity(string avdDir, string customName, string serialNo, string androidId, string mac, string proxy, string phoneModelId) {
@@ -335,7 +342,7 @@ namespace DofusFarm.Engine {
                             else if (key == "build" && string.IsNullOrEmpty(bv)) bv = val;
                         }
                     }
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 if (string.IsNullOrEmpty(av) || string.IsNullOrEmpty(vc) || string.IsNullOrEmpty(bv)) {
                     try {
                         DofusVersionInfo resolved = DynamicVersionResolver.ResolveVersion(null, false, null);
@@ -344,7 +351,7 @@ namespace DofusFarm.Engine {
                             if (string.IsNullOrEmpty(vc)) vc = resolved.VersionCode;
                             if (string.IsNullOrEmpty(bv)) bv = resolved.BuildVersion;
                         }
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             }
             av = av ?? "";
@@ -376,7 +383,7 @@ namespace DofusFarm.Engine {
 
         private void Log(string message) {
             var handler = OnLog;
-            if (handler != null) { try { handler(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message)); } catch { } }
+            if (handler != null) { try { handler(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message)); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
         }
 
         /// <summary>
@@ -410,7 +417,7 @@ namespace DofusFarm.Engine {
                     try {
                         GoldenMasterPath = Path.Combine(Directory.CreateDirectory(Path.Combine(AvdHome, "dofus-template.avd")).FullName, "userdata-golden.img");
                         File.Copy(sdkUd, GoldenMasterPath, true);
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             }
             EnsureGoldenTemplate();
@@ -426,7 +433,7 @@ namespace DofusFarm.Engine {
                         if (fs.Read(m, 0, 4) == 4 && m[0] == 0x51 && m[1] == 0x46 && m[2] == 0x49 && m[3] == 0xFB) return "qcow2";
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             return "raw";
         }
 
@@ -484,14 +491,14 @@ namespace DofusFarm.Engine {
             try {
                 string m = (Registry.GetValue(RegKeyPath, "GpuMode", null) ?? "").ToString().Trim().ToLowerInvariant();
                 if (ValidGpuModes.Contains(m)) return m;
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             return DetectBestGpuMode();
         }
 
         public void SetConfiguredGpuMode(string mode) {
             string m = (mode ?? "host").Trim().ToLowerInvariant();
             if (!ValidGpuModes.Contains(m)) m = "host";
-            try { Registry.SetValue(RegKeyPath, "GpuMode", m); } catch { }
+            try { Registry.SetValue(RegKeyPath, "GpuMode", m); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             try {
                 if (Directory.Exists(AvdHome)) {
                     foreach (string d in Directory.EnumerateDirectories(AvdHome, "dofus-*.avd")) {
@@ -502,7 +509,7 @@ namespace DofusFarm.Engine {
                         InvalidateWarmSnapshot(name);
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             Log(string.Format("GPU renderer mode set to '{0}' across all instances.", m));
         }
 
@@ -551,7 +558,7 @@ namespace DofusFarm.Engine {
                     "WindowsHypervisorPlatform = on\r\nWindowsOnDemandSnapshotLoad = off\r\n";
                 File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), content, Encoding.ASCII);
                 WriteAdvancedFeaturesToSdk(content);
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private void WriteAdvancedFeaturesToSdk(string content) {
@@ -567,7 +574,7 @@ namespace DofusFarm.Engine {
                     string p1 = Path.Combine(val.ToString(), "sdk"), p2 = Path.Combine(p1, "sdk");
                     return File.Exists(Path.Combine(p2, @"platform-tools\adb.exe")) && !File.Exists(Path.Combine(p1, @"platform-tools\adb.exe")) ? p2 : p1;
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             return null;
         }
 
@@ -577,7 +584,7 @@ namespace DofusFarm.Engine {
             try {
                 string targetDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
                 if (!Directory.Exists(targetDir)) {
-                    try { Directory.CreateDirectory(targetDir); } catch { }
+                    try { Directory.CreateDirectory(targetDir); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
                 var psi = new ProcessStartInfo {
                     FileName = exe,
@@ -600,7 +607,7 @@ namespace DofusFarm.Engine {
                     p.BeginOutputReadLine();
                     p.BeginErrorReadLine();
                     if (!p.WaitForExit(timeoutMs)) {
-                        try { p.Kill(); } catch { }
+                        try { p.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                         return "ERROR: Command timed out after " + timeoutMs + "ms";
                     }
                     p.WaitForExit();
@@ -715,7 +722,7 @@ namespace DofusFarm.Engine {
             try {
                 try {
                     ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 var req = (HttpWebRequest)WebRequest.Create("https://api.ipify.org");
                 req.Proxy = new WebProxy(proxyUrl);
                 req.Timeout = timeoutMs;
@@ -733,7 +740,7 @@ namespace DofusFarm.Engine {
                 try {
                     var hr = wex.Response as HttpWebResponse;
                     if (hr != null) error += " HTTP " + (int)hr.StatusCode;
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 if (!string.IsNullOrEmpty(wex.Message)) error += ": " + wex.Message;
                 return null;
             } catch (Exception ex) { error = ex.Message; return null; }
@@ -760,7 +767,7 @@ namespace DofusFarm.Engine {
                     string ip = TestHttpProxy(entries[idx], timeoutMs);
                     if (ip != null) alive[idx] = entries[idx] + "\n#   exit " + ip;
                 });
-            } catch { } finally { cts.Dispose(); }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } finally { cts.Dispose(); }
             List<string> liveList = alive.Where(a => a != null).ToList();
             live = liveList.Count;
             try {
@@ -793,7 +800,7 @@ namespace DofusFarm.Engine {
                         .Where(x => valid(x))
                         .ToArray();
                 } else {
-                    if (onMissing != null) { try { onMissing(); } catch { } }
+                    if (onMissing != null) { try { onMissing(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                     cache = new T[0];
                 }
                 cacheUtc = DateTime.UtcNow;
@@ -1020,7 +1027,10 @@ namespace DofusFarm.Engine {
                 string cli2 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
                     "Cloudflare", "Cloudflare WARP", "warp-cli.exe");
                 return File.Exists(cli2) ? cli2 : null;
-            } catch { return null; }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] WarpCliPath failed: " + ex.Message);
+                return null;
+            }
         }
 
         private static bool EnsureSystemWarp(NetworkSettings s, Action<string> logger) {
@@ -1058,13 +1068,13 @@ namespace DofusFarm.Engine {
             lock (_tunnelLock) {
                 try {
                     if (_tunnelProcess != null && !_tunnelProcess.HasExited) { _tunnelProcess.Kill(); }
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 _tunnelProcess = null;
                 try {
                     foreach (var p in Process.GetProcessesByName("wireproxy")) {
-                        try { p.Kill(); } catch { }
+                        try { p.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     }
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 if (alsoDisconnectSystemWarp) {
                     string cli = WarpCliPath();
                     if (cli != null) RunWarpCli(cli, "disconnect", null);
@@ -1204,7 +1214,9 @@ namespace DofusFarm.Engine {
                     if (!string.Equals(kv.Key, selfInstanceId, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(kv.Value, norm, StringComparison.OrdinalIgnoreCase))
                         return kv.Key;
-            } catch { }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] AccountActiveElsewhere error: " + ex.Message);
+            }
             return null;
         }
 
@@ -1214,7 +1226,9 @@ namespace DofusFarm.Engine {
                 string conflict = AccountActiveElsewhere(login, instanceId);
                 if (conflict != null) return conflict;
                 _activeAccountClaims[instanceId] = login.Trim();
-            } catch { }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] ClaimAccount error: " + ex.Message);
+            }
             return null;
         }
 
@@ -1232,9 +1246,12 @@ namespace DofusFarm.Engine {
                 foreach (string dir in Directory.GetDirectories(root)) {
                     if (string.Equals(Path.GetFileName(dir), selfInstanceId, StringComparison.OrdinalIgnoreCase)) continue;
                     string marker = Path.Combine(dir, "account.identity");
-                    try { if (File.Exists(marker) && string.Equals(File.ReadAllText(marker).Trim(), norm, StringComparison.OrdinalIgnoreCase)) return true; } catch { }
+                    try { if (File.Exists(marker) && string.Equals(File.ReadAllText(marker).Trim(), norm, StringComparison.OrdinalIgnoreCase)) return true; }
+                    catch (Exception exMarker) { Trace.WriteLine("[FarmEngine] account.identity read: " + exMarker.Message); }
                 }
-            } catch { }
+            } catch (Exception ex) {
+                Trace.WriteLine("[FarmEngine] IsIdentityOwnedByOtherProfile error: " + ex.Message);
+            }
             return false;
         }
 
@@ -1476,9 +1493,9 @@ namespace DofusFarm.Engine {
                                     return true;
                                 }
                             }
-                            if (!proc.HasExited) { try { proc.Kill(); } catch { } }
+                            if (!proc.HasExited) { try { proc.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                         }
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
                 try {
                     var inProc = new InProcessProxyServer(port, normalizedUpstream, serialNo, androidId, deviceProfile, GetScriptPath("mobile-disguise.js"));
@@ -1497,9 +1514,9 @@ namespace DofusFarm.Engine {
         private static void StopProxyInternal(int port) {
             _proxyCurrentUpstream.Remove(port);
             Process proc;
-            if (_proxyProcesses.TryGetValue(port, out proc)) { try { if (!proc.HasExited) proc.Kill(); } catch { } _proxyProcesses.Remove(port); }
+            if (_proxyProcesses.TryGetValue(port, out proc)) { try { if (!proc.HasExited) proc.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } _proxyProcesses.Remove(port); }
             InProcessProxyServer inProc;
-            if (_inProcProxies.TryGetValue(port, out inProc)) { try { inProc.Stop(); } catch { } _inProcProxies.Remove(port); }
+            if (_inProcProxies.TryGetValue(port, out inProc)) { try { inProc.Stop(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } _inProcProxies.Remove(port); }
         }
 
         public void StopProxy(int port) { lock (_proxyLock) StopProxyInternal(port); }
@@ -1507,9 +1524,9 @@ namespace DofusFarm.Engine {
         public void StopAllProxies() {
             lock (_proxyLock) {
                 _proxyCurrentUpstream.Clear();
-                foreach (var p in _proxyProcesses.Values) { try { if (!p.HasExited) p.Kill(); } catch { } }
+                foreach (var p in _proxyProcesses.Values) { try { if (!p.HasExited) p.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                 _proxyProcesses.Clear();
-                foreach (var s in _inProcProxies.Values) { try { s.Stop(); } catch { } }
+                foreach (var s in _inProcProxies.Values) { try { s.Stop(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                 _inProcProxies.Clear();
                 KillProcessesByName("dofus-net-proxy");
             }
@@ -1527,7 +1544,7 @@ namespace DofusFarm.Engine {
                         else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase)) int.TryParse(l.Substring(eq + 1).Trim(), out cores);
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         public int ActiveInstanceCount() {
@@ -1850,7 +1867,7 @@ namespace DofusFarm.Engine {
                 if (!string.IsNullOrEmpty(goldenQcow2) && File.Exists(goldenQcow2) && new FileInfo(goldenQcow2).Length > 1024 * 1024) {
                     SafeDeleteFile(tgtQcow2);
                     File.Copy(goldenQcow2, tgtQcow2, true);
-                    try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch { }
+                    try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     RebaseAndCheckQcow2(avdDir, File.Exists(tgtRaw) ? tgtRaw : GoldenMasterPath, tgtQcow2);
                 }
             }
@@ -1895,7 +1912,7 @@ namespace DofusFarm.Engine {
             var sb = new StringBuilder(existing.Count * 32);
             foreach (var kvp in existing) sb.Append(kvp.Key).Append(" = ").AppendLine(kvp.Value);
             File.WriteAllText(cfgFile, sb.ToString(), Encoding.UTF8);
-            try { SafeDeleteFile(Path.Combine(Path.GetDirectoryName(cfgFile), "hardware-qemu.ini")); } catch { }
+            try { SafeDeleteFile(Path.Combine(Path.GetDirectoryName(cfgFile), "hardware-qemu.ini")); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         public static void ForceDeleteDirectory(string dirPath) {
@@ -1903,7 +1920,7 @@ namespace DofusFarm.Engine {
             try {
                 var di = new DirectoryInfo(dirPath);
                 foreach (FileSystemInfo fsi in di.EnumerateFileSystemInfos("*", SearchOption.AllDirectories)) {
-                    try { fsi.Attributes = FileAttributes.Normal; } catch { }
+                    try { fsi.Attributes = FileAttributes.Normal; } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
                 di.Delete(true);
             } catch {
@@ -1911,7 +1928,7 @@ namespace DofusFarm.Engine {
                     foreach (string f in Directory.GetFiles(dirPath)) SafeDeleteFile(f);
                     foreach (string d in Directory.GetDirectories(dirPath)) ForceDeleteDirectory(d);
                     Directory.Delete(dirPath, true);
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             }
         }
 
@@ -1923,7 +1940,7 @@ namespace DofusFarm.Engine {
                     ForceDeleteDirectory(snapDir);
                     SafeDeleteFile(Path.Combine(avdDir, "cold_run_completed.flag"));
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private void CreateQcow2Overlay(string avdDir, string backingFile, string qcow2Name, int timeoutMs = 30000, bool fallbackAlt = false) {
@@ -1969,7 +1986,7 @@ namespace DofusFarm.Engine {
                         RebaseAndCheckQcow2(tplDir, tplGoldenImg, tplGoldenQcow2);
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         public void EnsureOverlay(string avdDir) {
@@ -1992,11 +2009,11 @@ namespace DofusFarm.Engine {
                         }
                         string candGolden = Path.Combine(tplDir, "userdata-golden.img");
                         if (File.Exists(candGolden)) GoldenMasterPath = candGolden;
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             }
             if (!File.Exists(GoldenMasterPath)) return;
-            try { File.SetAttributes(GoldenMasterPath, FileAttributes.Normal); } catch { }
+            try { File.SetAttributes(GoldenMasterPath, FileAttributes.Normal); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             string v23Flag = Path.Combine(avdDir, "v23_blackscreen_fixed.flag");
             bool isV23Migrated = File.Exists(v23Flag);
             if (!isV23Migrated) {
@@ -2014,9 +2031,9 @@ namespace DofusFarm.Engine {
                     File.WriteAllText(Path.Combine(avdDir, "system.prop"), GenerateSystemProp(prof, serialNo, nCores), Encoding.ASCII);
                     UpdateConfigIni(cfgFile, slotName, rMb, nCores, prof);
                     File.WriteAllText(v23Flag, DateTime.UtcNow.ToString("o"), Encoding.ASCII);
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             }
-            try { File.WriteAllText(Path.Combine(avdDir, "quickbootChoice.ini"), "saveOnExit = true\r\n", Encoding.ASCII); } catch { }
+            try { File.WriteAllText(Path.Combine(avdDir, "quickbootChoice.ini"), "saveOnExit = true\r\n", Encoding.ASCII); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             try {
                 string emuUserIni = Path.Combine(avdDir, "emulator-user.ini");
                 if (File.Exists(emuUserIni)) {
@@ -2024,8 +2041,8 @@ namespace DofusFarm.Engine {
                     if (euText.Contains("window.scale = -1") || euText.Contains("window.x = -"))
                         File.WriteAllText(emuUserIni, "window.x = 80\r\nwindow.y = 80\r\n", Encoding.ASCII);
                 }
-            } catch { }
-            try { File.SetAttributes(GoldenMasterPath, FileAttributes.ReadOnly); } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+            try { File.SetAttributes(GoldenMasterPath, FileAttributes.ReadOnly); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             try {
                 string tplDir = Path.GetDirectoryName(GoldenMasterPath), sysImgDir = !string.IsNullOrEmpty(SdkRoot) ? Path.Combine(SdkRoot, SysImgSubPath) : "";
                 foreach (string aux in AuxImages) {
@@ -2033,10 +2050,10 @@ namespace DofusFarm.Engine {
                     if (!File.Exists(dstAux) || (aux.Equals("encryptionkey.img", StringComparison.OrdinalIgnoreCase) && !isV23Migrated)) {
                         string src = new[] { !string.IsNullOrEmpty(tplDir) ? Path.Combine(tplDir, aux) : "", !string.IsNullOrEmpty(sysImgDir) ? Path.Combine(sysImgDir, aux) : "" }
                             .FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
-                        if (src != null) { try { if (File.Exists(dstAux)) File.SetAttributes(dstAux, FileAttributes.Normal); File.Copy(src, dstAux, true); } catch { } }
+                        if (src != null) { try { if (File.Exists(dstAux)) File.SetAttributes(dstAux, FileAttributes.Normal); File.Copy(src, dstAux, true); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             if (File.Exists(QemuImgPath)) {
                 string emuQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
                 bool needQcow2 = !File.Exists(emuQcow2) || new FileInfo(emuQcow2).Length == 0;
@@ -2048,7 +2065,7 @@ namespace DofusFarm.Engine {
                             if (infoLower.Contains("error") || infoLower.Contains("corrupt"))
                                 needQcow2 = true;
                         }
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
                 if (needQcow2) {
                     try {
@@ -2062,7 +2079,7 @@ namespace DofusFarm.Engine {
                         string backingFile = File.Exists(tgtRaw) ? tgtRaw : GoldenMasterPath;
                         if (!string.IsNullOrEmpty(goldenQcow2) && File.Exists(goldenQcow2) && new FileInfo(goldenQcow2).Length > 1024 * 1024) {
                             File.Copy(goldenQcow2, emuQcow2, true);
-                            try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch { }
+                            try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                             RebaseAndCheckQcow2(avdDir, backingFile, emuQcow2);
                         } else {
                             CreateQcow2Overlay(avdDir, backingFile, "userdata-qemu.img.qcow2", 30000, true);
@@ -2071,7 +2088,7 @@ namespace DofusFarm.Engine {
                             string auxSrc = Path.Combine(avdDir, aux);
                             if (File.Exists(auxSrc)) CreateQcow2Overlay(avdDir, auxSrc, aux + ".qcow2", 10000, false);
                         }
-                    } catch { }
+                    } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             }
         }
@@ -2090,7 +2107,7 @@ namespace DofusFarm.Engine {
                 if (File.Exists(ramDirty) || (File.Exists(snapPb) && new FileInfo(snapPb).Length < 512)) {
                     ForceDeleteDirectory(Path.Combine(avdDir, "snapshots"));
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private void EnsureAvdIni(string name, string avdDir) {
@@ -2098,7 +2115,7 @@ namespace DofusFarm.Engine {
                 SafeDeleteFile(Path.Combine(AvdHome, name + ".avd.ini"));
                 File.WriteAllText(Path.Combine(AvdHome, name + ".ini"),
                     string.Format("avd.ini.encoding=UTF-8\r\npath={0}\r\npath.rel=avd\\{1}.avd\r\ntarget=android-29\r\n", avdDir, name), Encoding.UTF8);
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private static bool MatchesInstanceCmdLine(string cl, string name, int port) {
@@ -2108,13 +2125,13 @@ namespace DofusFarm.Engine {
         private void KillProcessForInstance(string name, int port) {
             QueryWmiProcesses("Name='qemu-system-x86_64.exe' OR Name='emulator.exe'", (pid, cl) => {
                 if (MatchesInstanceCmdLine(cl, name, port)) {
-                    try { using (Process p = Process.GetProcessById(pid)) { p.Kill(); p.WaitForExit(1500); } } catch { }
+                    try { using (Process p = Process.GetProcessById(pid)) { p.Kill(); p.WaitForExit(1500); } } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             });
         }
 
         private bool IsInstanceProcessAlive(Process launcherProc, string name, int port) {
-            try { if (launcherProc != null && !launcherProc.HasExited) return true; } catch { }
+            try { if (launcherProc != null && !launcherProc.HasExited) return true; } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             bool alive = false;
             QueryWmiProcesses("Name='qemu-system-x86_64.exe'", (pid, cl) => {
                 if (!alive && MatchesInstanceCmdLine(cl, name, port)) {
@@ -2141,7 +2158,7 @@ namespace DofusFarm.Engine {
                     string logDir = Path.Combine(AvdHome, avdName + ".avd");
                     if (Directory.Exists(logDir)) {
                         string logFile = Path.Combine(logDir, "emulator-console.log");
-                        try { var fi = new FileInfo(logFile); if (fi.Exists && fi.Length > 8L * 1024 * 1024) fi.Delete(); } catch { }
+                        try { var fi = new FileInfo(logFile); if (fi.Exists && fi.Length > 8L * 1024 * 1024) fi.Delete(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                         psi.RedirectStandardOutput = psi.RedirectStandardError = true;
                         var logged = new Process { StartInfo = psi };
                         StreamWriter writer = null;
@@ -2154,7 +2171,7 @@ namespace DofusFarm.Engine {
                             // error would otherwise fill the disk between launches.
                             object logGate = new object();
                             long written = 0;
-                            try { written = new FileInfo(logFile).Length; } catch { }
+                            try { written = new FileInfo(logFile).Length; } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                             const long logCap = 8L * 1024 * 1024;
                             DataReceivedEventHandler onData = delegate(object s, DataReceivedEventArgs e) {
                                 if (e.Data == null) return;
@@ -2164,18 +2181,18 @@ namespace DofusFarm.Engine {
                                         w.WriteLine(e.Data);
                                         written += e.Data.Length + 2;
                                     }
-                                } catch { }
+                                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                             };
                             logged.OutputDataReceived += onData;
                             logged.ErrorDataReceived += onData;
                             logged.EnableRaisingEvents = true;
-                            logged.Exited += delegate { try { w.Dispose(); } catch { } };
+                            logged.Exited += delegate { try { w.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } };
                             if (logged.Start()) { logged.BeginOutputReadLine(); logged.BeginErrorReadLine(); return logged; }
-                            try { writer.Dispose(); } catch { }
-                        } catch { if (writer != null) { try { writer.Dispose(); } catch { } } }
+                            try { writer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+                        } catch { if (writer != null) { try { writer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } } }
                     }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             return Process.Start(psi);
         }
 
@@ -2186,10 +2203,10 @@ namespace DofusFarm.Engine {
                 Stopwatch adw = Stopwatch.StartNew();
                 while (true) {
                     string bootState = null;
-                    try { bootState = Adb(serial, "shell getprop sys.boot_completed", 4000); } catch { }
+                    try { bootState = Adb(serial, "shell getprop sys.boot_completed", 4000); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     if ((bootState ?? "").Trim() == "1") break;
                     string devList = null;
-                    try { devList = Adb("", "devices", 4000); } catch { }
+                    try { devList = Adb("", "devices", 4000); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     if (devList == null || devList.IndexOf(serial, StringComparison.Ordinal) < 0) return false;
                     if (adw.Elapsed.TotalSeconds > 20) {
                         Log(string.Format("{0}: running but guest never reports booted (state '{1}') - restarting.", name, (bootState ?? "").Trim()));
@@ -2202,7 +2219,10 @@ namespace DofusFarm.Engine {
                 ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
                 Log(string.Format("{0} was already running - attached instantly, no reboot needed.", name));
                 return true;
-            } catch { return false; }
+            } catch (Exception ex) {
+                Log(string.Format("[ADOPT] {0} adopt failed on port {1}: {2}", name, port, ex.Message));
+                return false;
+            }
         }
 
         private int BumpLaunchGen(int port) { lock (_launchGenLock) return _launchGen.AddOrUpdate(port, 1, (k, v) => v + 1); }
@@ -2238,7 +2258,7 @@ namespace DofusFarm.Engine {
             string cfgFile = Path.Combine(avdDir, "config.ini");
             if (!File.Exists(cfgFile)) {
                 string tplCfg = Path.Combine(AvdHome, @"dofus-template.avd\config.ini");
-                if (File.Exists(tplCfg)) { try { File.Copy(tplCfg, cfgFile, true); } catch { } }
+                if (File.Exists(tplCfg)) { try { File.Copy(tplCfg, cfgFile, true); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
             }
             UpdateConfigIni(cfgFile, name, safeRam, safeCores, instProfile);
             bool proxyActive = EnsureProxyRunning(localProxyPort, upstreamProxy, serialNo, androidId, instProfile);
@@ -2251,7 +2271,7 @@ namespace DofusFarm.Engine {
                 : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} {6}-no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
                     name, port, gpuMode, safeRam, safeCores, proxyArg, snapshotArg);
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
-            try { Adb("", "start-server", 6000); } catch { }
+            try { Adb("", "start-server", 6000); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             Process proc = StartEmulatorProcess(emuArgs, false);
             if (proc != null) PriorityGovernor.RegisterInstancePid(proc.Id, slot, safeCores);
             string serial = "emulator-" + port;
@@ -2308,8 +2328,8 @@ namespace DofusFarm.Engine {
                     ApplyNativeHardwareCoherence(serial, serialNo, name, mac);
                     AdbShell(serial, WakeAndStartCmd);
                     ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
-                    try { File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8); } catch { }
-                    try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch { }
+                    try { File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+                    try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     Log(string.Format("⚡ Instant QuickBoot restored for {0} ({1}) in {2:F1}s! Dofus Touch active in foreground.", name, serial, sw.Elapsed.TotalSeconds));
                     return;
                 }
@@ -2407,10 +2427,10 @@ namespace DofusFarm.Engine {
             try {
                 AdbShell(serial, "sync");
                 File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             if (shutdownAfterSnapshot) return;
             ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
-            try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch { }
+            try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             Log(string.Format("{0} ({1}) is ready! Dofus Touch running in foreground (Boot: {2:F1}s).", name, serial, sw.Elapsed.TotalSeconds));
         }
 
@@ -2425,7 +2445,7 @@ namespace DofusFarm.Engine {
             InvalidateWarmSnapshot(name);
             EnsureOverlay(avdDir);
             UpdateConfigIni(Path.Combine(avdDir, "config.ini"), name, ramMb, cores, GetInstancePhoneModel(name));
-            try { File.WriteAllText(Path.Combine(avdDir, "emulator-user.ini"), "window.x = 80\r\nwindow.y = 80\r\n", Encoding.ASCII); } catch { }
+            try { File.WriteAllText(Path.Combine(avdDir, "emulator-user.ini"), "window.x = 80\r\nwindow.y = 80\r\n", Encoding.ASCII); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             Log(string.Format("Prepared clean overlay and graphics config for {0} (port {1}).", name, port));
         }
 
@@ -2517,7 +2537,7 @@ namespace DofusFarm.Engine {
         public void InjectDisguiseViaCdp(string serial, int port, string name) {
             lock (_cdpLock) {
                 CancellationTokenSource oldCts;
-                if (_cdpSessions.TryGetValue(serial, out oldCts)) { try { oldCts.Cancel(); } catch { } _cdpSessions.Remove(serial); }
+                if (_cdpSessions.TryGetValue(serial, out oldCts)) { try { oldCts.Cancel(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } _cdpSessions.Remove(serial); }
                 var cts = new CancellationTokenSource();
                 _cdpSessions[serial] = cts;
                 ThreadPool.QueueUserWorkItem(delegate { MaintainCdpSession(serial, port, name, cts.Token); });
@@ -2567,7 +2587,7 @@ namespace DofusFarm.Engine {
                         ? string.Format("forward tcp:{0} localabstract:{1}", cdpPort, socketName)
                         : string.Format("forward tcp:{0} tcp:9222", cdpPort));
                     string jsonTargets = null;
-                    try { jsonTargets = FetchHttpText(cdpJsonUrl); } catch { try { Adb(serial, string.Format("forward tcp:{0} tcp:9222", cdpPort)); jsonTargets = FetchHttpText(cdpJsonUrl); } catch { } }
+                    try { jsonTargets = FetchHttpText(cdpJsonUrl); } catch { try { Adb(serial, string.Format("forward tcp:{0} tcp:9222", cdpPort)); jsonTargets = FetchHttpText(cdpJsonUrl); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                     if (string.IsNullOrEmpty(jsonTargets) || !jsonTargets.Contains("webSocketDebuggerUrl")) { token.WaitHandle.WaitOne(5000); continue; }
                     string rawWsUrl = MatchVal(RxWsDebugger, jsonTargets);
                     if (string.IsNullOrEmpty(rawWsUrl)) { token.WaitHandle.WaitOne(1000); continue; }
@@ -2624,7 +2644,7 @@ namespace DofusFarm.Engine {
                     byte[] bytes = Encoding.UTF8.GetBytes(json);
                     ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None).Wait(5000);
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         public void StopInstance(string serial, string name) {
@@ -2633,14 +2653,14 @@ namespace DofusFarm.Engine {
             if (pNum > 0) BumpLaunchGen(pNum);
             lock (_cdpLock) {
                 CancellationTokenSource cts;
-                if (_cdpSessions.TryGetValue(serial, out cts)) { try { cts.Cancel(); cts.Dispose(); } catch { } _cdpSessions.Remove(serial); }
+                if (_cdpSessions.TryGetValue(serial, out cts)) { try { cts.Cancel(); cts.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } _cdpSessions.Remove(serial); }
             }
             if (pNum > 0) {
                 StopProxy(NetworkSettings.For(AppBaseDir).BasePort + Math.Max(0, (pNum - NetworkSettings.AdbBasePort) / 2));
-                try { Adb(serial, string.Format("forward --remove tcp:{0}", pNum + 4000)); } catch { }
+                try { Adb(serial, string.Format("forward --remove tcp:{0}", pNum + 4000)); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             }
-            try { AdbShell(serial, "sync"); } catch { }
-            try { Adb(serial, "emu kill"); } catch { }
+            try { AdbShell(serial, "sync"); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+            try { Adb(serial, "emu kill"); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             int qemuPid = FindEmuPidForInstance(name, pNum);
             if (qemuPid > 0) {
                 try {
@@ -2676,9 +2696,9 @@ namespace DofusFarm.Engine {
                 var pids = new HashSet<int> { qemuPid };
                 ForEachToolhelpProcess(pe => { if (pe.th32ParentProcessID == (uint)qemuPid) pids.Add((int)pe.th32ProcessID); });
                 foreach (int pid in pids) {
-                    try { using (Process p = Process.GetProcessById(pid)) { if (!p.HasExited) { p.Kill(); p.WaitForExit(1500); } } } catch { }
+                    try { using (Process p = Process.GetProcessById(pid)) { if (!p.HasExited) { p.Kill(); p.WaitForExit(1500); } } } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private int FindEmuPidForInstance(string name, int port) {
@@ -2695,11 +2715,11 @@ namespace DofusFarm.Engine {
 
         public void StopAll() {
             lock (_cdpLock) {
-                foreach (var cts in _cdpSessions.Values) { try { cts.Cancel(); cts.Dispose(); } catch { } }
+                foreach (var cts in _cdpSessions.Values) { try { cts.Cancel(); cts.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
                 _cdpSessions.Clear();
             }
             StopAllProxies();
-            try { Adb("", "forward --remove-all"); } catch { }
+            try { Adb("", "forward --remove-all"); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             var farmSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (Directory.Exists(AvdHome)) {
                 foreach (string d in Directory.EnumerateDirectories(AvdHome, "dofus-*.avd")) {
@@ -2713,10 +2733,10 @@ namespace DofusFarm.Engine {
             if (toStop.Count > 0) {
                 try {
                     Task.WaitAll(toStop.Select(s => Task.Run(() => {
-                        try { AdbShell(s, "sync"); } catch { }
-                        try { Adb(s, "emu kill", 3000); } catch { }
+                        try { AdbShell(s, "sync"); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+                        try { Adb(s, "emu kill", 3000); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     })).ToArray(), 3500);
-                } catch { }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             }
             bool wmiOk = Type.GetType("System.Management.ManagementObjectSearcher, System.Management", false) != null;
             var farmPids = new HashSet<int>();
@@ -2727,11 +2747,11 @@ namespace DofusFarm.Engine {
             foreach (string pName in new[] { "qemu-system-x86_64", "emulator" }) {
                 try {
                     foreach (Process p in Process.GetProcessesByName(pName))
-                        using (p) { try { if (wmiOk && !farmPids.Contains(p.Id)) continue; if (!p.WaitForExit(4500)) { p.Kill(); p.WaitForExit(1000); } } catch { } }
-                } catch { }
+                        using (p) { try { if (wmiOk && !farmPids.Contains(p.Id)) continue; if (!p.WaitForExit(4500)) { p.Kill(); p.WaitForExit(1000); } } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
+                } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             }
             KillProcessesByName("dofus-net-proxy", 1000);
-            try { if (Directory.Exists(AvdHome)) foreach (string d in Directory.EnumerateDirectories(AvdHome, "*.avd")) CleanLocks(d); } catch { }
+            try { if (Directory.Exists(AvdHome)) foreach (string d in Directory.EnumerateDirectories(AvdHome, "*.avd")) CleanLocks(d); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
             Log("All instances and emulator processes have been completely stopped.");
         }
 
@@ -2798,7 +2818,7 @@ namespace DofusFarm.Engine {
                 if (cloneState && File.Exists(srcQcow2) && new FileInfo(srcQcow2).Length > 0) {
                     SafeDeleteFile(tgtQcow2);
                     File.Copy(srcQcow2, tgtQcow2, true);
-                    try { File.WriteAllText(Path.Combine(tgtDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch { }
+                    try { File.WriteAllText(Path.Combine(tgtDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     RebaseAndCheckQcow2(tgtDir, tgtRaw, tgtQcow2);
                 } else if (File.Exists(QemuImgPath)) CreateQcow2Overlay(tgtDir, tgtRaw, tgtQcow2, 30000, true);
                 CleanLocks(tgtDir);
@@ -2858,7 +2878,7 @@ namespace DofusFarm.Engine {
                 string[] lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 Log(string.Format("[{0}] Emulator console tail:", name));
                 for (int i = Math.Max(0, lines.Length - 20); i < lines.Length; i++) Log("  [EMU] " + lines[i]);
-            } catch { }
+            } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         public void RepairInstanceBlackScreen(string name, bool relaunch = false) {
@@ -2937,7 +2957,7 @@ namespace DofusFarm.Engine {
             lock (_pidCacheLock) {
                 int cachedPid;
                 if (_cachedPortToPid.TryGetValue(port, out cachedPid) && cachedPid > 0) {
-                    try { using (Process p = Process.GetProcessById(cachedPid)) { if (!p.HasExited) pid = cachedPid; } } catch { }
+                    try { using (Process p = Process.GetProcessById(cachedPid)) { if (!p.HasExited) pid = cachedPid; } } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                 }
             }
             if (pid == 0) {
@@ -3007,7 +3027,7 @@ namespace DofusFarm.Engine {
 
         public void Stop() {
             _running = false;
-            try { if (_listener != null) _listener.Stop(); } catch { }
+            try { if (_listener != null) _listener.Stop(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private void AcceptLoop(object state) {
@@ -3024,7 +3044,7 @@ namespace DofusFarm.Engine {
                 if (!wh.WaitOne(timeoutMs)) { client.Close(); throw new TimeoutException(errMsg); }
                 client.EndConnect(ar);
                 return client;
-            } finally { try { wh.Close(); } catch { } }
+            } finally { try { wh.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
         }
 
         private string BuildTelemetryJson() {
@@ -3274,7 +3294,7 @@ namespace DofusFarm.Engine {
                 string origin = HeaderValue(headers, "Origin");
                 if (!AllowedOrigin(origin)) {
                     byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     client.Close();
                     return;
                 }
@@ -3284,7 +3304,7 @@ namespace DofusFarm.Engine {
                         + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
                         + "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
                         + "Access-Control-Max-Age: 600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    try { cStream.Write(preflight, 0, preflight.Length); } catch { }
+                    try { cStream.Write(preflight, 0, preflight.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     client.Close();
                     return;
                 }
@@ -3292,7 +3312,7 @@ namespace DofusFarm.Engine {
                     byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\n"
                         + CorsHeaders(origin)
                         + "Content-Length: 0\r\nConnection: close\r\n\r\n");
-                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch { }
+                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     client.Close();
                     return;
                 }
@@ -3304,14 +3324,14 @@ namespace DofusFarm.Engine {
                         byte[] unauthorized = Encoding.ASCII.GetBytes("HTTP/1.1 401 Unauthorized\r\n"
                             + CorsHeaders(origin)
                             + "Content-Length: 0\r\nConnection: close\r\n\r\n");
-                        try { cStream.Write(unauthorized, 0, unauthorized.Length); } catch { }
+                        try { cStream.Write(unauthorized, 0, unauthorized.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                         client.Close();
                         return;
                     }
                     byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\n"
                         + CorsHeaders(origin)
                         + "Content-Length: 0\r\nConnection: close\r\n\r\n");
-                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch { }
+                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     client.Close();
                     return;
                 }
@@ -3334,7 +3354,7 @@ namespace DofusFarm.Engine {
                     if (colon > 0) { tHost = rawTarget.Substring(0, colon); int.TryParse(rawTarget.Substring(colon + 1), out tPort); }
                     if (!AllowedDestination(tHost)) {
                         byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                        try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                        try { cStream.Write(forbidden, 0, forbidden.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                         client.Close();
                         return;
                     }
@@ -3356,7 +3376,7 @@ namespace DofusFarm.Engine {
                 }
                 if (!AllowedDestination(destHost)) {
                     byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
                     client.Close();
                     return;
                 }
@@ -3384,17 +3404,17 @@ namespace DofusFarm.Engine {
                 byte[] reqBytes = Encoding.ASCII.GetBytes(outReq.ToString());
                 httpRStream.Write(reqBytes, 0, reqBytes.Length);
                 SpliceStreams(client, cr, httpRemote, httpRStream);
-            } catch { Interlocked.Increment(ref _connsFailed); try { client.Close(); } catch { } } finally { Interlocked.Decrement(ref _connsActive); }
+            } catch { Interlocked.Increment(ref _connsFailed); try { client.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } } finally { Interlocked.Decrement(ref _connsActive); }
         }
 
         private void SpliceStreams(TcpClient c1, Stream s1, TcpClient c2, Stream s2) {
             ThreadPool.QueueUserWorkItem(delegate {
-                try { CopyCounted(s1, s2, true); } catch { }
-                try { c2.Client.Shutdown(SocketShutdown.Send); } catch { try { c2.Close(); } catch { } }
+                try { CopyCounted(s1, s2, true); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+                try { c2.Client.Shutdown(SocketShutdown.Send); } catch { try { c2.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); } }
             });
-            try { CopyCounted(s2, s1, false); } catch { }
-            try { c1.Close(); } catch { }
-            try { c2.Close(); } catch { }
+            try { CopyCounted(s2, s1, false); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+            try { c1.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
+            try { c2.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] farmengine: " + ex.Message); }
         }
 
         private static readonly System.Collections.Generic.Queue<byte[]> _copyBuffers =
@@ -3420,3 +3440,4 @@ namespace DofusFarm.Engine {
         }
     }
 }
+

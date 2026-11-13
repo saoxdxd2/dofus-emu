@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from combat.grid_backend import XP, tree_map, HAS_JAX, BACKEND
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = Path(__file__).resolve().parent.parent / "models" / "combat_grid" / "model.pkl"
 _CACHE: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
@@ -94,7 +96,7 @@ def load_model(path: Path = DEFAULT_MODEL
     return params, config
 
 
-def _padded(board, plans: Sequence[Any]):
+def _padded(board, plans: Sequence[Any]) -> Any:
     deps = _deps()
     if deps is None:
         return None
@@ -167,19 +169,19 @@ def _check() -> int:
     """
     loaded = load_model()
     if loaded is None:
-        print("grid model unavailable: %s backend could not load %s"
+        logger.debug("grid model unavailable: %s backend could not load %s"
               % (BACKEND, DEFAULT_MODEL))
-        print("  (a checkpoint trained on an older encoder is refused by design)")
+        logger.debug("  (a checkpoint trained on an older encoder is refused by design)")
         return 2
     deps = _deps()
     params, config = loaded
     width = int(np.asarray(params["cell_in"][0]).shape[0])
-    print("model", DEFAULT_MODEL, "params", deps["grid_model"].param_count(params),
+    logger.debug("model", DEFAULT_MODEL, "params", deps["grid_model"].param_count(params),
           "backend", BACKEND)
-    print("encoder cell width", width, "live CELL_FEATS",
+    logger.debug("encoder cell width", width, "live CELL_FEATS",
           deps["grid_model"].CELL_FEATS, "config", config)
     if width != int(deps["grid_model"].CELL_FEATS):
-        print("MISMATCH: the ranker would be refused at load time")
+        logger.debug("MISMATCH: the ranker would be refused at load time")
         return 1
     return 0
 

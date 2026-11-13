@@ -33,6 +33,8 @@ from combat.encounter.checkpoint import config_from_payload
 from combat.plan_value import rank_plans, score_plan
 
 from combat.cli import run_main
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAP = REPO_ROOT / "data" / "maps" / "100139008.json"
@@ -220,8 +222,8 @@ def run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    print(json.dumps(report["policies"], indent=1))
-    print(f"boards={boards} lethal_available={lethal_available} "
+    logger.debug(json.dumps(report["policies"], indent=1))
+    logger.debug(f"boards={boards} lethal_available={lethal_available} "
           f"same_as_best={same_as_best} -> {out}")
     return 0
 
@@ -240,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     return run_main(build_parser, run, argv)
 
 

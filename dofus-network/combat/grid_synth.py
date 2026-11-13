@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from combat import grid_dataset
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "data" / "combat_grid_synth"
 VARIANTS = ((4, 2), (6, 3), (8, 4), (10, 3))
@@ -362,16 +364,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         if path is None:
             path = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm" / "fight_boards.jsonl"
         if not path.is_file():
-            print("boards file not found:", path)
+            logger.debug("boards file not found:", path)
             return 2
     arrays, manifest = build(path, args.limit, args.random_variants, args.seed,
                              args.duel_games, args.beam_width, args.max_actions,
                              args.plan_k, args.curriculum)
     if not arrays:
-        print("no synthetic board yielded a legal plan:", manifest)
+        logger.debug("no synthetic board yielded a legal plan:", manifest)
         return 1
     manifest = grid_dataset.write_splits(arrays, manifest, args.out)
-    print("synthetic rows", len(arrays["labels"]), "manifest", manifest)
+    logger.debug("synthetic rows", len(arrays["labels"]), "manifest", manifest)
     return 0
 
 

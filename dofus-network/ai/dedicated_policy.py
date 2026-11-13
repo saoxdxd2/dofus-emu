@@ -203,7 +203,7 @@ def soft_targets(soft: np.ndarray, labels: np.ndarray,
 
 # -- model -------------------------------------------------------------------
 
-def _torch():
+def _torch() -> Any:
     try:
         import torch
     except ImportError:  # pragma: no cover - environment guard
@@ -219,7 +219,7 @@ def _torch():
 def build_model(n_tools: int, hidden: int = 128, gru: int = 64,
                 steps: int = HISTORY_STEPS, token: int = HISTORY_TOKEN,
                 base: int = FEATURE_COUNT, dropout: float = 0.2,
-                extra: int = 0):
+                extra: int = 0) -> Any:
     """`extra` is the number of dims appended after the token window.
 
     The GRU reads a rectangular (steps, token) block, so anything that is not a
@@ -384,7 +384,7 @@ def fit_temperature(logits: np.ndarray, labels: np.ndarray,
                      "metric": metric}
 
 
-def cila_adjust(logits, labels, inv_freq, bound: float = 2.0, eps: float = 1e-6):
+def cila_adjust(logits, labels, inv_freq, bound: float = 2.0, eps: float = 1e-6) -> Any:
     """Instance-wise logit adjustment (CILA, arXiv:2610.27728).
 
     Class-wise logit adjustment subtracts `tau * log(pi_y)` from every logit, so a
@@ -426,7 +426,7 @@ def train(data: Dict[str, np.ndarray], val: Dict[str, np.ndarray],
           cila: bool = False, cila_bound: float = 2.0,
           dropout: float = 0.2, select_frac: float = 0.15,
           calib_metric: str = "ece",
-          seed: int = 7, device: str = "cpu", verbose: bool = True):
+          seed: int = 7, device: str = "cpu", verbose: bool = True) -> Any:
     """Fit on episodes, stop on held-out episodes, report on the pinned split.
 
     `val` is used for exactly one thing: the number in the report. Stopping and

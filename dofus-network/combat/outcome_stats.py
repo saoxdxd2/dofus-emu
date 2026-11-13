@@ -39,6 +39,8 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 
@@ -241,26 +243,26 @@ def report_live(path: Path) -> int:
             except ValueError:
                 continue
     tally = Tally.from_outcome_rows(rows)
-    print("=== %s (fights actually fought)" % path.name)
-    print("  %s" % tally.line())
-    print("  resolved rows       : %d" % tally.games)
+    logger.debug("=== %s (fights actually fought)" % path.name)
+    logger.debug("  %s" % tally.line())
+    logger.debug("  resolved rows       : %d" % tally.games)
     if tally.unresolved:
-        print("  open at session end : %d  (no verdict -- not draws, not wins)"
+        logger.debug("  open at session end : %d  (no verdict -- not draws, not wins)"
               % tally.unresolved)
     if tally.decided:
         low, high = wilson_interval(tally.wins, tally.decided)
-        print("  win rate            : %.4f   95%% CI [%.4f, %.4f]"
+        logger.debug("  win rate            : %.4f   95%% CI [%.4f, %.4f]"
               % (tally.win_rate, low, high))
-        print("  ...which is not 100%% even at %d/%d: the lower bound is the"
+        logger.debug("  ...which is not 100%% even at %d/%d: the lower bound is the"
               % (tally.wins, tally.decided))
-        print("  number to plan an unattended session against.")
+        logger.debug("  number to plan an unattended session against.")
     return 0
 
 
 def report(path: Optional[Path] = None) -> int:
     path = path or (DATA / "fight_head_production.json")
     if not path.exists():
-        print("no %s" % path)
+        logger.debug("no %s" % path)
         return 1
     if path.suffix == ".jsonl":
         return report_live(path)
@@ -274,37 +276,37 @@ def report(path: Optional[Path] = None) -> int:
     for score in scores:
         histogram[score] = histogram.get(score, 0) + 1
 
-    print("=== %s" % path.name)
-    print("  as published        : network_win_rate=%s  ci95=%s"
+    logger.debug("=== %s" % path.name)
+    logger.debug("  as published        : network_win_rate=%s  ci95=%s"
           % (summary.get("network_win_rate"), summary.get("win_rate_bootstrap_ci95")))
-    print("  the file's own tally: %s wins, %s draws, %s losses"
+    logger.debug("  the file's own tally: %s wins, %s draws, %s losses"
           % (summary.get("wins"), summary.get("draws"), summary.get("losses")))
-    print()
-    print("  matchup scores      : %s" % ", ".join(
+    logger.debug()
+    logger.debug("  matchup scores      : %s" % ", ".join(
         "%g x%d" % (score, count) for score, count in sorted(histogram.items())))
-    print("  (0.75 is a partial win, 0.25 a partial loss -- the score is four-level)")
-    print()
-    print("  games               : %d" % tally.games)
-    print("  wins / losses       : %d / %d   (decided: %d)"
+    logger.debug("  (0.75 is a partial win, 0.25 a partial loss -- the score is four-level)")
+    logger.debug()
+    logger.debug("  games               : %d" % tally.games)
+    logger.debug("  wins / losses       : %d / %d   (decided: %d)"
           % (tally.wins, tally.losses, tally.decided))
-    print("  draws               : %d  (%.1f%% of games)"
+    logger.debug("  draws               : %d  (%.1f%% of games)"
           % (tally.draws, 100 * tally.draw_rate))
     if tally.win_rate is None:
-        print("  win rate (decided)  : undefined -- no game was decided")
+        logger.debug("  win rate (decided)  : undefined -- no game was decided")
     else:
         low, high = wilson_interval(tally.wins, tally.decided)
-        print("  win rate (decided)  : %.4f   95%% CI [%.4f, %.4f] over %d decided games"
+        logger.debug("  win rate (decided)  : %.4f   95%% CI [%.4f, %.4f] over %d decided games"
               % (tally.win_rate, low, high, tally.decided))
     mean_score = (sum(scores) / len(scores)) if scores else 0.0
-    print("  mean matchup score  : %.4f   <- the number published as a win rate"
+    logger.debug("  mean matchup score  : %.4f   <- the number published as a win rate"
           % mean_score)
-    print()
-    print("  The published figure is the score, not the win rate: a policy that")
-    print("  draws every fight scores 0.5 and never wins one. Of %d decided games"
+    logger.debug()
+    logger.debug("  The published figure is the score, not the win rate: a policy that")
+    logger.debug("  draws every fight scores 0.5 and never wins one. Of %d decided games"
           % tally.decided)
-    print("  the policy won %d, and the draw rate above is the diagnosable fact the"
+    logger.debug("  the policy won %d, and the draw rate above is the diagnosable fact the"
           % tally.wins)
-    print("  score hides -- a fight that neither side finishes is not a half-win.")
+    logger.debug("  score hides -- a fight that neither side finishes is not a half-win.")
     return 0
 
 

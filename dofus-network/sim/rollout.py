@@ -21,12 +21,19 @@ corpus contains the states where the naive action is wrong — the repair cases.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import json
+
 import random
+
 import sys
+
 import time
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -92,8 +99,8 @@ def compute_ensemble_uncertainty(
                     disagreement = 0.35 if top_tool != teacher_tool else 0.0
                     total_u = min(1.0, margin_u + disagreement)
                     return round(float(total_u), 4), bool(total_u >= 0.40)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ignored %s", exc, exc_info=True)
 
     # Proxy uncertainty from feature state ambiguity (hops, inventory, level gap)
     # x indices: 0 is travel_hops (normalized), 1 is carried, 2 is map_match
@@ -267,7 +274,9 @@ def _parallel(args: argparse.Namespace) -> int:
     between a corpus and a stub.
     """
     import subprocess
+
     import tempfile
+
 
     args.out.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + args.minutes * 60 if args.minutes else 0.0
@@ -312,3 +321,5 @@ def _parallel(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

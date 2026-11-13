@@ -24,6 +24,7 @@ import os
 import sys
 import threading
 import time
+import tracemalloc
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,6 +37,8 @@ for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
 
 from agent.bridge import local_secret
 from agent.jsonio import dumps_bytes, loads
+import logging
+logger = logging.getLogger(__name__)
 
 # combat/live_policy.py used to be a JAX-only model, and the interpreter that ships inside
 # setup.exe has no jax wheel (measured 2026-11-03: the development interpreter imports jax
@@ -251,7 +254,7 @@ _LEARNER = None
 _LEARNER_LOCK = threading.Lock()
 
 
-def _learner():
+def _learner() -> Any:
     """The process-wide live learner, created on first use.
 
     Imported lazily for the same reason the policy is: the brain has to start even
@@ -397,17 +400,94 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
     if POLICY is None:
         return {"ok": False, "action": None, "reason": "policy_not_loaded",
                 "latency_ms": 0.0}
-    started = time.perf_counter()
+    t_srv = time.perf_counter()
     with DECISION_LOCK:
+        started = time.perf_counter()
         decision = POLICY.decide(payload)
-    decision["server_latency_ms"] = round(
-        (time.perf_counter() - started) * 1000.0, 1)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+    solve_ms = float(decision.get("latency_ms", elapsed_ms))
+    record_turn_latency(solve_ms)
+    decision["server_latency_ms"] = round((time.perf_counter() - t_srv) * 1000.0, 2)
     if credit is not None:
         # Recorded on the row that ended the turn, so the ledger shows what the model
         # was told as well as what it answered.
         decision["credited_damage"] = credit.damage
     _log_decision(payload, decision)
     return decision
+
+
+_LATENCY_HISTORY: List[float] = []
+_LATENCY_LOCK = threading.Lock()
+
+
+def record_turn_latency(elapsed_ms: float) -> None:
+    with _LATENCY_LOCK:
+        _LATENCY_HISTORY.append(elapsed_ms)
+        if len(_LATENCY_HISTORY) > 20000:
+            del _LATENCY_HISTORY[:5000]
+
+
+def latency_percentiles() -> Dict[str, Any]:
+    with _LATENCY_LOCK:
+        if not _LATENCY_HISTORY:
+            return {"count": 0, "min": 0.0, "p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0, "avg": 0.0}
+        vals = sorted(_LATENCY_HISTORY)
+        n = len(vals)
+
+        def _calc_p(q: float) -> float:
+            pos = (n - 1) * q
+            low = int(pos)
+            high = min(low + 1, n - 1)
+            return round(vals[low] + (vals[high] - vals[low]) * (pos - low), 3)
+
+        return {
+            "count": n,
+            "min": round(vals[0], 3),
+            "max": round(vals[-1], 3),
+            "p50": _calc_p(0.50),
+            "p95": _calc_p(0.95),
+            "p99": _calc_p(0.99),
+            "avg": round(sum(vals) / n, 3),
+        }
+
+
+_TOP_ALLOCATORS: List[Dict[str, Any]] = []
+
+
+def top_allocators(limit: int = 20) -> List[Dict[str, Any]]:
+    global _TOP_ALLOCATORS
+    if not _TOP_ALLOCATORS:
+        was_tracing = tracemalloc.is_tracing()
+        if not was_tracing:
+            tracemalloc.start(1)
+        try:
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics("lineno")[:limit]
+            result = []
+            for stat in top_stats:
+                frame = stat.traceback[0]
+                result.append({
+                    "filename": str(Path(frame.filename).name),
+                    "lineno": frame.lineno,
+                    "size_bytes": stat.size,
+                    "count": stat.count,
+                })
+            if result:
+                _TOP_ALLOCATORS = result
+        finally:
+            if not was_tracing and tracemalloc.is_tracing():
+                tracemalloc.stop()
+    return _TOP_ALLOCATORS
+
+
+def profile_payload() -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "timestamp": time.time(),
+        "latency": latency_percentiles(),
+        "top_allocators": top_allocators(20),
+        "active_threads": threading.active_count(),
+    }
 
 
 class CombatRequestHandler(BaseHTTPRequestHandler):
@@ -440,6 +520,9 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        if self.headers.get("Connection", "").lower() == "close":
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -537,6 +620,9 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._reply(self._health_payload(include_token=self._authorized(require_token=True)))
             return
+        if self.path in ("/v1/combat/profile", "/profile"):
+            self._reply(profile_payload())
+            return
         if self.path == "/health/stream":
             # Same authorisation as /health: the identity block includes the run
             # token, so an unauthenticated reader must not receive the stream.
@@ -548,6 +634,11 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
         self._reply({"ok": False, "error": "not found"}, 404)
 
     def do_POST(self):
+        if self.path in ("/v1/combat/reset", "/profile/reset"):
+            with _LATENCY_LOCK:
+                _LATENCY_HISTORY.clear()
+            self._reply({"status": "ok", "cleared": True})
+            return
         if self.path != "/v1/combat/decide":
             self._reply({"ok": False, "error": "not found"}, 404)
             return
@@ -619,43 +710,76 @@ def run_server(port: int = DEFAULT_BRAIN_PORT,
             with _LOG_LOCK:
                 _close_log_locked()
             LOG_PATH = new_path
-    print("==========================================================")
-    print("   DOFUS LIVE COMBAT POLICY API (PPO/PBT ACTOR)          ")
-    print("==========================================================")
+    logger.debug("==========================================================")
+    logger.debug("   DOFUS LIVE COMBAT POLICY API (PPO/PBT ACTOR)          ")
+    logger.debug("==========================================================")
     checkpoint = Path(checkpoint or DEFAULT_CHECKPOINT)
-    print(f"checkpoint: {checkpoint}")
+    logger.debug(f"checkpoint: {checkpoint}")
     try:
         from combat.live_policy import LivePolicy
     except ImportError as exc:      # the refusal the handlers already report as "loading"
         POLICY = None
-        print(f"[WARN] learned policy unavailable: {type(exc).__name__}: {exc}")
-        print("       serving the solver-only path; /health reports status=loading")
+        logger.debug(f"[WARN] learned policy unavailable: {type(exc).__name__}: {exc}")
+        logger.debug("       serving the solver-only path; /health reports status=loading")
     else:
+        if not tracemalloc.is_tracing():
+            tracemalloc.start(1)
         POLICY = LivePolicy(checkpoint=checkpoint, beam_width=beam_width,
                             max_actions=max_actions)
-        print(f"slots: {POLICY.cfg.spells} spells | {POLICY.cfg.enemies} enemies")
-        print(f"decision log: {LOG_PATH}")
-        print("warming up the policy and solver...")
+        logger.debug(f"slots: {POLICY.cfg.spells} spells | {POLICY.cfg.enemies} enemies")
+        logger.debug(f"decision log: {LOG_PATH}")
+        logger.debug("warming up the policy and solver...")
         try:
             POLICY.warmup()
-            print("warm-up done")
+            # Also warm up server-level learner and threat observers with a sample board
+            decide({
+                "in_fight": True, "in_preparation": False, "is_my_turn": True,
+                "my_id": 1, "my_cell": 100, "map_id": 84674566, "round": 1, "fight_id": 0,
+                "cells": [3] * 560,
+                "my_stats": {"strength": 100, "intelligence": 0, "chance": 0,
+                             "agility": 0, "power": 0, "damage": 0,
+                             "critical_hit": 0, "heals": 0},
+                "spells": [{"id": 1, "name": "warmup", "ap_cost": 2,
+                            "min_range": 1, "range": 4, "requires_los": True,
+                            "castable": True, "casts_this_turn": 0,
+                            "max_cast_per_turn": 2, "max_cast_per_target": 2,
+                            "effects": [{"effect_id": 100, "dice_num": 5, "dice_side": 5}],
+                            "critical_effects": []}],
+                "fighters": [
+                    {"id": 1, "name": "me", "cell": 100, "team": "player",
+                     "is_me": True, "alive": True, "hp": 100, "max_hp": 100,
+                     "ap": 6, "max_ap": 6, "mp": 3, "max_mp": 3, "level": 10,
+                     "resist_percent": {}, "resist_fixed": {}, "spells": []},
+                    {"id": 2, "name": "foe", "cell": 101, "team": "enemy",
+                     "is_me": False, "alive": True, "hp": 30, "max_hp": 30,
+                     "ap": 4, "max_ap": 4, "mp": 2, "max_mp": 2, "level": 5,
+                     "resist_percent": {}, "resist_fixed": {},
+                     "spells": []},
+                ],
+            })
+            top_allocators(20)
+            if tracemalloc.is_tracing():
+                tracemalloc.stop()
+            with _LATENCY_LOCK:
+                _LATENCY_HISTORY.clear()
+            logger.debug("warm-up done")
         except Exception as exc:  # noqa: BLE001 - a warm-up must not block the API
-            print(f"warm-up failed: {type(exc).__name__}: {exc}")
+            logger.debug(f"warm-up failed: {type(exc).__name__}: {exc}")
     try:
         server = ThreadingHTTPServer((host, int(port)), CombatRequestHandler)
     except OSError as exc:
-        print(f"[ERROR] cannot bind 127.0.0.1:{port}: {exc}")
-        print(f"Stop the process already using 127.0.0.1:{port}, or start this "
+        logger.debug(f"[ERROR] cannot bind 127.0.0.1:{port}: {exc}")
+        logger.debug(f"Stop the process already using 127.0.0.1:{port}, or start this "
               "one on another port and set window.__agentFightBrain to that URL.")
         raise SystemExit(1)
     server.daemon_threads = True
-    print(f"[OK] listening on http://127.0.0.1:{port}")
-    print("  GET  /health")
-    print("  POST /v1/combat/decide")
+    logger.debug(f"[OK] listening on http://127.0.0.1:{port}")
+    logger.debug("  GET  /health")
+    logger.debug("  POST /v1/combat/decide")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nshutting down")
+        logger.debug("\nshutting down")
         server.shutdown()
 
 

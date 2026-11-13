@@ -453,7 +453,8 @@ namespace DofusFarm.UI
             // down: the next launch re-wires with the new settings.
             if (_onApplyNetwork != null)
             {
-                try { _onApplyNetwork(); } catch { }
+                try { _onApplyNetwork(); }
+                catch (Exception ex) { if (_log != null) _log("[WARN] SettingsPage.<network save>: " + ex.Message); }
             }
             SetState("Saved. Running relays were stopped; the next launch uses the new egress.", Color.FromArgb(74, 222, 128));
             RefreshNetState();
@@ -659,7 +660,7 @@ namespace DofusFarm.UI
                     _netState.ForeColor = colour;
                 });
             }
-            catch { }
+            catch (Exception ex) { _log?.Invoke("[WARN] SettingsPage.SetState: " + ex.Message); }
         }
 
         private string FlagPath(string name)
@@ -674,7 +675,7 @@ namespace DofusFarm.UI
                 _chkManual.Checked = File.Exists(FlagPath("manual-login.flag"));
                 _chkNoUpdate.Checked = File.Exists(FlagPath("no-client-update.flag"));
             }
-            catch { }
+            catch (Exception ex) { _log?.Invoke("[WARN] SettingsPage.LoadFlags: " + ex.Message); }
             UpdateFlagNote();
         }
 
@@ -823,7 +824,7 @@ namespace DofusFarm.UI
                     WaitHandle wait = ar.AsyncWaitHandle;
                     bool ok;
                     try { ok = wait.WaitOne(timeoutMs); }
-                    finally { try { wait.Close(); } catch { } }
+                    finally { try { wait.Close(); } catch (Exception ex) { Debug.WriteLine("[WARN] UiKit.PortOpen: " + ex.Message); } }
                     if (!ok) return false;
                     c.EndConnect(ar);
                     return true;
@@ -1007,7 +1008,7 @@ namespace DofusFarm.UI
                     string dir = Path.Combine(_baseDir, "dofus-network", "trajectories");
                     if (Directory.Exists(dir)) Process.Start("explorer.exe", "\"" + dir + "\"");
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] LogsPage.OpenFolder: " + ex.Message); }
             });
             open.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             open.Location = new Point(770, 340);
@@ -1107,3 +1108,4 @@ namespace DofusFarm.UI
         }
     }
 }
+

@@ -7,6 +7,8 @@ for the MLP it was written for cannot judge the architecture that replaces it.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
 import unittest
@@ -112,8 +114,8 @@ class MetricsFromLogitsTest(unittest.TestCase):
         if PROVENANCE_PATH.is_file():
             try:
                 pin_metrics = json.loads(PROVENANCE_PATH.read_text(encoding="utf-8")).get("metrics") or {}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         expected_acc = float(pin_metrics.get("val_accuracy", 0.914))
         expected_opt = float(pin_metrics.get("optimal", 0.9209))
         self.assertAlmostEqual(metrics["val_accuracy"], expected_acc, places=4)
@@ -206,3 +208,5 @@ class ObservationHistoryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

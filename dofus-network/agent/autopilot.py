@@ -42,13 +42,21 @@ repo root. It calls `safe.stop` on the way out so the client is not left mid-loo
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import inspect
+
 import json
+
 import os
+
 import time
+
 import uuid
+
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -488,7 +496,9 @@ def brain_inputs() -> Dict[str, str]:
     look like a code change, and the difference matters.
     """
     import importlib.util
+
     import sys as _sys
+
 
     out: Dict[str, str] = {}
     for name in BRAIN_MODULES:
@@ -515,6 +525,7 @@ def brain_inputs() -> Dict[str, str]:
 def brain_build() -> str:
     """`brain-<12 hex>` over the loaded decision code, stable for the process."""
     import hashlib
+
 
     global _BRAIN_BUILD
     if _BRAIN_BUILD is None:
@@ -660,6 +671,11 @@ class Autopilot:
         # ran kept its outcomes in the controller's in-memory table and the JSONL and never in a
         # posterior. Set by `main`; None leaves the loop exactly as it was.
         self.experience = None
+        # G126: the `planning/` stack had no production caller at all. This tap feeds
+        # each executed step into `ScheduleManager.record_action` using the *same*
+        # store above, so a second posterior state is never forked. It records only;
+        # it does not choose tools. Set by `main`; None leaves the loop as it was.
+        self.schedule_tap = None
         self._retire_repeats = 0
         self._stall_unretired = 0
         self._tutorial_since = 0.0
@@ -944,16 +960,16 @@ class Autopilot:
                 rec = json.loads(blob.decode("utf-8", "replace"))
                 kind = str(rec.get("kind") or "step")
                 self.store.append(rec, kind=kind)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         elif AppendStore is not None and self.log_path.with_suffix(".db").is_file():
             try:
                 with AppendStore(self.log_path.with_suffix(".db"), payload_format="msgpack") as s:
                     rec = json.loads(blob.decode("utf-8", "replace"))
                     kind = str(rec.get("kind") or "step")
                     s.append(rec, kind=kind)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         try:
             with self.log_path.open("ab") as handle:
                 handle.write(blob)
@@ -966,8 +982,8 @@ class Autopilot:
         if self.store is not None:
             try:
                 self.store.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
 
     def _ensure_command_shadow(self) -> Any:
         """Load the command model once, fail-open. Logs one status row per session."""
@@ -989,7 +1005,7 @@ class Autopilot:
             "at": time.time(),
         }) + b"\n")
         if model is None:
-            print(f"[autopilot] command shadow unavailable: {error}")
+            logger.debug(f"[autopilot] command shadow unavailable: {error}")
         return model
 
     def _log_command_shadow(self, goal: str) -> None:
@@ -1489,7 +1505,7 @@ class Autopilot:
                 and (now - self._character_try) < self.character_retry_s:
             return
         if changed:
-            print("[autopilot] character sheet changed; refreshing")
+            logger.debug("[autopilot] character sheet changed; refreshing")
         executor = getattr(self.runtime, "executor", None)
         reader = getattr(executor, "character_report", None)
         if not callable(reader):
@@ -1612,7 +1628,7 @@ class Autopilot:
                 handle.write(blob)
             self._fight_log_size += len(blob)
         except OSError as exc:
-            print(f"[autopilot] could not write fight board log: {exc}")
+            logger.debug(f"[autopilot] could not write fight board log: {exc}")
 
     def _record_fight_board(self, goal: Optional[str]) -> None:
         """Snapshot the live board once per distinct turn/HP/cell state.
@@ -1735,7 +1751,7 @@ class Autopilot:
         """
         if self._forced_call is not None:
             self._forced_call = None
-            print("[autopilot] dropping a pre-fight recovery order; the fight "
+            logger.debug("[autopilot] dropping a pre-fight recovery order; the fight "
                   "owns the next action")
         now = time.time()
         if self._fight_wait_since is None:
@@ -1743,7 +1759,7 @@ class Autopilot:
             self._fight_wait_report = now
             self._hint_taps = 0
             self._hint_tap_at = 0.0
-            print("[autopilot] in a fight; waiting out the turns instead of "
+            logger.debug("[autopilot] in a fight; waiting out the turns instead of "
                   "sending world actions")
             # One more chance for a brain that was not up at startup (crashed, or was
             # never started because nothing asked). Bounded by brain_retry_s and by the
@@ -1761,7 +1777,7 @@ class Autopilot:
                     observation_source=self._obs_source)
                 data = getattr(result, "data", None)
                 armed = bool(isinstance(data, dict) and data.get("auto_fight"))
-                print("[autopilot] auto-fight was off; arm -> "
+                logger.debug("[autopilot] auto-fight was off; arm -> "
                       + ("on" if armed else "not yet")
                       + ("" if getattr(result, "ok", False)
                          else " (" + str(getattr(result, "error", ""))[:80] + ")"))
@@ -1783,12 +1799,12 @@ class Autopilot:
                     goal=goal, source="live", observation=observation,
                     observation_age_ms=self._obs_age_ms,
                     observation_source=self._obs_source)
-                print("[autopilot] tutorial hint points at the challenge slot; press -> "
+                logger.debug("[autopilot] tutorial hint points at the challenge slot; press -> "
                       + ("ok" if getattr(result, "ok", False)
                          else "failed (" + str(getattr(result, "error", ""))[:80] + ")"))
         if now - self._fight_wait_report >= 30.0:
             self._fight_wait_report = now
-            print(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
+            logger.debug(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
                   f"auto_fight={bool(observation.get('auto_fight'))}")
         # A fight board only changes on a turn/action, and those states last
         # seconds. Sampling every second meant a second `fight_state` round
@@ -1827,7 +1843,7 @@ class Autopilot:
         now = time.time()
         if not observation.get("auto_fight"):
             if self._farm_wait:
-                print("[autopilot] the farm stopped; resuming planning")
+                logger.debug("[autopilot] the farm stopped; resuming planning")
                 self._record_observation(observation)
             self._farm_wait = False
             self._farm_wait_since = None
@@ -1838,7 +1854,7 @@ class Autopilot:
             self._farm_progress = self._farm_counters(observation)
             self._farm_progress_at = now
             self._farm_objective = observation.get("objectives_completed")
-            print("[autopilot] farm is running; holding the goal and watching progress")
+            logger.debug("[autopilot] farm is running; holding the goal and watching progress")
         counters = self._farm_counters(observation)
         if counters is not None and counters != self._farm_progress:
             self._farm_progress = counters
@@ -1847,13 +1863,13 @@ class Autopilot:
         if (isinstance(progress, (int, float))
                 and isinstance(self._farm_objective, (int, float))
                 and progress > self._farm_objective):
-            print("[autopilot] farm advanced the objective; resuming planning")
+            logger.debug("[autopilot] farm advanced the objective; resuming planning")
             self._record_observation(observation)
             self._farm_wait = False
             self._farm_wait_since = None
             return
         if now - self._farm_progress_at >= FARM_IDLE_S:
-            print(f"[autopilot] the farm produced no kills/xp/kamas for "
+            logger.debug(f"[autopilot] the farm produced no kills/xp/kamas for "
                   f"{FARM_IDLE_S:.0f}s; resuming planning")
             self._record_observation(observation)
             self._farm_wait = False
@@ -1862,7 +1878,7 @@ class Autopilot:
         if now - self._farm_wait_report >= 30.0:
             self._farm_wait_report = now
             session = observation.get("farm_session") or {}
-            print(f"[autopilot] farm wait {now - self._farm_wait_since:.0f}s; "
+            logger.debug(f"[autopilot] farm wait {now - self._farm_wait_since:.0f}s; "
                   f"kills={session.get('kills')} kamas={session.get('kamas')} "
                   f"xp={session.get('xp')}")
         # The in-page bot plays the fights; the agent only watches for a stop,
@@ -1902,7 +1918,7 @@ class Autopilot:
         if not self._acquire_run_lock():
             # Fail closed and loud: two loops on one client double every directive
             # and every recorded row (measured 2026-10-28).
-            print("[autopilot] another loop already drives this instance; standing down")
+            logger.debug("[autopilot] another loop already drives this instance; standing down")
             return self._finish("another driver holds the instance lock")
         self._write_lock()
         # Adopt what earlier sessions learned about this client's menu bar, so the first
@@ -1930,25 +1946,27 @@ class Autopilot:
         if not session_close_enabled(dry_run=self.dry_run):
             return
         import subprocess
+
         import sys
+
         try:
             process = subprocess.run(
                 [sys.executable, str(REPO_ROOT / "kaggle" / "toolkit" / "tools" / "session_close.py"), "--quiet"],
                 cwd=str(REPO_ROOT), capture_output=True, text=True,
                 timeout=SESSION_CLOSE_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - bookkeeping must not end a run
-            print("[autopilot] session close skipped: %s: %s"
+            logger.debug("[autopilot] session close skipped: %s: %s"
                   % (type(exc).__name__, exc))
             return
         if process.returncode != 0:
-            print("[autopilot] session close exited %d: %s"
+            logger.debug("[autopilot] session close exited %d: %s"
                   % (process.returncode,
                      (process.stderr or process.stdout).strip()[-200:]))
 
     def _run(self) -> Dict[str, Any]:
         tools = [t["name"] for t in TOOL_SCHEMA["tools"]]
         budget = "unlimited" if self.max_steps <= 0 else (str(self.max_steps) + " steps")
-        print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
+        logger.debug(f"[autopilot] {len(self.goals)} goal(s), {budget}"
               f"{' (dry run)' if self.dry_run else ''}")
         if self.preflight:
             self._warn_if_no_bridge()
@@ -2006,7 +2024,7 @@ class Autopilot:
                 taken += 1
                 reason = self._should_stop()
                 if reason:
-                    print(f"[autopilot] stopping: {reason}")
+                    logger.debug(f"[autopilot] stopping: {reason}")
                     return self._finish(reason)
 
                 # The thinking token: a short deliberate dwell after a
@@ -2047,7 +2065,7 @@ class Autopilot:
                                                  or before.get("ready_objectives")):
                     self._quest_data_waits = 0
                 if not self._check_identity(before):
-                    print("[autopilot] stopping: " + str(self._should_stop()))
+                    logger.debug("[autopilot] stopping: " + str(self._should_stop()))
                     return self._finish(self._should_stop() or "identity drift")
                 if isinstance(before, dict) and before.get("in_fight"):
                     # The page is playing a turn-based fight. Planning a quest
@@ -2072,7 +2090,7 @@ class Autopilot:
                 if self._forced_call is not None:
                     call = self._forced_call
                     self._forced_call = None
-                    print(f"[autopilot] agent2 directs: {call.tool} {call.args}")
+                    logger.debug(f"[autopilot] agent2 directs: {call.tool} {call.args}")
                 else:
                     try:
                         self.runtime.policy.last_stack = None
@@ -2090,7 +2108,7 @@ class Autopilot:
                     # and controller can force a call around it. This is the one
                     # invariant every source must respect: a quests prompt never
                     # starts a farm session for a non-delivery objective.
-                    print("[autopilot] refusing farm.start under a quest goal")
+                    logger.debug("[autopilot] refusing farm.start under a quest goal")
                     self._forced_reason = ("a farm.start was refused because this "
                                            "prompt is a quest goal")
                     call = ToolCall("state.snapshot", {}, goal)
@@ -2120,7 +2138,7 @@ class Autopilot:
                     if (self._quest_data_pending(before)
                             and self._quest_data_waits < QUEST_DATA_WAIT_LIMIT):
                         self._quest_data_waits += 1
-                        print("[autopilot] no quest data in the observation yet "
+                        logger.debug("[autopilot] no quest data in the observation yet "
                               "(in world, %d bag item(s), 0 active, 0 ready); waiting %d/%d "
                               "instead of retiring the goal"
                               % (len(((before or {}).get("inventory") or {}).get("items") or []),
@@ -2186,7 +2204,7 @@ class Autopilot:
                         qid = self._retire_stuck_objective(before)
                         if qid is not None:
                             self._retired += 1
-                            print("[autopilot] the policy cannot express quest %s; "
+                            logger.debug("[autopilot] the policy cannot express quest %s; "
                                   "retiring it for this run and taking the next "
                                   "objective" % qid)
                             continue
@@ -2198,10 +2216,10 @@ class Autopilot:
                     # exhausted" with three ready objectives and sixteen retired.
                     ended_because = ("the policy could not express %r: %s"
                                      % (goal, why))[:300]
-                    print(f"[autopilot] no action for goal {goal!r}; moving on")
+                    logger.debug(f"[autopilot] no action for goal {goal!r}; moving on")
                     if not self._hinted:
                         self._hinted = True
-                        print("[autopilot] the rule policy understands, for example: "
+                        logger.debug("[autopilot] the rule policy understands, for example: "
                               "'open inventory', 'list quests', 'farm', 'go to [4,-19]', "
                               "'sell all', 'scan hdv for <item>', 'join fight', 'stop'. "
                               "Anything else needs the encoder policy (--policy encoder).")
@@ -2251,7 +2269,7 @@ class Autopilot:
                                     latency_ms=0.0, verdict="blocked", note=veto,
                                     session=self.session, source="memory"))
                     self._index += 1
-                    print("[autopilot] %s" % veto)
+                    logger.debug("[autopilot] %s" % veto)
                     decision = self.controller.on_step(
                         Verdict("blocked", 0.9, None, False, "memory"),
                         call.tool, False, veto, before, None)
@@ -2280,7 +2298,7 @@ class Autopilot:
                                     latency_ms=0.0, verdict="blocked", note=refusal,
                                     session=self.session, source="guard"))
                     self._index += 1
-                    print(f"[autopilot] {refusal}")
+                    logger.debug(f"[autopilot] {refusal}")
                     # A refusal is an outcome the policy must see. The planner only
                     # learns a claim was server-counted or a target unreachable if
                     # the refusal is reported back; before, it was dropped and the
@@ -2320,7 +2338,7 @@ class Autopilot:
                     # instead of ending the whole run as a silent success.
                     self._refusals.clear()
                     if _tutorial_active(before):
-                        print("[autopilot] the tutorial is holding this step open; "
+                        logger.debug("[autopilot] the tutorial is holding this step open; "
                               "waiting instead of abandoning the goal")
                         self._tutorial_hold(_call_key(call), before)
                         self._report_hold(call)
@@ -2328,9 +2346,9 @@ class Autopilot:
                         continue
                     qid = self._retire_named_quest(call, before)
                     if qid is not None:
-                        print(f"[autopilot] retiring quest {qid}; taking another")
+                        logger.debug(f"[autopilot] retiring quest {qid}; taking another")
                         continue
-                    print(f"[autopilot] the guard refuses every route to {goal!r}; "
+                    logger.debug(f"[autopilot] the guard refuses every route to {goal!r}; "
                           "moving on")
                     break
 
@@ -2340,13 +2358,13 @@ class Autopilot:
                     self._emit(Step(index=self._index, goal=goal, tool=call.tool,
                                     args=dict(call.args), ok=True, error=None,
                                     latency_ms=0.0, verdict="noop", note="dry run"))
-                    print(f"[autopilot] would call {call.tool} {call.args}")
+                    logger.debug(f"[autopilot] would call {call.tool} {call.args}")
                     self._index += 1
                     key = _call_key(call)
                     self._recent.append(key)
                     del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
-                        print(f"[autopilot] dry run: {call.tool} repeats with nothing to change; "
+                        logger.debug(f"[autopilot] dry run: {call.tool} repeats with nothing to change; "
                               f"moving on from {goal!r}")
                         break
                     if self.interval:
@@ -2368,6 +2386,10 @@ class Autopilot:
                 # it has to ask a dead bridge, and counting that as the action's
                 # latency made every step look slow for the wrong reason.
                 latency_ms = (time.perf_counter() - started) * 1000.0
+                # G126: the one production caller the planning stack was missing.
+                # Observation only -- the tool call above is already fixed, and no
+                # objective is injected into it.
+                self._note_schedule(call, result, latency_ms, before)
                 # The bridge returns the state immediately after the directive ran.
                 # Adopt it: it is the one after-state available without a second
                 # round trip. Calling observe() here handed back the pre-action
@@ -2576,7 +2598,7 @@ class Autopilot:
                 # panel shows "inv.list ok advanced 165ms" forever and the user has
                 # no way to tell a working query from a silent no-op.
                 detail = _summarise(result)
-                print(f"[autopilot] {self._index:3d} {call.tool:14s} {mark:4s} "
+                logger.debug(f"[autopilot] {self._index:3d} {call.tool:14s} {mark:4s} "
                       f"{verdict:8s} {step.latency_ms:6.0f}ms{detail}"
                       f"{'' if step_ok else '  ' + str(step_error)[:80]}")
 
@@ -2613,17 +2635,17 @@ class Autopilot:
                     # nothing wrong, then abandoned the goal with "goals exhausted".
                     reason = str(result.error or "")
                     if "no client instance" in reason or "not reachable" in reason:
-                        print("[autopilot] the client is gone: " + reason
+                        logger.debug("[autopilot] the client is gone: " + reason
                               + "; waiting for it to return instead of ending the session")
                         if not self._recover_world("client window closed"):
                             ended_because = "the client window closed"
                             break
-                        print("[autopilot] the client is back; resuming")
+                        logger.debug("[autopilot] the client is back; resuming")
                         continue
 
                     failures += 1
                     if failures >= self.consecutive_failure_limit:
-                        print(f"[autopilot] {failures} failures in a row on {goal!r}; "
+                        logger.debug(f"[autopilot] {failures} failures in a row on {goal!r}; "
                               f"abandoning this goal")
                         break
                 else:
@@ -2652,7 +2674,7 @@ class Autopilot:
                     if not self._tutorial_since:
                         self._tutorial_since = now
                     elif now - self._tutorial_since > TUTORIAL_PATIENCE_S:
-                        print("[autopilot] the tutorial step has not advanced in %.0fs; "
+                        logger.debug("[autopilot] the tutorial step has not advanced in %.0fs; "
                               "it no longer counts as scripted patience"
                               % (now - self._tutorial_since))
                         self._tutorial_expired = True
@@ -2676,7 +2698,7 @@ class Autopilot:
                           and self._index - self._stall_since >= self.stall_limit):
                         qid, reason = self._retire_with_budget(call, before)
                         if reason:
-                            print("[autopilot] %s; ending the goal instead of looping" % reason)
+                            logger.debug("[autopilot] %s; ending the goal instead of looping" % reason)
                             ended_because = reason
                             break
                         self._stall_since = self._index
@@ -2731,7 +2753,7 @@ class Autopilot:
                     if self._crossing_declines >= NAV_DECLINE_LIMIT:
                         here = flatten(after or {}) \
                             if after is not None else flatten(before or {})
-                        print("[autopilot] %d crossings were sent and the map never "
+                        logger.debug("[autopilot] %d crossings were sent and the map never "
                               "changed (map %s); this exit is scripted and not "
                               "available -- ending the run instead of re-asking"
                               % (self._crossing_declines, here.get("map_id")))
@@ -2743,7 +2765,7 @@ class Autopilot:
                         # cell cannot produce a different answer.
                         self._dead_navs[key] = self._dead_navs.get(key, 0) + 1
                         if self._dead_navs[key] >= DEAD_TALK_TRIES:
-                            print("[autopilot] nav.goto %s declined from cell %s %dx; "
+                            logger.debug("[autopilot] nav.goto %s declined from cell %s %dx; "
                                   "holding the step"
                                   % ((call.args or {}).get("direction"),
                                      flatten(after or {}).get("cell"),
@@ -2764,7 +2786,7 @@ class Autopilot:
                         # other scripted wait.
                         self._dead_talks[key] = self._dead_talks.get(key, 0) + 1
                         if self._dead_talks[key] >= DEAD_TALK_TRIES:
-                            print("[autopilot] %s opened no dialog %dx; the server is "
+                            logger.debug("[autopilot] %s opened no dialog %dx; the server is "
                                   "not answering this talk, holding the step"
                                   % (call.tool, self._dead_talks[key]))
                             self._tutorial_hold(key, before)
@@ -2776,10 +2798,10 @@ class Autopilot:
                     streak = self._action_noops.get(key, 0) if track_action else 0
                     if repeated or streak >= 3:
                         if streak >= 3 and not repeated:
-                            print(f"[autopilot] no progress: {call.tool} no-op 3x "
+                            logger.debug(f"[autopilot] no progress: {call.tool} no-op 3x "
                                   "(read-only recoveries ignored)")
                         else:
-                            print(f"[autopilot] no progress: {call.tool} repeated 3x "
+                            logger.debug(f"[autopilot] no progress: {call.tool} repeated 3x "
                                   "with no change")
                         if tutorial_active:
                             # The plan is waiting on the scripted step (a dialog
@@ -2790,7 +2812,7 @@ class Autopilot:
                             # call forever, which is how one session spent half its
                             # steps on 119 identical no-ops. Wait as a wait, on a
                             # clock, and stop when the clock says enough.
-                            print("[autopilot] the tutorial is holding this step open;"
+                            logger.debug("[autopilot] the tutorial is holding this step open;"
                                   " waiting instead of retiring the quest")
                             self._recent.clear()
                             self._action_noops.clear()
@@ -2812,7 +2834,7 @@ class Autopilot:
                         # ready, four of those steps memory refusals).
                         qid, reason = self._retire_with_budget(call, before)
                         if reason:
-                            print("[autopilot] %s; ending the goal instead of looping"
+                            logger.debug("[autopilot] %s; ending the goal instead of looping"
                                   % reason)
                             ended_because = reason
                             break
@@ -2820,7 +2842,7 @@ class Autopilot:
                             self._recent.clear()
                             self._action_noops.clear()
                             continue
-                        print(f"[autopilot] abandoning {goal!r}")
+                        logger.debug(f"[autopilot] abandoning {goal!r}")
                         ended_because = ("no progress: %s repeated 3x and no quest "
                                          "could be retired for it" % call.tool)
                         break
@@ -2888,10 +2910,12 @@ class Autopilot:
             handle = open(path, "a+")
             if os.name == "nt":
                 import msvcrt
+
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             handle.seek(0)
             handle.truncate()
@@ -2932,6 +2956,7 @@ class Autopilot:
             try:
                 if os.name == "nt":
                     import msvcrt
+
                     handle.seek(0)
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             except OSError:
@@ -2967,13 +2992,13 @@ class Autopilot:
         if reachable():
             return
         port = bridge_port()
-        print("[autopilot] FATAL: no client bridge answering on 127.0.0.1:%d." % port)
-        print("[autopilot]   The app publishes its port to "
+        logger.debug("[autopilot] FATAL: no client bridge answering on 127.0.0.1:%d." % port)
+        logger.debug("[autopilot]   The app publishes its port to "
               "LOCALAPPDATA\\DofusFarm\\bridge_port.txt; a stale file means the app "
               "is not running, or its bridge never bound.")
-        print("[autopilot]   A port held by another process is the usual cause: the"
+        logger.debug("[autopilot]   A port held by another process is the usual cause: the"
               " bridge logs '[AGENT] directive bridge listening on ...' when it binds.")
-        print("[autopilot]   Refusing to run: every directive would fail and the run"
+        logger.debug("[autopilot]   Refusing to run: every directive would fail and the run"
               " would look like it finished.")
         raise SystemExit(3)
 
@@ -3017,14 +3042,14 @@ class Autopilot:
         self._brain = row
         self._append_log_line(_fast_dumps(row))
         if state == "started":
-            print(f"[autopilot] combat brain started (pid {row.get('pid')}): "
+            logger.debug(f"[autopilot] combat brain started (pid {row.get('pid')}): "
                   f"{row.get('model')}")
         elif state == "reused":
-            print(f"[autopilot] combat brain already answering: {row.get('model')}")
+            logger.debug(f"[autopilot] combat brain already answering: {row.get('model')}")
         elif state == "dry_run":
-            print("[autopilot] dry run: the combat brain was left untouched")
+            logger.debug("[autopilot] dry run: the combat brain was left untouched")
         else:
-            print(f"[autopilot] no combat brain ({state}: {str(row.get('reason'))[:90]})"
+            logger.debug(f"[autopilot] no combat brain ({state}: {str(row.get('reason'))[:90]})"
                   " -- fights are played by the page's hardcoded fallback")
 
     def _require_world(self, fresh: bool = False) -> bool:
@@ -3076,7 +3101,7 @@ class Autopilot:
         while True:
             reason = self._should_stop()
             if reason:
-                print("[autopilot] stopping while waiting for the world: %s (last screen: %s)"
+                logger.debug("[autopilot] stopping while waiting for the world: %s (last screen: %s)"
                       % (reason, self._screen_text(getattr(self, "_last_world_screen", None))))
                 return False
             # A recovery wait must not trust the snapshot from before the kick:
@@ -3085,7 +3110,7 @@ class Autopilot:
             screen = self._world_screen(obs)
             self._last_world_screen = screen
             if not self._check_identity(obs):
-                print("[autopilot] stopping: " + str(self._should_stop()))
+                logger.debug("[autopilot] stopping: " + str(self._should_stop()))
                 return False
             # A permanent ban is not a wait and not a retry: the page refuses every
             # pressed login for good, and each press is another auth attempt. Only a
@@ -3094,7 +3119,7 @@ class Autopilot:
             if self._login_banned(obs):
                 block = obs.get("login") if isinstance(obs, dict) else None
                 text = block.get("text") if isinstance(block, dict) else None
-                print("[autopilot] the login screen reports a permanent ban (%s); "
+                logger.debug("[autopilot] the login screen reports a permanent ban (%s); "
                       "ending the run -- reset this slot for a fresh guest"
                       % str(text or "no text")[:160])
                 return False
@@ -3109,7 +3134,7 @@ class Autopilot:
             # status and the recovery row carry the reason.
             lockout = self._login_lockout(obs)
             if lockout:
-                print("[autopilot] the guest login is locked out (%s; %.0f min left "
+                logger.debug("[autopilot] the guest login is locked out (%s; %.0f min left "
                       "after %s refused attempts); ending the run -- wait out the "
                       "cooldown or reset this slot for a fresh guest"
                       % (str(lockout.get("reason") or "no reason")[:120],
@@ -3121,12 +3146,12 @@ class Autopilot:
             if isinstance(obs, dict) and obs and obs.get("in_world") is not False \
                     and map_id not in (None, 0):
                 if announced:
-                    print("[autopilot] the character is in the world; starting")
+                    logger.debug("[autopilot] the character is in the world; starting")
                 return True
             # A stale snapshot with no bridge behind it is a closed client, not a
             # slow login; waiting there would park the run forever.
             if self._obs_source != "call" and not self._bridge_alive():
-                print("[autopilot] the client stopped answering while waiting for "
+                logger.debug("[autopilot] the client stopped answering while waiting for "
                       "the world; stopping")
                 return False
             now = time.time()
@@ -3153,37 +3178,37 @@ class Autopilot:
                         args["character_id"] = int(selected)
                 except (TypeError, ValueError):
                     pass
-                print("[autopilot] at character selection; entering the world as %s "
+                logger.debug("[autopilot] at character selection; entering the world as %s "
                       "(%d/%d)" % (selected, enter["tries"], enter["max"]))
                 try:
                     press = self.runtime.executor.recovery_call(
                         "session.login", args,
                         instance=getattr(self.runtime, "instance", None))
-                    print("[autopilot] enter-world press -> ok=%s %s"
+                    logger.debug("[autopilot] enter-world press -> ok=%s %s"
                           % (press.ok, str(press.error or "")[:160]))
                 except Exception as exc:  # noqa: BLE001 - a press must not end the wait
-                    print("[autopilot] enter-world press failed: %s" % exc)
+                    logger.debug("[autopilot] enter-world press failed: %s" % exc)
             if login["tries"] < login["max"] and now >= login["next_at"] and at_login:
                 login["tries"] += 1
                 login["next_at"] = now + login["spacing"]
-                print("[autopilot] at the login screen; pressing a guarded guest "
+                logger.debug("[autopilot] at the login screen; pressing a guarded guest "
                       "login (%d/%d)" % (login["tries"], login["max"]))
                 try:
                     press = self.runtime.executor.recovery_call(
                         "session.login", {"target": "guest"},
                         instance=getattr(self.runtime, "instance", None))
-                    print("[autopilot] login press -> ok=%s %s"
+                    logger.debug("[autopilot] login press -> ok=%s %s"
                           % (press.ok, str(press.error or "")[:160]))
                 except Exception as exc:  # noqa: BLE001 - a press must not end the wait
-                    print("[autopilot] login press failed: %s" % exc)
+                    logger.debug("[autopilot] login press failed: %s" % exc)
             if not announced:
-                print("[autopilot] the character is not in the world yet (login "
+                logger.debug("[autopilot] the character is not in the world yet (login "
                       "screen or loading); waiting until a map appears [%s]"
                       % self._screen_text(screen))
                 announced = True
                 last_report = now
             elif now - last_report >= self.world_report_s:
-                print("[autopilot] still waiting for the world (%ds, %s; login %d/%d, "
+                logger.debug("[autopilot] still waiting for the world (%ds, %s; login %d/%d, "
                       "enter %d/%d); log in and stand on a map"
                       % (int(now - waiting_since), self._screen_text(screen),
                          login["tries"], login["max"], enter["tries"], enter["max"]))
@@ -3314,20 +3339,20 @@ class Autopilot:
                 return False
             count = client_count()
             if count is None and not self._bridge_alive():
-                print("[autopilot] the host stopped answering; ending the run")
+                logger.debug("[autopilot] the host stopped answering; ending the run")
                 return False
             if count:
                 if announced:
-                    print("[autopilot] %d client window(s) open again after %.1f s"
+                    logger.debug("[autopilot] %d client window(s) open again after %.1f s"
                           % (count, time.time() - started))
                 return True
             now = time.time()
             if not announced:
-                print("[autopilot] no client window is open; waiting for one "
+                logger.debug("[autopilot] no client window is open; waiting for one "
                       "(open an instance in DofusFarm)")
                 announced = True
             elif now - last_report >= 30.0:
-                print("[autopilot] still waiting for a client window (%.0f s)"
+                logger.debug("[autopilot] still waiting for a client window (%.0f s)"
                       % (now - started))
                 last_report = now
             time.sleep(1.0)
@@ -3348,7 +3373,7 @@ class Autopilot:
         """
         lead = ("the client window is gone" if trigger == "client_absent"
                 else "the client left the world mid-run")
-        print("[autopilot] %s%s; waiting for it to come back"
+        logger.debug("[autopilot] %s%s; waiting for it to come back"
               % (lead, f" (reason: {reason})" if reason else ""))
         started = time.time()
         self._prepared_obs = None
@@ -3375,10 +3400,10 @@ class Autopilot:
             "at": time.time(),
         }) + b"\n")
         if not recovered:
-            print("[autopilot] the world did not come back after %.1f s (last screen: %s)"
+            logger.debug("[autopilot] the world did not come back after %.1f s (last screen: %s)"
                   % (waited, self._screen_text(getattr(self, "_last_world_screen", None))))
             return False
-        print("[autopilot] the world is back after %.1f s; resuming" % waited)
+        logger.debug("[autopilot] the world is back after %.1f s; resuming" % waited)
         self._recent.clear()
         self._action_noops.clear()
         self._gate.clear()
@@ -3417,7 +3442,7 @@ class Autopilot:
         if self._retire_repeats >= RETIRE_REPEAT_LIMIT:
             return qid, ("quest %s stayed chosen after %d retirements"
                          % (qid, self._retire_repeats))
-        print(f"[autopilot] {self.stall_limit} steps without progress; "
+        logger.debug(f"[autopilot] {self.stall_limit} steps without progress; "
               f"retiring quest {qid} and taking another")
         return qid, None
 
@@ -3469,7 +3494,7 @@ class Autopilot:
         if not text or text == self._last_client_error:
             return
         self._last_client_error = text
-        print("[autopilot] the client reported: %s" % text)
+        logger.debug("[autopilot] the client reported: %s" % text)
 
     def _tutorial_hold(self, key: str, obs: Any) -> bool:
         """True while patience with one scripted step still has time left.
@@ -3507,7 +3532,7 @@ class Autopilot:
         """
         if self._hold_cycles and self._hold_cycles != getattr(self, "_hold_reported", -1):
             self._hold_reported = self._hold_cycles
-            print("[autopilot] step %s has not moved for %ds; staying in world and "
+            logger.debug("[autopilot] step %s has not moved for %ds; staying in world and "
                   "retrying once per window (cycle %d)"
                   % (call.tool, TUTORIAL_HOLD_S, self._hold_cycles))
 
@@ -3548,7 +3573,7 @@ class Autopilot:
         if self._read_streak < READ_STREAK_LIMIT:
             return "keep"
         self._read_streak = 0
-        print("[autopilot] %d reads in a row with no action between them;"
+        logger.debug("[autopilot] %d reads in a row with no action between them;"
               " looking for something to do" % READ_STREAK_LIMIT)
         forced = self._next_real_action(goal, obs)
         if forced is None:
@@ -3558,7 +3583,7 @@ class Autopilot:
                     "no progress: %d reads in a row and %d searches of the board "
                     "found no action for %r" % (READ_STREAK_LIMIT,
                                                 self._read_escalations, goal))[:300]
-                print("[autopilot] %s; ending the goal instead of reading again"
+                logger.debug("[autopilot] %s; ending the goal instead of reading again"
                       % self._read_stop_reason)
                 return "break"
             if not self._hold_wait(goal, obs):
@@ -3570,7 +3595,7 @@ class Autopilot:
         self._forced_call = ToolCall(tool=forced.tool, args=dict(forced.args),
                                      goal=goal)
         self._forced_reason = forced.why
-        print("[autopilot] the reads had nothing new; trying %s %s (%s)"
+        logger.debug("[autopilot] the reads had nothing new; trying %s %s (%s)"
               % (forced.tool, forced.args, forced.why))
         return "act"
 
@@ -3642,7 +3667,7 @@ class Autopilot:
                 self._ledger_pending = (rec, hyp, obs)
                 return ToolCall(tool=hyp.tool, args=dict(hyp.args), goal=goal)
         except Exception as exc:  # noqa: BLE001 - a ledger fault must not stop the loop
-            print("[autopilot] objective ledger skipped: %s: %s" % (type(exc).__name__, exc))
+            logger.debug("[autopilot] objective ledger skipped: %s: %s" % (type(exc).__name__, exc))
         return None
 
     @staticmethod
@@ -3692,7 +3717,7 @@ class Autopilot:
             if ledger_thought is not None:
                 self._forced_call = ledger_thought
                 self._consecutive_waits = 0
-                print("[autopilot] ledger: %s %s instead of waiting"
+                logger.debug("[autopilot] ledger: %s %s instead of waiting"
                       % (ledger_thought.tool, ledger_thought.args))
         if self._consecutive_waits == MAX_CONSECUTIVE_WAITS:
             # Reaching the bound is the strongest signal the loop has that this goal has
@@ -3718,7 +3743,7 @@ class Autopilot:
                             self._retired += 1
                             self._dead_windows = 0
                             self._consecutive_waits = 0
-                            print("[autopilot] %d full wait windows had no action for "
+                            logger.debug("[autopilot] %d full wait windows had no action for "
                                   "quest %s; retiring it for this run and taking the "
                                   "next objective" % (DEAD_WINDOW_LIMIT, qid))
                             return True
@@ -3734,12 +3759,12 @@ class Autopilot:
                         self._idle_windows += 1
                         self._dead_windows = 0
                         self._consecutive_waits = 0
-                        print("[autopilot] %d dead windows with objectives still "
+                        logger.debug("[autopilot] %d dead windows with objectives still "
                               "pending; idle window %d/%d before the run gives up"
                               % (DEAD_WINDOW_LIMIT, self._idle_windows,
                                  IDLE_WINDOW_LIMIT))
                         return True
-                    print("[autopilot] %d full wait windows ended with nothing to do "
+                    logger.debug("[autopilot] %d full wait windows ended with nothing to do "
                           "(%d passes, %s); ending the run -- the step needs a human "
                           "or a new plan" % (self._dead_windows, self._consecutive_waits,
                                              reason))
@@ -3759,13 +3784,13 @@ class Autopilot:
             "at": time.time(),
         }) + b"\n")
         if self._consecutive_waits == 1 or self._consecutive_waits % 30 == 0:
-            print("[autopilot] wait x%d: %s" % (self._consecutive_waits, reason))
+            logger.debug("[autopilot] wait x%d: %s" % (self._consecutive_waits, reason))
         if thought is not None:
             self._consecutive_waits = 0
             self._forced_call = ToolCall(tool=thought.tool, args=dict(thought.args),
                                          goal=goal)
             self._forced_reason = thought.why
-            print("[autopilot] the wait had no action left; trying %s %s (%s)"
+            logger.debug("[autopilot] the wait had no action left; trying %s %s (%s)"
                   % (thought.tool, thought.args, thought.why))
         if not self.dry_run:
             # A dry run has no world to wait for, and ten fast passes must not turn
@@ -3976,10 +4001,10 @@ class Autopilot:
             if not learn(str(menu), opened[0]):
                 return
         except Exception as exc:  # noqa: BLE001 - learning must never stop the loop
-            print("[autopilot] menu-window learning skipped: %s: %s"
+            logger.debug("[autopilot] menu-window learning skipped: %s: %s"
                   % (type(exc).__name__, exc))
             return
-        print("[autopilot] learned: menu %r opens window %r" % (menu, opened[0]))
+        logger.debug("[autopilot] learned: menu %r opens window %r" % (menu, opened[0]))
         self._remember_menu_window(str(menu), opened[0])
 
     def _remember_menu_window(self, menu: str, window: str) -> None:
@@ -3990,7 +4015,7 @@ class Autopilot:
         try:
             store.remember("menu_window", menu, window, source="observed")
         except Exception as exc:  # noqa: BLE001
-            print("[autopilot] menu-window fact not stored: %s: %s"
+            logger.debug("[autopilot] menu-window fact not stored: %s: %s"
                   % (type(exc).__name__, exc))
 
     def _seed_menu_windows(self) -> int:
@@ -4004,11 +4029,11 @@ class Autopilot:
             facts = {str(f.key): f.value for f in store.find("menu_window")}
             adopted = int(load(facts) or 0)
         except Exception as exc:  # noqa: BLE001
-            print("[autopilot] menu-window seed skipped: %s: %s"
+            logger.debug("[autopilot] menu-window seed skipped: %s: %s"
                   % (type(exc).__name__, exc))
             return 0
         if adopted:
-            print("[autopilot] adopted %d menu-window fact(s) from the knowledge base"
+            logger.debug("[autopilot] adopted %d menu-window fact(s) from the knowledge base"
                   % adopted)
         return adopted
 
@@ -4040,13 +4065,13 @@ class Autopilot:
                 if not learn(label, key):
                     continue
             except Exception as exc:  # noqa: BLE001 - learning must never stop the loop
-                print("[autopilot] menu-label learning skipped: %s: %s"
+                logger.debug("[autopilot] menu-label learning skipped: %s: %s"
                       % (type(exc).__name__, exc))
                 continue
             self._remember_surface_label(str(label), str(key))
             learned += 1
         if learned:
-            print("[autopilot] learned %d menu label(s) from the client" % learned)
+            logger.debug("[autopilot] learned %d menu label(s) from the client" % learned)
         return learned
 
     def _remember_surface_label(self, label: str, menu: str) -> None:
@@ -4056,7 +4081,7 @@ class Autopilot:
         try:
             store.remember("surface_label", label, menu, source="observed")
         except Exception as exc:  # noqa: BLE001
-            print("[autopilot] menu-label fact not stored: %s: %s"
+            logger.debug("[autopilot] menu-label fact not stored: %s: %s"
                   % (type(exc).__name__, exc))
 
     def _seed_surface_labels(self) -> int:
@@ -4070,13 +4095,27 @@ class Autopilot:
             facts = {str(f.key): f.value for f in store.find("surface_label")}
             adopted = int(load(facts) or 0)
         except Exception as exc:  # noqa: BLE001
-            print("[autopilot] menu-label seed skipped: %s: %s"
+            logger.debug("[autopilot] menu-label seed skipped: %s: %s"
                   % (type(exc).__name__, exc))
             return 0
         if adopted:
-            print("[autopilot] adopted %d menu label(s) from the knowledge base"
+            logger.debug("[autopilot] adopted %d menu label(s) from the knowledge base"
                   % adopted)
         return adopted
+
+    def _note_schedule(self, call: Any, result: Any, latency_ms: float,
+                       observation: Any) -> None:
+        """G126: one executed step -> one `ScheduleManager.record_action`.
+
+        `ScheduleTap.observe` is total (it swallows its own errors), so this cannot
+        stop a run. `getattr` keeps hand-built test shims of `Autopilot` working:
+        several of them never went through `__init__`.
+        """
+        tap = getattr(self, "schedule_tap", None)
+        if tap is None:
+            return
+        tap.observe(call, result, elapsed_ms=latency_ms,
+                    observation=observation if isinstance(observation, dict) else {})
 
     def _note_experience(self, decision: Any, verdict: Any) -> None:
         """Record the repair outcome in the conjugate store -- the first caller it has had.
@@ -4100,7 +4139,7 @@ class Autopilot:
                 value=1.0 if moved else 0.0, source="live",
                 context={"action": str(getattr(decision, "action", "") or "")}))
         except Exception as exc:  # noqa: BLE001 - a store fault must not stop the loop
-            print("[autopilot] experience store skipped: %s: %s" % (type(exc).__name__, exc))
+            logger.debug("[autopilot] experience store skipped: %s: %s" % (type(exc).__name__, exc))
 
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
@@ -4122,7 +4161,7 @@ class Autopilot:
             return "recover"
         if decision.action == "replan":
             self.replan_requested += 1
-            print(f"[autopilot] REPLAN ({decision.cause}): {decision.reason}")
+            logger.debug(f"[autopilot] REPLAN ({decision.cause}): {decision.reason}")
             thought = self.thinking.propose(
                 goal, self._last_obs, self.steps[-8:], decision)
             if thought is not None:
@@ -4132,10 +4171,10 @@ class Autopilot:
                 # are the same step to the loop but different waits to a reader. The
                 # reason is the thought's own words, kept for the wait row.
                 self._forced_reason = thought.why or decision.reason
-                print(f"[autopilot] THINK ({decision.cause}): {thought.why} "
+                logger.debug(f"[autopilot] THINK ({decision.cause}): {thought.why} "
                       f"-> {thought.tool} {thought.args}")
                 return "think"
-            print("[autopilot] THINK: no untried alternative; falling back to the scheduler")
+            logger.debug("[autopilot] THINK: no untried alternative; falling back to the scheduler")
             if self.on_replan is not None:
                 try:
                     self.on_replan(decision.reason, decision)
@@ -4143,7 +4182,7 @@ class Autopilot:
                     pass
             return "replan"
         if decision.action == "abort":
-            print(f"[autopilot] agent2 aborts {goal!r}: {decision.reason}")
+            logger.debug(f"[autopilot] agent2 aborts {goal!r}: {decision.reason}")
             return "abort"
         return "continue"
 
@@ -4261,12 +4300,12 @@ class Autopilot:
             "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)
                           if self._step_total > 1 else 0.0),
         }
-        print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
+        logger.debug(f"[autopilot] done: {reason} | {self._verdict_counts} | "
               f"{self._world_changes} world change(s), {self._read_answers} read answer(s) | "
               f"{self._listing_total} open listing(s)")
         fights = data.get("fights") or {}
         if fights.get("games") or fights.get("unresolved"):
-            print(f"[autopilot] fights: {self._fight_line()}")
+            logger.debug(f"[autopilot] fights: {self._fight_line()}")
         return data
 
     def _fight_summary(self) -> Dict[str, Any]:
@@ -4336,7 +4375,7 @@ class Autopilot:
         if spent_here >= MEM_VETO_CONTEXT_TRIES:
             if not getattr(self, "_mem_veto_stood_down", False):
                 self._mem_veto_stood_down = True
-                print("[autopilot] %d calls were refused in this situation; the memory "
+                logger.debug("[autopilot] %d calls were refused in this situation; the memory "
                       "has said all it can here, so the next call goes out and the "
                       "world answers it" % spent_here)
             return None
@@ -4349,7 +4388,7 @@ class Autopilot:
         key = "%s|%s" % (call.tool, _mem_sig(call.tool, checked))
         spent = int(self._mem_veto.get(key, 0))
         if spent >= MEM_VETO_TRIES:
-            print("[autopilot] the memory refuted %s %s, but it has been refused "
+            logger.debug("[autopilot] the memory refuted %s %s, but it has been refused "
                   "%d time(s); letting it through" % (call.tool, checked, spent))
             return None
         self._mem_veto[key] = spent + 1
@@ -4404,7 +4443,7 @@ class Autopilot:
                 continue
             self._memory_replays[key] = self._memory_replays.get(key, 0) + 1
             wins = int(solution.get("wins", 0) or 0)
-            print("[autopilot] memory: %s worked here %d time(s) before; replaying it "
+            logger.debug("[autopilot] memory: %s worked here %d time(s) before; replaying it "
                   "instead of asking the policy again" % (tool, wins))
             self._append_log_line(_fast_dumps({
                 "kind": "memory_replay", "session": self.session, "goal": goal,
@@ -4425,7 +4464,7 @@ class Autopilot:
         try:
             return save()
         except Exception as exc:  # noqa: BLE001 - losing a save must not fail a run
-            print("[autopilot] could not save learned memory: %s" % exc)
+            logger.debug("[autopilot] could not save learned memory: %s" % exc)
             return None
 
     def _finish(self, reason: str) -> Dict[str, Any]:
@@ -4715,7 +4754,7 @@ def _load_goals(args: argparse.Namespace) -> List[str]:
     return goals
 
 
-def _build_policy(args: argparse.Namespace):
+def _build_policy(args: argparse.Namespace) -> Any:
     policy = _base_policy(args)
     epsilon = float(getattr(args, "explore_objectives", 0.0) or 0.0)
     if epsilon > 0.0:
@@ -4725,11 +4764,11 @@ def _build_policy(args: argparse.Namespace):
 
         policy = ExplorationPolicy(policy, epsilon=epsilon,
                                    seed=getattr(args, "explore_seed", None))
-        print(f"[autopilot] policy: exploration epsilon {epsilon}")
+        logger.debug(f"[autopilot] policy: exploration epsilon {epsilon}")
     return policy
 
 
-def _base_policy(args: argparse.Namespace):
+def _base_policy(args: argparse.Namespace) -> Any:
     if args.policy == "rule":
         return RulePolicy()
     # "auto" is what /brain/start and the panel send when nobody chose a policy.
@@ -4750,22 +4789,22 @@ def _base_policy(args: argparse.Namespace):
                 tokenizer = encoder_dir / "tokenizer.json"
                 policy_json = encoder_dir / "policy.json"
                 if onnx.is_file() and tokenizer.is_file() and policy_json.is_file():
-                    print(f"[autopilot] policy: encoder (ONNX INT8, {encoder_dir.name})")
+                    logger.debug(f"[autopilot] policy: encoder (ONNX INT8, {encoder_dir.name})")
                     return EncoderToolPolicy(
                         onnx=onnx,
                         tokenizer=tokenizer,
                         policy_json=policy_json,
                     )
                 if checkpoint.is_file() and tokenizer.is_file() and policy_json.is_file():
-                    print(f"[autopilot] policy: encoder (torch checkpoint, {encoder_dir.name})")
+                    logger.debug(f"[autopilot] policy: encoder (torch checkpoint, {encoder_dir.name})")
                     return EncoderToolPolicy(
                         checkpoint=checkpoint,
                         tokenizer=tokenizer,
                         policy_json=policy_json,
                     )
-                print(f"[autopilot] policy: encoder artifacts incomplete in {encoder_dir}, skipping")
+                logger.debug(f"[autopilot] policy: encoder artifacts incomplete in {encoder_dir}, skipping")
             except Exception as exc:  # noqa: BLE001 - encoder must not crash the loop
-                print(f"[autopilot] policy: encoder unavailable ({type(exc).__name__}: {exc}), falling through")
+                logger.debug(f"[autopilot] policy: encoder unavailable ({type(exc).__name__}: {exc}), falling through")
         # 2. Try the learned planner (falls back to deterministic without a model).
         if args.policy in ("auto", "planner"):
             from agent.planner_nn import NNPlanner
@@ -4776,7 +4815,7 @@ def _base_policy(args: argparse.Namespace):
             # reading the startup line concluded the model was missing and that the
             # agent was running on rules. It is a 194 KB ONNX; say what it is.
             planner._ensure_model()
-            print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
+            logger.debug(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
             return planner
     return RulePolicy()
 
@@ -4905,7 +4944,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             state / ("objectives.%s.json" % (args.instance or "default")),
             instance=args.instance or "default")
     except Exception as exc:  # noqa: BLE001 - never block a run on the ledger
-        print("[autopilot] objective ledger unavailable: %s: %s" % (type(exc).__name__, exc))
+        logger.debug("[autopilot] objective ledger unavailable: %s: %s" % (type(exc).__name__, exc))
     try:
         from planning.experience import ExperienceStore
 
@@ -4913,16 +4952,28 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         pilot.experience = ExperienceStore(log_path=state / "experience.jsonl",
                                            snapshot_path=state / "posteriors.json")
         if len(pilot.experience):
-            print("[autopilot] experience store: %d posterior(s), %d event(s) seen"
+            logger.debug("[autopilot] experience store: %d posterior(s), %d event(s) seen"
                   % (len(pilot.experience), pilot.experience.events_seen))
         # The store is only worth writing if something reads it: seed the repair table with what
         # earlier sessions measured, so a new run starts from that evidence instead of from nothing.
         seeded = pilot.controller.seed_from_store(pilot.experience)
         if seeded:
-            print("[autopilot] repair table seeded with %d row(s) from the experience store"
+            logger.debug("[autopilot] repair table seeded with %d row(s) from the experience store"
                   % seeded)
     except Exception as exc:  # noqa: BLE001 - never block a run on the store
-        print("[autopilot] experience store unavailable: %s: %s" % (type(exc).__name__, exc))
+        logger.debug("[autopilot] experience store unavailable: %s: %s" % (type(exc).__name__, exc))
+    try:
+        # G126. Reuse the store above: a second ExperienceStore would fork the
+        # learning state. All of the stack's files go to app data, not data/kb,
+        # because data/kb is staged into setup.exe (G129).
+        from planning.live_tap import attach as attach_schedule_tap
+
+        pilot.schedule_tap = attach_schedule_tap(pilot.experience)
+        if pilot.schedule_tap is not None:
+            logger.debug("[autopilot] schedule tap: recording live outcomes into %s"
+                  % pilot.schedule_tap.root)
+    except Exception as exc:  # noqa: BLE001 - never block a run on the planner
+        logger.debug("[autopilot] schedule tap unavailable: %s: %s" % (type(exc).__name__, exc))
     try:
         summary = pilot.run()
     except KeyboardInterrupt:
@@ -4936,11 +4987,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             try:
                 pilot.experience.save()
             except Exception as exc:  # noqa: BLE001
-                print("[autopilot] experience store not saved: %s: %s"
+                logger.debug("[autopilot] experience store not saved: %s: %s"
                       % (type(exc).__name__, exc))
-    print(json.dumps(summary, ensure_ascii=False))
+    logger.debug(json.dumps(summary, ensure_ascii=False))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

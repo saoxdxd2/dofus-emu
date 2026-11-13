@@ -452,7 +452,7 @@ def mechanics() -> MonsterMechanics:
 
 
 def threat_for(monster_id: int, level: int, cell: int,
-               engine: Optional[MonsterMechanics] = None):
+               engine: Optional[MonsterMechanics] = None) -> Any:
     """``map_field.EnemyThreat`` for one monster at one cell, or ``None``.
 
     Returning ``None`` rather than an empty threat is the whole point: an

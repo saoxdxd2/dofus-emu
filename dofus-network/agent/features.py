@@ -18,11 +18,17 @@ and a leak makes a validation score meaningless.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
+
 import os
+
 import re
+
 import unicodedata
+
 from collections import deque
 from functools import lru_cache
 from pathlib import Path
@@ -52,8 +58,8 @@ def _load_objective_types() -> List[int]:
                 types = [int(t) for t in data["objective_types"] if isinstance(t, (int, float))]
                 if types:
                     return sorted(set(types))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     return default_types
 
 OBJECTIVE_TYPES = _load_objective_types()
@@ -307,7 +313,7 @@ _NEIGHBOUR_FIELDS = (
 _MAP_GRAPH: Optional[tuple] = None
 
 
-def map_graph():
+def map_graph() -> tuple[set, Dict[int, Dict[str, int]]]:
     """(ids, id -> {direction: neighbour}) from `data/maps/_index.json`.
 
     One file answers two questions: whether a destination is something the agent
@@ -939,3 +945,5 @@ class ObsTracker:
 
 
 self_check()
+
+

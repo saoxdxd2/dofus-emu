@@ -40,11 +40,17 @@ Two rules keep it honest:
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import json
+
 import math
+
 import time
+
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -533,16 +539,16 @@ class LiveLearner:
                 seq = self.store.append(credit.as_row(), kind="turn_credit")
                 if seq > self.last_seq:
                     self.last_seq = seq
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         elif AppendStore is not None and self.rows_path.with_suffix(".db").is_file():
             try:
                 with AppendStore(self.rows_path.with_suffix(".db"), payload_format="msgpack") as s:
                     seq = s.append(credit.as_row(), kind="turn_credit")
                     if seq > self.last_seq:
                         self.last_seq = seq
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         try:
             self.rows_path.parent.mkdir(parents=True, exist_ok=True)
             with self.rows_path.open("a", encoding="utf-8") as handle:
@@ -554,8 +560,8 @@ class LiveLearner:
         if self.store is not None:
             try:
                 self.store.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
             self.store = None
 
     def save(self) -> None:
@@ -1021,8 +1027,8 @@ class ShadowAuditor:
                         if isinstance(rec, dict):
                             rows.append(rec)
                 return rows
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
 
         try:
             handle = self.decisions_path.open(encoding="utf-8", errors="replace")
@@ -1092,22 +1098,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.audit_decisions:
         auditor = ShadowAuditor(Path(args.decisions), Path(args.damage_calibration))
-        print(json.dumps(auditor.audit(write=True), indent=1))
+        logger.debug(json.dumps(auditor.audit(write=True), indent=1))
         return 0
 
     if args.reset:
         path = Path(args.model)
         if path.exists():
             path.unlink()
-            print("removed %s" % path)
+            logger.debug("removed %s" % path)
         else:
-            print("nothing to remove at %s" % path)
+            logger.debug("nothing to remove at %s" % path)
         return 0
 
     learner = LiveLearner(model_path=Path(args.model), rows_path=Path(args.rows))
-    print(json.dumps(learner.report(), indent=1))
+    logger.debug(json.dumps(learner.report(), indent=1))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

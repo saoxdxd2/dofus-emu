@@ -136,7 +136,7 @@ namespace DofusFarm.Engine
                 {
                     handler(string.Format("[{0:HH:mm:ss}] [WATCHDOG] {1}", DateTime.Now, msg));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] FarmWatchdog.Log: " + ex.Message); }
             }
         }
 
@@ -160,7 +160,7 @@ namespace DofusFarm.Engine
             Enabled = false;
             if (_timer != null)
             {
-                try { _timer.Dispose(); } catch { }
+                try { _timer.Dispose(); } catch (Exception ex) { Log("[WARN] FarmWatchdog.Stop: " + ex.Message); }
                 _timer = null;
             }
             lock (_syncLock)
@@ -251,7 +251,7 @@ namespace DofusFarm.Engine
             {
                 _engine.StopInstance(inst.Serial, inst.Name);
             }
-            catch { }
+            catch (Exception ex) { Log("[WARN] FarmWatchdog.RestartInstanceAndTile: " + ex.Message); }
 
             Thread.Sleep(1500);
             if (!Enabled) return;
@@ -506,3 +506,4 @@ namespace DofusFarm.Engine
         }
     }
 }
+

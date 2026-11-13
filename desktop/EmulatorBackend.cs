@@ -40,7 +40,7 @@ namespace DofusFarm.Engine
 
         public void Initialize()
         {
-            try { _engine.Adb("", "start-server", 5000); } catch { }
+        try { _engine.Adb("", "start-server", 5000); } catch (Exception ex) { OnLog?.Invoke("[WARN] EmulatorBackend.Initialize: " + ex.Message); }
         }
 
         public void Start(ClientLaunchOptions options)
@@ -176,7 +176,7 @@ namespace DofusFarm.Engine
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { OnLog?.Invoke("[WARN] EmulatorBackend.GetDiagnostics: " + ex.Message); }
 
             return diag;
         }
@@ -184,7 +184,7 @@ namespace DofusFarm.Engine
         private void SetState(string instanceId, ClientInstanceState newState)
         {
             _states[instanceId] = newState;
-            try { OnStateChanged?.Invoke(instanceId, newState); } catch { }
+        try { OnStateChanged?.Invoke(instanceId, newState); } catch (Exception ex) { OnLog?.Invoke("[WARN] EmulatorBackend.SetState: " + ex.Message); }
         }
 
         public ICollection<string> GetActiveInstanceIds()
@@ -197,7 +197,7 @@ namespace DofusFarm.Engine
                     if (inst.IsRunning) list.Add(inst.Name);
                 }
             }
-            catch { }
+            catch (Exception ex) { OnLog?.Invoke("[WARN] EmulatorBackend.GetActiveInstanceIds: " + ex.Message); }
             return list;
         }
 
@@ -213,7 +213,7 @@ namespace DofusFarm.Engine
 
         public void Dispose()
         {
-            try { _engine.OnLog -= _logForwarder; } catch { }
+        try { _engine.OnLog -= _logForwarder; } catch (Exception ex) { OnLog?.Invoke("[WARN] EmulatorBackend.Dispose: " + ex.Message); }
             _states.Clear();
         }
     }

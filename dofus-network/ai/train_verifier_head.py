@@ -45,7 +45,7 @@ def read_rows(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def to_arrays(rows: Sequence[Dict[str, Any]]):
+def to_arrays(rows: Sequence[Dict[str, Any]]) -> Any:
     import numpy as np
 
     xs, ys, ws = [], [], []
@@ -67,7 +67,7 @@ def to_arrays(rows: Sequence[Dict[str, Any]]):
             np.asarray(ws, dtype="float32"))
 
 
-def build_model(n_features: int, hidden: int, dropout: float):
+def build_model(n_features: int, hidden: int, dropout: float) -> Any:
     import torch.nn as nn
 
     return nn.Sequential(

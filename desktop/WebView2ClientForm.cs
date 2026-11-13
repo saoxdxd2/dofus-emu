@@ -33,7 +33,7 @@ namespace DofusFarm.Engine
                 ServicePointManager.SecurityProtocol =
                     (SecurityProtocolType)3072 | (SecurityProtocolType)768;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private readonly ClientLaunchOptions _options;
@@ -228,7 +228,7 @@ namespace DofusFarm.Engine
                             HostCommitMb = proc.PrivateMemorySize64 / (1024.0 * 1024.0);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     HostMemoryAt = now;
                 }
                 workingSetMb = HostWorkingSetMb;
@@ -301,7 +301,7 @@ namespace DofusFarm.Engine
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             return false;
         }
 
@@ -650,10 +650,10 @@ namespace DofusFarm.Engine
                             if (Directory.Exists(src)) FarmEngine.ForceDeleteDirectory(src);
                             else if (File.Exists(src)) File.Delete(src);
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
-                    try { File.Delete(Path.Combine(_userDataDir, "account.identity")); } catch { }
-                    try { File.WriteAllText(cleared, DateTime.UtcNow.ToString("o")); } catch { }
+                    try { File.Delete(Path.Combine(_userDataDir, "account.identity")); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                    try { File.WriteAllText(cleared, DateTime.UtcNow.ToString("o")); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     LogLine(string.Format("[{0}] [ACCOUNT GUARD] Cleared shared session storage once; a fresh guest account will be registered", _instanceId));
                 }
                 else
@@ -661,7 +661,7 @@ namespace DofusFarm.Engine
                     LogLine(string.Format("[{0}] [ACCOUNT GUARD] Fresh-identity mode active; pool seeding stays disabled for this instance", _instanceId));
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         public WebView2ClientForm(string instanceId, string displayName, string userDataDir, string entryUrl, Action<string> logCallback)
@@ -688,7 +688,7 @@ namespace DofusFarm.Engine
                 string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
                 if (File.Exists(icoPath)) Icon = new Icon(icoPath);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
 
             // The browser is the entire client surface. Instance controls live
             // in the main farm window and the in-page HUD, not in a second bar.
@@ -856,7 +856,7 @@ namespace DofusFarm.Engine
                     oauthLogin = File.Exists(Path.Combine(
                         AppDomain.CurrentDomain.BaseDirectory, "oauth-login.flag"));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 if (oauthLogin) _skipPoolSeed = true;
                 if (!hasConfigAccount && !_skipPoolSeed)
                 {
@@ -1035,7 +1035,7 @@ namespace DofusFarm.Engine
                     manualLogin = File.Exists(Path.Combine(
                         AppDomain.CurrentDomain.BaseDirectory, "manual-login.flag"));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 if (manualLogin)
                 {
                     LogLine(string.Format(
@@ -1269,7 +1269,7 @@ namespace DofusFarm.Engine
                             if (File.Exists(bundlePath))
                                 bundleStamp = File.GetLastWriteTimeUtc(bundlePath).Ticks.ToString();
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                         targetUrl += string.Format("{0}bundle={1}", sep, bundleStamp);
                     }
 
@@ -1303,7 +1303,7 @@ namespace DofusFarm.Engine
             base.OnActivated(e);
             if (IsReady && _webView != null && _webView.CoreWebView2 != null)
             {
-                try { _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"window_focus\",\"active\":true}"); } catch { }
+                try { _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"window_focus\",\"active\":true}"); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
         }
 
@@ -1312,7 +1312,7 @@ namespace DofusFarm.Engine
             base.OnDeactivate(e);
             if (IsReady && _webView != null && _webView.CoreWebView2 != null)
             {
-                try { _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"window_focus\",\"active\":false}"); } catch { }
+                try { _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"window_focus\",\"active\":false}"); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
         }
 
@@ -1374,7 +1374,7 @@ namespace DofusFarm.Engine
                         "setTimeout(function(){try{if(window.gui&&window.gui.playerData&&window.gui.mapBorder1&&window.gui.mapBorder2&&window.gui.screenLeftover&&window.gui.sidebarBackground&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}}catch(e){}try{window.dispatchEvent(new Event('resize'));}catch(e){}},1500);"
                     );
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
             else
             {
@@ -1441,7 +1441,7 @@ namespace DofusFarm.Engine
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 }
 
                 string shortUri = uri.Length > 110 ? uri.Substring(0, 110) + "..." : uri;
@@ -1729,7 +1729,7 @@ namespace DofusFarm.Engine
                 Match mLog = WmLoginRe.Match(json);
                 if (mLog.Success) RegisterAccountIdentity(mLog.Groups[1].Value);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private void RegisterAccountIdentity(string login)
@@ -1745,14 +1745,14 @@ namespace DofusFarm.Engine
                         _claimedLogin = login;
                         LogLine(string.Format("[{0}] [ACCOUNT GUARD] Account {1} reserved for this instance", _instanceId, login));
                     }
-                    try { File.WriteAllText(Path.Combine(_userDataDir, "account.identity"), login); } catch { }
+                    try { File.WriteAllText(Path.Combine(_userDataDir, "account.identity"), login); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     return;
                 }
 
                 LogLine(string.Format("[{0}] [ACCOUNT GUARD] BLOCKED: account {1} is already live on '{2}' - closing before a simultaneous same-account login (ban risk).", _instanceId, login, conflict));
                 if (!_explicitAccount)
                 {
-                    try { File.WriteAllText(Path.Combine(_userDataDir, "force_fresh_identity.flag"), "1"); } catch { }
+                    try { File.WriteAllText(Path.Combine(_userDataDir, "force_fresh_identity.flag"), "1"); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     LogLine(string.Format("[{0}] [ACCOUNT GUARD] Next launch will reset this shared identity and register a fresh guest account", _instanceId));
                 }
                 else
@@ -1761,7 +1761,7 @@ namespace DofusFarm.Engine
                 }
                 if (InvokeRequired) UiDispatcher.Instance.Post("form-close", Close); else Close();
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         // accounts.txt is global, and the page re-posts the SAME guest credentials on every write
@@ -1792,7 +1792,7 @@ namespace DofusFarm.Engine
                         if (name.Length > 0) KnownAccountLogins.Add(name);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
         }
 
@@ -1825,13 +1825,13 @@ namespace DofusFarm.Engine
                     lock (KnownAccountLogins) { KnownAccountLogins.Add(login); }
                     // Own the timestamp we just caused, or the next post reloads the file it
                     // already has an answer for.
-                    try { _knownAccountsStamp = File.GetLastWriteTimeUtc(path); } catch { }
+                    try { _knownAccountsStamp = File.GetLastWriteTimeUtc(path); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     // The slot owns a real identity again, so the reset's flag has done its
                     // job: leaving it would keep the slot out of the pool forever, which is
                     // not what a new instance looks like after its first guest registers.
                     if (replaced)
                     {
-                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch { }
+                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
                     LogLine(string.Format(
                         "[{0}] Auto-harvested visitor credentials into accounts.txt: {1}{2}",
@@ -1900,7 +1900,7 @@ namespace DofusFarm.Engine
                 // Query central Sentinel for threat triage
                 Task.Run(() => QueryCentralSentinel(sender, text, isMod));
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private static string PostJson(string url, string payload)
@@ -1935,7 +1935,7 @@ namespace DofusFarm.Engine
                     LogLine(string.Format("🧠 [{0}] Central Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private static void DispatchDiscordAlert(string webhookUrl, string instanceId, string displayName, string sender, string text, bool isMod)
@@ -1949,7 +1949,7 @@ namespace DofusFarm.Engine
                     title, instanceId, displayName, QuoteEscape(sender), QuoteEscape(text), color);
                 PostJson(webhookUrl, payload);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private void SafeUiInvoke(Action action)
@@ -1959,7 +1959,7 @@ namespace DofusFarm.Engine
             {
                 UiDispatcher.Instance.Post(action);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private void HandleNlpQueryMessage(string json)
@@ -2139,7 +2139,7 @@ namespace DofusFarm.Engine
                             else
                             {
                                 try { cookies = await RunOnUiThreadAsync(GetCdnCookieHeaderAsync); }
-                                catch { }
+                                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                             }
                         }
                         CdnFetchResult result = FetchCdnAsset(requestUri, method, range, cookies, ifNoneMatch, ifModifiedSince, corsBase);
@@ -2181,13 +2181,13 @@ namespace DofusFarm.Engine
                         string hb = headerBlock;
                         await RunOnUiThreadAsync(delegate
                         {
-                            try { e.Response = _env.CreateWebResourceResponse(payload, st, rs, hb); } catch { }
+                            try { e.Response = _env.CreateWebResourceResponse(payload, st, rs, hb); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                         });
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     finally
                     {
-                        try { deferral.Complete(); } catch { }
+                        try { deferral.Complete(); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
                 });
             }
@@ -2345,19 +2345,19 @@ namespace DofusFarm.Engine
             req.Accept = "*/*";
             if (!string.IsNullOrEmpty(_cleanUa)) req.UserAgent = _cleanUa;
             req.Referer = CdnReferer;
-            try { req.Headers["Origin"] = CdnReferer.TrimEnd('/'); } catch { }
+            try { req.Headers["Origin"] = CdnReferer.TrimEnd('/'); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             if (!string.IsNullOrEmpty(cookieHeader)) req.Headers["Cookie"] = cookieHeader;
             if (!string.IsNullOrEmpty(range))
             {
-                try { req.Headers["Range"] = range; } catch { }
+                try { req.Headers["Range"] = range; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
             if (!string.IsNullOrEmpty(ifNoneMatch))
             {
-                try { req.Headers["If-None-Match"] = ifNoneMatch; } catch { }
+                try { req.Headers["If-None-Match"] = ifNoneMatch; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
             if (!string.IsNullOrEmpty(ifModifiedSince))
             {
-                try { req.Headers["If-Modified-Since"] = ifModifiedSince; } catch { }
+                try { req.Headers["If-Modified-Since"] = ifModifiedSince; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
             req.Proxy = proxy;
             try
@@ -2365,7 +2365,7 @@ namespace DofusFarm.Engine
                 req.ServicePoint.Expect100Continue = false;
                 req.ServicePoint.ConnectionLimit = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_CONN_LIMIT") ?? "", out var _cl) && _cl > 0 ? _cl : 24;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             return req;
         }
 
@@ -2487,7 +2487,7 @@ namespace DofusFarm.Engine
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     finally
                     {
                         if (CdnCopyBufferPool.Count < 32) CdnCopyBufferPool.Enqueue(buf);
@@ -2663,7 +2663,7 @@ namespace DofusFarm.Engine
                     _activeOAuthDialog.Close();
                     _activeOAuthDialog.Dispose();
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 finally
                 {
                     _activeOAuthDialog = null;
@@ -2717,7 +2717,7 @@ namespace DofusFarm.Engine
                     "try{if(window.gui&&window.gui.playerData&&window.gui.mapBorder1&&window.gui.mapBorder2&&window.gui.screenLeftover&&window.gui.sidebarBackground&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}}catch(e){}try{window.dispatchEvent(new Event('resize'));}catch(e){}try{if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}}catch(e){}"
                 );
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         public double GetWorkingSetMb()
@@ -2750,7 +2750,7 @@ namespace DofusFarm.Engine
             // Record how long the session lasted against the egress it ran on. Over time this is
             // what tells the supervisor which exit actually survives here — no configuration, and
             // it re-learns whenever a proxy starts being kicked.
-            try { ProxySupervisor.Instance.NoteSessionEnd(e.CloseReason.ToString()); } catch { }
+            try { ProxySupervisor.Instance.NoteSessionEnd(e.CloseReason.ToString()); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
 
             CloseOAuthDialog();
 
@@ -2773,14 +2773,14 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
                 _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
-                try { _webView.CoreWebView2.WebResourceResponseReceived -= OnAuthNetResponse; } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://static.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Auth + "/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Account + "/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxyEarly + "/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.WebResourceResponseReceived -= OnAuthNetResponse; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://static.ankama.com/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Auth + "/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Account + "/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxyEarly + "/*", CoreWebView2WebResourceContext.All); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             }
 
             FarmEngine.ReleaseAccount(_instanceId);
@@ -2952,7 +2952,7 @@ namespace DofusFarm.Engine
                         engineMajor = dot > 0 ? browserVersion.Substring(0, dot) : browserVersion;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 string cleanUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + engineMajor + ".0.0.0 Safari/537.36";
 
                 if (_sharedEnv != null)
@@ -3002,7 +3002,7 @@ namespace DofusFarm.Engine
                     if (string.IsNullOrEmpty(oauthProfileRoot))
                         oauthProfileRoot = Path.Combine(Path.GetTempPath(), "DofusFarm_Profile");
                     string oauthDataDir = Path.Combine(oauthProfileRoot, "oauth-profile");
-                    try { Directory.CreateDirectory(oauthDataDir); } catch { }
+                    try { Directory.CreateDirectory(oauthDataDir); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     var env = await CoreWebView2Environment.CreateAsync(null, oauthDataDir, envOptions);
                     await _webView.EnsureCoreWebView2Async(env);
                 }
@@ -3086,7 +3086,7 @@ namespace DofusFarm.Engine
                                 return;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
 
                     if (evN.IsSuccess && _webView.CoreWebView2 != null)
@@ -3167,7 +3167,7 @@ namespace DofusFarm.Engine
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
                 };
 
@@ -3203,10 +3203,10 @@ namespace DofusFarm.Engine
                                     + WafHostOf(evR.Request.Uri));
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     };
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
 
                 _webView.CoreWebView2.NewWindowRequested += (sdr, ev) =>
                 {
@@ -3285,14 +3285,14 @@ namespace DofusFarm.Engine
                 // the auth host with no deep link means the challenge is still the
                 // thing standing in the way.
                 string here = "";
-                try { here = _webView.CoreWebView2.Source ?? ""; } catch { }
+                try { here = _webView.CoreWebView2.Source ?? ""; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 challenging = here.IndexOf("ankama", StringComparison.OrdinalIgnoreCase) >= 0;
             }
             if (!challenging) return false;
 
             if (string.IsNullOrEmpty(_wafUrl))
             {
-                try { _wafUrl = _webView.CoreWebView2.Source; } catch { }
+                try { _wafUrl = _webView.CoreWebView2.Source; } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 if (string.IsNullOrEmpty(_wafUrl)) _wafUrl = _initialUrl;
             }
             _wafAttempts++;
@@ -3315,7 +3315,7 @@ namespace DofusFarm.Engine
             }
 
             try { await _webView.CoreWebView2.ExecuteScriptAsync(WafOverlayScript); }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             _lblTitle.Text = "🛡️ Ankama is verifying this device (" + _wafAttempts.ToString()
                 + "/" + MaxWafAttempts.ToString() + ")";
             _lblTitle.ForeColor = Color.FromArgb(250, 204, 21);
@@ -3329,7 +3329,7 @@ namespace DofusFarm.Engine
             await Task.Delay(4500);
             if (_webView == null || _webView.CoreWebView2 == null) return true;
             if (_deepLinkDispatched) return true;
-            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch { }
+            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
             return true;
         }
 
@@ -3493,7 +3493,7 @@ namespace DofusFarm.Engine
                 foreach (string origin in AuthCookieOrigins)
                 {
                     List<CoreWebView2Cookie> cookies = null;
-                    try { cookies = await src.GetCookiesAsync(origin); } catch { }
+                    try { cookies = await src.GetCookiesAsync(origin); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     if (cookies == null) continue;
                     foreach (CoreWebView2Cookie c in cookies)
                     {
@@ -3504,7 +3504,7 @@ namespace DofusFarm.Engine
                             dst.AddOrUpdateCookie(dst.CopyCookie(c));
                             copied++;
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     }
                 }
                 LogLine("[OAUTH-POPUP] Copied " + copied + " auth cookies into the game session");
@@ -3533,7 +3533,7 @@ namespace DofusFarm.Engine
                     string typeJson = await _parentForm.ExecuteScriptAsync("(function(){try{return localStorage.getItem('WEBAUTH_TYPE')||'';}catch(e){return '';}})()");
                     if (!string.IsNullOrEmpty(typeJson) && typeJson.Length > 2) webAuthType = Regex.Unescape(typeJson.Trim('"'));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                 if (webAuthType != "guest")
                 {
                     LogLine("[OAUTH-POPUP] exchange probe: skipped (WEBAUTH_TYPE=" + webAuthType + ")");
@@ -3615,7 +3615,7 @@ namespace DofusFarm.Engine
                         }
                         cookieHeader = sb.ToString();
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
 
                     string desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
                     string mobileUa = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
@@ -3771,7 +3771,7 @@ namespace DofusFarm.Engine
                 catch
                 {
                     string fallback = Path.Combine(baseDir, "trajectories");
-                    try { Directory.CreateDirectory(fallback); } catch { }
+                    try { Directory.CreateDirectory(fallback); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
                     _dir = fallback;
                 }
                 return _dir;
@@ -3878,7 +3878,7 @@ namespace DofusFarm.Engine
 
         private static void CloseSinkLocked(Sink sink)
         {
-            try { sink.Writer.Flush(); sink.Writer.Dispose(); } catch { }
+            try { sink.Writer.Flush(); sink.Writer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
 
         private static void RotateLocked(string path, string safe)
@@ -3898,7 +3898,7 @@ namespace DofusFarm.Engine
                 }
                 File.Move(path, rotated);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
         }
     }
 
@@ -4019,3 +4019,5 @@ namespace DofusFarm.Engine
         }
     }
 }
+
+

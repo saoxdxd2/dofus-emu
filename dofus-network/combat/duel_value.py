@@ -59,6 +59,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from combat.grid_backend import XP, log_softmax, relu, tree_map
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "models" / "duel_value_nn.pkl"
@@ -739,7 +741,7 @@ def train(X: np.ndarray, y: np.ndarray, epochs: int = 40, batch: int = 256,
             best_ce, best_epoch = val_ce, epoch
             best_params = {key: np.array(value, copy=True) for key, value in averaged.items()}
         if verbose and (epoch == 1 or epoch % 5 == 0 or epoch == epochs):
-            print(json.dumps(row))
+            logger.debug(json.dumps(row))
 
     served = best_params if best_params is not None else {
         key: np.asarray(value) for key, value in ema_params.items()}
@@ -991,7 +993,7 @@ def train_listwise(X: np.ndarray, groups: np.ndarray, returns: np.ndarray,
             best_params = {key: np.array(value, copy=True)
                            for key, value in averaged.items()}
         if verbose and (epoch == 1 or epoch % 10 == 0 or epoch == epochs):
-            print(json.dumps(row))
+            logger.debug(json.dumps(row))
 
     served = best_params if best_params is not None else {
         key: np.asarray(value) for key, value in ema_params.items()}
@@ -1017,7 +1019,7 @@ def train_listwise(X: np.ndarray, groups: np.ndarray, returns: np.ndarray,
 
 def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
                            trust: float = 0.5, tie_break: float = 1e-4,
-                           margin: float = 0.0):
+                           margin: float = 0.0) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Greedy one-step lookahead over the solver's candidate plans.
 
     Each candidate is applied, the successor is encoded, and the plan whose
@@ -1095,7 +1097,7 @@ def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
 
 
 def make_policy(path: Path, temperature: float = 0.15, trust: float = 0.5,
-                tie_break: float = 1e-4, margin: float = 0.0):
+                tie_break: float = 1e-4, margin: float = 0.0) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Load a checkpoint and build its lookahead policy.
 
     Thin wrapper over :func:`make_policy_for_params`; the checkpoint also carries
@@ -1297,7 +1299,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         with args.evaluate.open("rb") as handle:
             report = pickle.load(handle).get("report", {})
-        print("model", json.dumps({key: report.get(key) for key in
+        logger.debug("model", json.dumps({key: report.get(key) for key in
                                    ("objective", "samples", "boards", "val_ce",
                                     "val_nll", "val_top1", "val_spearman",
                                     "spread", "best_epoch", "final_epoch_ce")}))
@@ -1305,7 +1307,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                              margin=args.margin)
         result = evaluate(policy, solver_policy, games=args.bench_games,
                           seed=args.seed, name_a="neural_value", name_b="solver")
-        print("benchmark", json.dumps(result, indent=1))
+        logger.debug("benchmark", json.dumps(result, indent=1))
         return 0
 
     if args.objective == "rank":
@@ -1313,12 +1315,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             blob = np.load(args.corpus)
             X, groups, returns = blob["X"], blob["groups"], blob["returns"]
             meta = json.loads(str(blob["meta"]))
-            print("corpus (cached)", json.dumps(meta))
+            logger.debug("corpus (cached)", json.dumps(meta))
         else:
             X, groups, returns, meta = generate_ranked(
                 args.games, k=args.k, rollouts=args.rollouts, seed=args.seed,
                 workers=args.workers, snapshots=args.snapshots)
-            print("counterfactual", json.dumps(meta))
+            logger.debug("counterfactual", json.dumps(meta))
             if args.corpus is not None:
                 args.corpus.parent.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(args.corpus, X=X, groups=groups,
@@ -1328,22 +1330,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                                 hidden=args.hidden, layers=args.layers,
                                 seed=args.seed, temp=args.temp)
         report = fitted["report"]
-        print("fit", json.dumps({key: report[key] for key in
+        logger.debug("fit", json.dumps({key: report[key] for key in
                                  ("boards", "samples", "val_nll", "val_top1",
                                   "val_spearman", "best_epoch", "spread")}))
     else:
         X, y, meta = generate(args.games, args.seed, args.solver_prob)
-        print("self-play", json.dumps(meta))
+        logger.debug("self-play", json.dumps(meta))
         fitted = train(X, y, epochs=args.epochs, hidden=args.hidden,
                        layers=args.layers, seed=args.seed)
         report = fitted["report"]
-        print("fit", json.dumps({key: report[key] for key in
+        logger.debug("fit", json.dumps({key: report[key] for key in
                                  ("samples", "scale", "val_ce", "uniform_ce",
                                   "spread")}))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("wb") as handle:
         pickle.dump({"params": fitted["params"], "report": report}, handle)
-    print("wrote", args.out)
+    logger.debug("wrote", args.out)
     return 0
 
 

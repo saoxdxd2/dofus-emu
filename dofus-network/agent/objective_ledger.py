@@ -40,6 +40,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+import logging
+logger = logging.getLogger(__name__)
 
 MAX_TRIES = 3
 
@@ -475,7 +477,7 @@ class ObjectiveLedger:
         if verdict == "failed" and reason:
             learned = self.learn_server_counted(rec, after, reason)
             if learned is not None:
-                print("[ledger] learned: objective type %d is completed by the server, so a "
+                logger.debug("[ledger] learned: objective type %d is completed by the server, so a "
                       "claim on it is never offered again" % learned)
         moved = self.confirm(rec, before, after)
         rec.attempts += 1

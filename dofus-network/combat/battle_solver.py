@@ -1272,6 +1272,7 @@ class BattleSolver:
         # `threat.default_memory`, which re-reads the file when it changes.
         self.memory = memory
         self.last_candidates: List[TurnPlan] = []
+        self.last_threat: Optional[Any] = None
         # Per-bucket counts from the last stratified search. A learner can see
         # whether the beam actually explored setup/displacement/boss plans or
         # collapsed onto direct damage.
@@ -1525,6 +1526,7 @@ class BattleSolver:
         # What standing on a cell costs. Built once per turn and priced lazily,
         # because every candidate cell is asked about from several nodes.
         danger = threat.build(board, memory=self._table(), occupied=occupied)
+        self.last_threat = danger
 
         def templates(cell: int) -> List[_CastTemplate]:
             if cell in template_cache:

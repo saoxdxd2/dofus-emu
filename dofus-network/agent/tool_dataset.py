@@ -42,6 +42,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.schema import TOOL_SCHEMA, validate_call  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_OUT = REPO_ROOT / "data" / "agent_sft"
 DEFAULT_TRAJECTORIES = REPO_ROOT / "trajectories"
@@ -553,30 +555,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     files = trajectory_files(args.trajectories)
     if not files:
-        print(f"no trajectory files found under {DEFAULT_TRAJECTORIES}")
+        logger.debug(f"no trajectory files found under {DEFAULT_TRAJECTORIES}")
         return 1
     records: List[Dict[str, Any]] = []
     for path in files:
         if not path.exists():
-            print(f"missing trajectory file: {path}")
+            logger.debug(f"missing trajectory file: {path}")
             return 1
         records.extend(read_jsonl(path))
 
     sources = tuple(part.strip() for part in args.sources.split(",") if part.strip())
     stats = write_dataset(records, Path(args.out), args.val_ratio, args.seed, sources)
-    print(f"trajectory files : {len(files)} ({len(records)} records)")
-    print(f"steps ok/failed  : {stats['ok_steps']}/{stats['failed_steps']}")
-    print(f"unresolved goals : {stats['unresolved']}")
-    print(f"examples         : {stats['examples']} "
+    logger.debug(f"trajectory files : {len(files)} ({len(records)} records)")
+    logger.debug(f"steps ok/failed  : {stats['ok_steps']}/{stats['failed_steps']}")
+    logger.debug(f"unresolved goals : {stats['unresolved']}")
+    logger.debug(f"examples         : {stats['examples']} "
           f"(train {stats['train']} / val {stats['val']})")
-    print(f"duplicates       : {stats['duplicates']}  invalid: {stats['invalid']}"
+    logger.debug(f"duplicates       : {stats['duplicates']}  invalid: {stats['invalid']}"
           f"  skipped source: {stats['skipped_source']}")
-    print(f"tools            : {json.dumps(stats['tools'], ensure_ascii=True)}")
-    print(f"written          : {stats['out_dir']}")
+    logger.debug(f"tools            : {json.dumps(stats['tools'], ensure_ascii=True)}")
+    logger.debug(f"written          : {stats['out_dir']}")
 
     if args.samples:
         for row in read_jsonl(Path(args.out) / "train.jsonl")[:args.samples]:
-            print(f"  - [{row['tool']}] {row['goal']}")
+            logger.debug(f"  - [{row['tool']}] {row['goal']}")
     return 0
 
 

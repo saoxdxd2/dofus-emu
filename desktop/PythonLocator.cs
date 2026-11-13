@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Diagnostics;
 
 public static class PythonLocator
 {
@@ -28,7 +29,7 @@ public static class PythonLocator
                 string candidate = Path.Combine(p.Trim(), "python.exe");
                 if (File.Exists(candidate)) return candidate;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] PythonLocator.Find: " + ex.Message); }
         }
 
         string localApp = Environment.GetFolderPath(
@@ -44,7 +45,7 @@ public static class PythonLocator
                     if (File.Exists(candidate)) return candidate;
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] PythonLocator.Find: " + ex.Message); }
         }
 
         foreach (string p in pathEnv.Split(';'))
@@ -55,8 +56,9 @@ public static class PythonLocator
                 string candidate = Path.Combine(p.Trim(), "py.exe");
                 if (File.Exists(candidate)) return candidate;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] PythonLocator.Find: " + ex.Message); }
         }
         return null;
     }
 }
+

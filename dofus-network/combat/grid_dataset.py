@@ -32,6 +32,8 @@ from combat.battle_solver import (NB_CELLS, BattleSolver, Board, Fighter,
                                   cell_point)
 from combat.grid_model import (CELL_FEATS, FIGHTER_FEATS, MAX_FIGHTERS,
                                MAX_PLANS, PLAN_FEATS)
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "data" / "combat_grid"
 BUCKETS = ("damage", "displacement", "setup", "boss", "pass")
@@ -428,19 +430,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     if path is None:
         path = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm" / "fight_boards.jsonl"
     if not path.is_file():
-        print("boards file not found:", path)
+        logger.debug("boards file not found:", path)
         return 2
     arrays, manifest = build(_board_rows(path))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "manifest.json").write_text(
         json.dumps(manifest, indent=1, sort_keys=True), encoding="utf-8")
     if not arrays:
-        print("no actionable boards:", manifest)
+        logger.debug("no actionable boards:", manifest)
         if not args.allow_empty:
             return 1
         return 0
     manifest = write_splits(arrays, manifest, args.out)
-    print("actionable boards", len(arrays["labels"]), "split", manifest)
+    logger.debug("actionable boards", len(arrays["labels"]), "split", manifest)
     return 0
 
 

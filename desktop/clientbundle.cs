@@ -30,6 +30,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using DofusFarm.Update;
 
@@ -261,7 +262,7 @@ namespace DofusFarm.Engine
                 catch (Exception ex)
                 {
                     last = ex;
-                    try { if (File.Exists(dest)) File.Delete(dest); } catch { }
+                    try { if (File.Exists(dest)) File.Delete(dest); } catch (Exception exInner) { Debug.WriteLine("[WARN] ClientBundle: " + exInner.Message); }
                     if (attempt == 1) System.Threading.Thread.Sleep(400);
                 }
             }
@@ -509,11 +510,11 @@ namespace DofusFarm.Engine
             {
                 if (action == BootState.Attest)
                 {
-                    try { File.Delete(FlagPath("boot-pending.json")); } catch { }
+                    try { File.Delete(FlagPath("boot-pending.json")); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                     // A healthy boot answers the whole question, so it clears the watch as well:
                     // a build that came up after one bad day on the CDN is not sitting one failure
                     // away from being blacklisted.
-                    try { File.WriteAllText(FlagPath("boot-suspect.txt"), BootState.RemoveBad(suspect, pending)); } catch { }
+                    try { File.WriteAllText(FlagPath("boot-suspect.txt"), BootState.RemoveBad(suspect, pending)); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                     log?.Invoke("[UPDATER] boot attested for " + pending + "; the patch survives");
                     return;
                 }
@@ -531,7 +532,7 @@ namespace DofusFarm.Engine
                     try { File.Copy(vendor, live, true); reverted = true; }
                     catch (Exception ex) { log?.Invoke("[UPDATER] revert failed: " + ex.Message); }
                 }
-                try { File.Delete(FlagPath("boot-pending.json")); } catch { }
+                try { File.Delete(FlagPath("boot-pending.json")); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                 string why = string.IsNullOrEmpty(reason) ? "no reason given"
                     : reason.Substring(0, Math.Min(reason.Length, 90));
                 log?.Invoke(string.Format("[UPDATER] build {0} reported no boot ({1}): {2}{3}",
@@ -633,7 +634,7 @@ namespace DofusFarm.Engine
                             catch (Exception ex)
                             {
                                 log?.Invoke("[UPDATER] " + rel + " failed: " + ex.Message);
-                                try { if (File.Exists(target)) File.Delete(target); } catch { }
+                                try { if (File.Exists(target)) File.Delete(target); } catch (Exception exInner) { Debug.WriteLine("[WARN] ClientBundle: " + exInner.Message); }
                             }
                         }
                         if (staged.Count == 0)
@@ -653,7 +654,7 @@ namespace DofusFarm.Engine
                         {
                             // The unpatched copy is what a future build must patch from -- and the
                             // bytes a failed boot is reverted to.
-                            try { File.Copy(stagedScript, Path.Combine(dir, @"build\script.js.bak"), true); } catch { }
+                            try { File.Copy(stagedScript, Path.Combine(dir, @"build\script.js.bak"), true); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
 
                             string js = File.ReadAllText(stagedScript, Encoding.UTF8);
                             List<string> matched, skipped;
@@ -736,10 +737,10 @@ namespace DofusFarm.Engine
                                 string prev = dst + ".prev";
                                 if (File.Exists(dst))
                                 {
-                                    try { File.Copy(dst, prev, true); } catch { }
+                                    try { File.Copy(dst, prev, true); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                                 }
                                 File.Copy(src, dst, true);
-                                try { if (File.Exists(prev)) File.Delete(prev); } catch { }
+                                try { if (File.Exists(prev)) File.Delete(prev); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                                 adopted++;
                             }
                             catch (Exception ex)
@@ -747,7 +748,7 @@ namespace DofusFarm.Engine
                                 log?.Invoke("[UPDATER] could not adopt " + rel + ": " + ex.Message);
                                 // Put the previous copy back so the tree stays coherent.
                                 string prev = dst + ".prev";
-                                try { if (File.Exists(prev)) File.Copy(prev, dst, true); } catch { }
+                                try { if (File.Exists(prev)) File.Copy(prev, dst, true); } catch (Exception exInner) { Debug.WriteLine("[WARN] ClientBundle: " + exInner.Message); }
                             }
                         }
 
@@ -787,7 +788,7 @@ namespace DofusFarm.Engine
                     }
                     finally
                     {
-                        try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { }
+                        try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch (Exception ex) { Debug.WriteLine("[WARN] ClientBundle: " + ex.Message); }
                     }
                 }
             }
@@ -799,3 +800,4 @@ namespace DofusFarm.Engine
         }
     }
 }
+

@@ -647,7 +647,7 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 ```
 
 **Line counts, re-measured 2026-10-30:** C# **24,033** (desktop 23,117 + `builder/build.cs`
-916), Go/JS **29,588<!--f:script_lines-->** (Go 7,045<!--f:go_lines--> + JS 22,543<!--f:js_lines--> across `scripts/` and `tools/`), Python
+916), Go/JS **29,940<!--f:script_lines-->** (Go 7,359<!--f:go_lines--> + JS 22,581<!--f:js_lines--> across `scripts/` and `tools/`), Python
 **99,335** in 259 files, docs **12,721**. The 2026-10-27 snapshot of this document claimed
 23,064 / 13,516 / 76,699 / ~10,500 — every one of those was understated, the Python figure
 by 22,636 lines, and part of the rest is this day's own work: the shadow, alternative and
@@ -2957,7 +2957,7 @@ asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 ## 13. Open gaps (G1–G129<!--f:gaps_max-->)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (8,211<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (8,305<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -3365,13 +3365,13 @@ python -m advisor selftest       :: 91 check sites
 ```bat
 cd dofus-network
 python tools/mutate_cause_gate.py
-:: 777<!--f:mutations--> mutations (counted from MUTATIONS on 2026-10-31);
+:: 782<!--f:mutations--> mutations (counted from MUTATIONS on 2026-10-31);
 :: MUT_ONLY=<batch> runs one batch; MUT_SHARD=i/n splits one sweep;
 :: MUT_RESUME=<log,...> re-runs only the labels a finished log did not catch
 ```
 
 **Do not interrupt a mutation run — and if you do, it now repairs itself.** The driver
-writes a real mutation into a source file, runs the mutation snippet (132<!--f:snippet_tests--> gate tests) in a
+writes a real mutation into a source file, runs the mutation snippet (133<!--f:snippet_tests--> gate tests) in a
 throwaway process, and restores the file in a `finally`; a hard kill skips that `finally`. That happened while
 this snapshot was written: the source `agent/autopilot.py` was left with
 `ok=None, error=None` at the decision site (mutation *"game-level outcome dropped at the
@@ -4740,7 +4740,7 @@ four defects, and one new rule.
   - **§1 bridge port** — `CANDIDATE_PORTS` is `{8893…8899}`, `DEFAULT_PORT = 8893`
     (`agent/bridge.py:22`), and the live `bridge_port.txt` says **8896**; the doc no longer
     implies 8893 is the running port.
-  - **§4 release/blocker** — `setup.exe` **68,086,784<!--f:setup_bytes--> B = 214.0 MiB**, and the real
+  - **§4 release/blocker** — `setup.exe` **63,502,848<!--f:setup_bytes--> B = 214.0 MiB**, and the real
     `live_ready` verdict instead of a claim of readiness: **FAIL egress** (no
     `127.0.0.1:40000`, `fail_closed=1`), **WARN client** (host not running), **FAIL page
     build** (last client log is `2026-10-29bf`, the build is `2026-10-30b`).
@@ -5199,13 +5199,13 @@ four defects, and one new rule.
   `  - <check>` marker: a clean tree reports 0/0. With that parser, the corrected resume
   sweep (the first one selected 232 mutations instead of 40 because it split long labels
   on double spaces) and the four shard logs merge to the final verdict: every mutation the
-  driver holds -- **777<!--f:mutations-->** on 2026-10-31 -- is caught by a named failing
+  driver holds -- **782<!--f:mutations-->** on 2026-10-31 -- is caught by a named failing
   check, 0 missed, 0 skipped (518 in the merged sweep logs, the two `console:` mutations in
   the batch that follows).
 - **A crash is not a check (fixed 2026-10-31).** The corrected resume run credited four
   mutations to a crashed section -- `live: a torn log line...` and three `close:` rows --
   because the snippet printed its `  - ` lines only at the end, so one exception erased
-  every verdict. Each of the 132<!--f:snippet_tests--> snippet tests now runs through the gate's `_run_test`,
+  every verdict. Each of the 133<!--f:snippet_tests--> snippet tests now runs through the gate's `_run_test`,
   which names the test that raised; the torn-log and promoted-head mutations became named
   checks that way. The other two crashes had hidden two real coverage holes, and the
   19-mutation rerun exposed a third: the close tests stubbed the learner and trainer, so
@@ -5382,7 +5382,7 @@ four defects, and one new rule.
   fails. Both new checks run inside the mutation snippet, so every later mutation now pays
   about five to six seconds for them -- the scan parses 195 files, the console check
   spawns a real report -- worth it while the class is new. Driver:
-  **777<!--f:mutations-->** mutations, all caught.
+  **782<!--f:mutations-->** mutations, all caught.
 - **The snapshot's read-out step named a tool its own directory cannot find (fixed 2026-10-31).**
   §24 listed `tools/quest_witness.py`, `tools/session_report.py` and
   `tools/damage_calibration.py` as one list, but this repo has two folders called `tools/`
@@ -5518,7 +5518,7 @@ four defects, and one new rule.
   promoted file artifact keeps its predecessor as `<name>.previous.json`, and the
   move and router trainers accept `--rollback` (`agent/artifacts.py`, 5 checks, 2
   mutations) -- the recoverability the fight calibrator already had. Gate
-  **2,448<!--f:gate_checks--> checks, 3 failed**; driver **777<!--f:mutations--> mutations**. The
+  **2,448<!--f:gate_checks--> checks, 3 failed**; driver **782<!--f:mutations--> mutations**. The
   three failures are the rebuilt `setup.exe` of 2026-11-12 15:29, not a source change: it ships
   `dofus-network/.venv` (717.8 MB, 19,913 files) and `dofus-network/scratch` (261.8 MB), so it is
   536,801,280 B against a 62,914,560 B budget and carries `bin/warp/wireproxy.log`. The builder's
@@ -5802,7 +5802,7 @@ four defects, and one new rule.
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
 | `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G129<!--f:gaps_max-->**) | **current** (2026-10-31), 8,211<!--f:known_gaps_lines--> lines |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G129<!--f:gaps_max-->**) | **current** (2026-10-31), 8,305<!--f:known_gaps_lines--> lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
 | `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |

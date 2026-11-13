@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from combat.battle_solver import BattleSolver, Board
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _board_rows(path: Path) -> Iterable[Dict[str, Any]]:
@@ -122,20 +124,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.decisions and args.decisions.is_file():
         rows.extend(_decision_rows(args.decisions))
     if not rows:
-        print("no board rows found")
+        logger.debug("no board rows found")
         return 2
     result = probe(rows)
     if args.json:
-        print(json.dumps(result, indent=1, sort_keys=True))
+        logger.debug(json.dumps(result, indent=1, sort_keys=True))
     else:
-        print("boards %d  parsed %d  in_fight %d  my_turn %d  self_ap_mp %d  multi_plan %d"
+        logger.debug("boards %d  parsed %d  in_fight %d  my_turn %d  self_ap_mp %d  multi_plan %d"
               % (result["rows"], result["parsed"], result["in_fight"],
                  result["my_turn"], result["self_ap_mp"],
                  result["multi_plan_boards"]))
-        print("verdict:", result["verdict"])
-        print("required:", result["required"])
+        logger.debug("verdict:", result["verdict"])
+        logger.debug("required:", result["required"])
         if result["errors"]:
-            print("errors:", result["errors"])
+            logger.debug("errors:", result["errors"])
     return 0 if result["multi_plan_boards"] else 1
 
 

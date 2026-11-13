@@ -29,12 +29,19 @@ Usage::
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import collections
+
 import json
+
 import re
+
 import sys
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -109,8 +116,8 @@ def unsolvable_reason(row: Dict[str, Any]) -> Optional[str]:
     try:
         from agent.schema import canonicalize_args
         args = canonicalize_args(tool, args)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     nums = _numbers(goal)
     folded = normalize(goal)
     for key, value in args.items():
@@ -430,3 +437,5 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

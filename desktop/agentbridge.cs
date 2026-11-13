@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -444,7 +445,7 @@ namespace DofusFarm.Engine
                     if (!string.IsNullOrEmpty(active)) return active;
                 }
             }
-            catch { }
+            catch (Exception ex) { _log?.Invoke("[WARN] AgentBridge.FirstActiveInstance: " + ex.Message); }
             return null;
         }
 
@@ -695,14 +696,14 @@ namespace DofusFarm.Engine
                 stream.Write(payload, 0, payload.Length);
                 stream.Flush();
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] AgentBridge.WriteResponse: " + ex.Message); }
         }
 
         private string HealthJson()
         {
             int count = 0;
             try { if (_backend != null) count = _backend.GetActiveInstanceIds().Count; }
-            catch { }
+            catch (Exception ex) { _log?.Invoke("[WARN] AgentBridge.HealthJson: " + ex.Message); }
             // Encoded from the same schema the Python agent validates against, so a
             // field rename cannot leave one side reading a document the other stopped
             // writing.
@@ -775,7 +776,7 @@ namespace DofusFarm.Engine
             if (_log != null)
             {
                 try { _log(message); }
-                catch { }
+                catch (Exception ex) { Console.Error.WriteLine("[WARN] AgentBridge.Log: " + ex.Message); }
             }
         }
 
@@ -783,7 +784,7 @@ namespace DofusFarm.Engine
         {
             _running = false;
             try { if (_listener != null) _listener.Stop(); }
-            catch { }
+            catch (Exception ex) { _log?.Invoke("[WARN] AgentBridge.Dispose: " + ex.Message); }
             _listener = null;
         }
     }

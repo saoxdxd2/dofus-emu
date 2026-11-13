@@ -62,7 +62,7 @@ BASE = ROOT / "models" / "encoder30_v15" / "model.pt"
 DEFAULT_OUT = ROOT / "models" / "command_encoder30"
 
 
-def load_base(path: Path):
+def load_base(path: Path) -> Any:
     """Load the domain encoder's trunk and tokenizer, ignoring head drift.
 
     The checkpoint predates argument fields and tools that were added to the

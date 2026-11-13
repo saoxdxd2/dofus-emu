@@ -244,7 +244,7 @@ def _fill_encounter(board: Board, plan: TurnPlan, cfg: Config,
     spec["first_team"][index] = int(first_team)
 
 
-def _encounter_output(tables, spec, as_jax: bool):
+def _encounter_output(tables, spec, as_jax: bool) -> Any:
     if not as_jax:
         return tables, spec
     return ({key: XP.asarray(value) for key, value in tables.items()},

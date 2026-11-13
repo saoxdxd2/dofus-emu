@@ -1,0 +1,233 @@
+{
+  "status": "success",
+  "passed": true,
+  "duration_sec": 16.32,
+  "slots_count": 8,
+  "sample_count": 10,
+  "budgets": {
+    "ram_per_instance_mb": {
+      "limit": 200.0,
+      "measured_peak": 22.92,
+      "passed": true
+    },
+    "combat_latency_p99_ms": {
+      "limit": 10.0,
+      "measured_peak": 6.46,
+      "passed": true
+    },
+    "uidispatcher_dropped": {
+      "limit": 0,
+      "measured": 0,
+      "samples_evaluated": 116,
+      "passed": true
+    }
+  },
+  "leak_slopes": {
+    "csharp_pws_total": {
+      "slope_per_sec": 0.58497,
+      "rate_per_min": 35.0982,
+      "intercept": 178.306,
+      "r_squared": 0.4383,
+      "delta": 9.47,
+      "min_val": 173.22,
+      "max_val": 182.69,
+      "is_leak": false
+    },
+    "csharp_handles_total": {
+      "slope_per_sec": -0.667548,
+      "rate_per_min": -40.0529,
+      "intercept": 2645.0839,
+      "r_squared": 0.4833,
+      "delta": -8,
+      "min_val": 2640,
+      "max_val": 2648,
+      "is_leak": false
+    },
+    "go_heap_inuse_mb": {
+      "slope_per_sec": 0.203323,
+      "rate_per_min": 12.1994,
+      "intercept": 12.1979,
+      "r_squared": 0.9607,
+      "delta": 2.47,
+      "min_val": 11.98,
+      "max_val": 14.45,
+      "is_leak": false
+    },
+    "go_goroutines_total": {
+      "slope_per_sec": 0.024858,
+      "rate_per_min": 1.4915,
+      "intercept": 63.9703,
+      "r_squared": 0.0763,
+      "delta": 0,
+      "min_val": 64,
+      "max_val": 65,
+      "is_leak": false
+    },
+    "combat_pws_mb": {
+      "slope_per_sec": 0.003249,
+      "rate_per_min": 0.1949,
+      "intercept": 385.28,
+      "r_squared": 0.7283,
+      "delta": 0.05,
+      "min_val": 385.28,
+      "max_val": 385.33,
+      "is_leak": false
+    },
+    "storage_wal_mb": {
+      "slope_per_sec": 0.148311,
+      "rate_per_min": 8.8986,
+      "intercept": 0.0647,
+      "r_squared": 0.9942,
+      "delta": 1.5874,
+      "min_val": 0.0788,
+      "max_val": 1.6662,
+      "is_leak": false
+    }
+  },
+  "per_slot_peak_pws_mb": {
+    "dofus-01": 22.92,
+    "dofus-02": 22.83,
+    "dofus-03": 22.79,
+    "dofus-04": 22.89,
+    "dofus-05": 22.84,
+    "dofus-06": 22.8,
+    "dofus-07": 22.77,
+    "dofus-08": 22.85
+  },
+  "combat_profile": {
+    "status": "ok",
+    "timestamp": 1794558213.9565806,
+    "latency": {
+      "count": 35,
+      "min": 1.5,
+      "max": 6.8,
+      "p50": 3.0,
+      "p95": 4.78,
+      "p99": 6.256,
+      "avg": 3.206
+    },
+    "top_allocators": [
+      {
+        "filename": "<frozen importlib._bootstrap_external>",
+        "lineno": 511,
+        "size_bytes": 280420,
+        "count": 2084
+      },
+      {
+        "filename": "__init__.py",
+        "lineno": 771,
+        "size_bytes": 132086,
+        "count": 13
+      },
+      {
+        "filename": "source_info_util.py",
+        "lineno": 213,
+        "size_bytes": 78432,
+        "count": 410
+      },
+      {
+        "filename": "flattree.py",
+        "lineno": 234,
+        "size_bytes": 73880,
+        "count": 856
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1841,
+        "size_bytes": 70040,
+        "count": 169
+      },
+      {
+        "filename": "<frozen importlib._bootstrap>",
+        "lineno": 491,
+        "size_bytes": 58646,
+        "count": 575
+      },
+      {
+        "filename": "battle_solver.py",
+        "lineno": 359,
+        "size_bytes": 54336,
+        "count": 48
+      },
+      {
+        "filename": "pjit.py",
+        "lineno": 647,
+        "size_bytes": 47760,
+        "count": 127
+      },
+      {
+        "filename": "sharding_impls.py",
+        "lineno": 191,
+        "size_bytes": 47400,
+        "count": 601
+      },
+      {
+        "filename": "pjit.py",
+        "lineno": 556,
+        "size_bytes": 46848,
+        "count": 125
+      },
+      {
+        "filename": "pjit.py",
+        "lineno": 591,
+        "size_bytes": 46400,
+        "count": 200
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1591,
+        "size_bytes": 44256,
+        "count": 999
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1590,
+        "size_bytes": 44000,
+        "count": 500
+      },
+      {
+        "filename": "flattree.py",
+        "lineno": 305,
+        "size_bytes": 34680,
+        "count": 289
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1757,
+        "size_bytes": 32008,
+        "count": 1000
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1621,
+        "size_bytes": 29520,
+        "count": 738
+      },
+      {
+        "filename": "flattree.py",
+        "lineno": 190,
+        "size_bytes": 28016,
+        "count": 360
+      },
+      {
+        "filename": "pjit.py",
+        "lineno": 643,
+        "size_bytes": 26400,
+        "count": 100
+      },
+      {
+        "filename": "<string>",
+        "lineno": 1,
+        "size_bytes": 23960,
+        "count": 250
+      },
+      {
+        "filename": "partial_eval.py",
+        "lineno": 1525,
+        "size_bytes": 22680,
+        "count": 105
+      }
+    ],
+    "active_threads": 2
+  }
+}

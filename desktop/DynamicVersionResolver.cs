@@ -54,7 +54,7 @@ namespace DofusFarm.Engine
                     return code.ToString();
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.CalculateVersionCode: " + ex.Message); }
             return DefaultVersionCode;
         }
 
@@ -73,7 +73,7 @@ namespace DofusFarm.Engine
             string appData = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DofusFarm");
-            try { Directory.CreateDirectory(appData); } catch { }
+            try { Directory.CreateDirectory(appData); } catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.GetConfigFilePath: " + ex.Message); }
             return Path.Combine(appData, "app_version.json");
         }
 
@@ -109,7 +109,7 @@ namespace DofusFarm.Engine
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.LoadCached: " + ex.Message); }
             return null;
         }
 
@@ -134,7 +134,7 @@ namespace DofusFarm.Engine
                 );
                 File.WriteAllText(filePath, json, Encoding.UTF8);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.SaveCache: " + ex.Message); }
         }
 
         public static string QueryGooglePlayStore(int timeoutMs = 3500)
@@ -178,12 +178,12 @@ namespace DofusFarm.Engine
                                 newest = mc.Groups[1].Value;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.QueryGooglePlayStore: " + ex.Message); }
                     }
                     if (!string.IsNullOrEmpty(newest)) return newest;
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] DynamicVersionResolver.QueryGooglePlayStore: " + ex.Message); }
             return null;
         }
 

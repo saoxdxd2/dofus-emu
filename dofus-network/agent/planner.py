@@ -20,13 +20,21 @@ does not need to know which one it is talking to.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
+
 import os
+
 import random
+
 import re
+
 import sys
+
 import threading
+
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -55,8 +63,8 @@ def _load_lexicon() -> Dict[str, Any]:
     try:
         if _GOAL_LEXICON_PATH.exists():
             return json.loads(_GOAL_LEXICON_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ignored %s", exc, exc_info=True)
     return {}
 
 _LEXICON = _load_lexicon()
@@ -1894,7 +1902,7 @@ class QuestPlanner:
                 here_key = None
             if here_key is not None and here_key not in self._wall_said:
                 self._wall_said.add(here_key)
-                print("[planner] map %s has no border left to ask for (%s); "
+                logger.debug("[planner] map %s has no border left to ask for (%s); "
                       "not asking again"
                       % (here_key, ", ".join("%s->%s" % (d, m)
                                              for d, m in sorted(refused))))
@@ -3198,7 +3206,7 @@ class QuestPlanner:
                 if (self._gate_dry[dry_spot] >= RETURN_LIMIT
                         and dry_spot not in self._gate_dry_warned):
                     self._gate_dry_warned.add(dry_spot)
-                    print("[planner] level gate %d/%d: map %d has been empty on %d "
+                    logger.debug("[planner] level gate %d/%d: map %d has been empty on %d "
                           "look(s); not travelling back there until a group is seen"
                           % (gate[0], gate[1], dry_spot[2], self._gate_dry[dry_spot]),
                           file=sys.stderr)
@@ -4097,7 +4105,7 @@ class QuestPlanner:
                            reason, obj.get("id"), str(obj.get("text") or "")[:40])
         # stderr, not stdout: the sim harness and the corpus tools read JSON off
         # stdout, and one extra line there is a broken capture, not a log.
-        print("[planner] objective %s (%s): %s %s -- %s"
+        logger.debug("[planner] objective %s (%s): %s %s -- %s"
               % (obj.get("id"), str(obj.get("text") or "")[:40],
                  call.get("tool"), call.get("args"), reason),
               file=sys.stderr)
@@ -4515,7 +4523,7 @@ class QuestPlanner:
                 self._goal_resolver, note = load_default_resolver()
                 # One line, once, so a run states which layer is acting: "the AI did
                 # nothing" and "the model was not installed" need opposite repairs.
-                print("[planner] goal router: " + note)
+                logger.debug("[planner] goal router: " + note)
             call = self._goal_resolver.resolve(goal, obs)
             if call is None:
                 self.last_no_call = ("goal router: "
@@ -4695,7 +4703,7 @@ class QuestPlanner:
                     if spent >= RETURN_LIMIT:
                         if key not in self._parked:
                             self._parked.add(key)
-                            print("[planner] objective %s (%s) parked after %d immediate "
+                            logger.debug("[planner] objective %s (%s) parked after %d immediate "
                                   "returns to map %s"
                                   % (quest_id, str(obj.get("text") or "")[:40],
                                      spent, need), file=sys.stderr)
@@ -4962,3 +4970,5 @@ class QuestPlanner:
             for obj in step.get("objectives") or []:
                 out.extend(self.plan_objective(quest, step_idx, obj, obs))
         return out
+
+

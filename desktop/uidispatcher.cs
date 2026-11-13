@@ -111,8 +111,8 @@ namespace DofusFarm.UI
         /// <summary>Stops the pump and drains what is already queued. Safe to call twice.</summary>
         public void Stop()
         {
-            try { if (_pump != null) _pump.Stop(); } catch { }
-            try { Drain(); } catch { }
+            try { if (_pump != null) _pump.Stop(); } catch (Exception ex) { Debug.WriteLine("[WARN] uidispatcher: " + ex.Message); }
+            try { Drain(); } catch (Exception ex) { Debug.WriteLine("[WARN] uidispatcher: " + ex.Message); }
         }
 
         /// <summary>True when the caller is the thread that owns the message loop.</summary>
@@ -252,13 +252,13 @@ namespace DofusFarm.UI
             if (aggregate != null) error = aggregate.Flatten().InnerException;
             string text = "[UI] unhandled " + (label ?? "task") + ": "
                 + error.GetType().Name + ": " + error.Message;
-            try { Trace.WriteLine(text); } catch { }
+            try { Trace.WriteLine(text); } catch (Exception ex) { Debug.WriteLine("[WARN] uidispatcher: " + ex.Message); }
             try
             {
                 Action<string> sink = ErrorSink;
                 if (sink != null) sink(text);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] uidispatcher: " + ex.Message); }
         }
 
         // -- draining -----------------------------------------------------------
@@ -374,7 +374,7 @@ namespace DofusFarm.UI
         private static int FrameIntervalFromEnvironment()
         {
             string raw = null;
-            try { raw = Environment.GetEnvironmentVariable("DOFUS_UI_HZ"); } catch { }
+            try { raw = Environment.GetEnvironmentVariable("DOFUS_UI_HZ"); } catch (Exception ex) { Debug.WriteLine("[WARN] uidispatcher: " + ex.Message); }
             int hz;
             if (!string.IsNullOrEmpty(raw) && int.TryParse(raw, out hz))
             {
@@ -387,3 +387,5 @@ namespace DofusFarm.UI
         }
     }
 }
+
+

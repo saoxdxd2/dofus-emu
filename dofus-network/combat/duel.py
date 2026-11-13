@@ -489,7 +489,7 @@ def value_policy(state: DuelState, actor: Duelist,
     return plans[max(range(len(plans)), key=lambda index: scores[index])]
 
 
-def make_residual_policy(model, margin: float = 0.05):
+def make_residual_policy(model, margin: float = 0.05) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Keep the solver unless the value head is confidently better."""
     def policy(state: DuelState, actor: Duelist, plans: Sequence[TurnPlan],
                rng: random.Random, _model=None) -> TurnPlan:
@@ -502,7 +502,7 @@ def make_residual_policy(model, margin: float = 0.05):
 
 
 def make_two_ply_policy(solver: BattleSolver, opponent_k: int = 4,
-                        tie_break: float = 1e-4):
+                        tie_break: float = 1e-4) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Choose a plan after the opponent's greedy reply.
 
     The solver's own score is one-ply. This policy applies each candidate,

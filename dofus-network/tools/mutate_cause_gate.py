@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Mutation test: prove the new cause/recovery checks can actually fail.
 
 Each mutation is applied to the real source, the affected gate sections run in a
@@ -31,12 +33,19 @@ foreground; when that one was cut off by its own timeout it had already verified
 cannot watch it, use `MUT_PLAN=1` first: it prints the count and exits without touching anything.
 """
 import base64
+
 import concurrent.futures
+
 import json
+
 import os
+
 import subprocess
+
 import sys
+
 import tempfile
+
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +74,11 @@ TCACHE = ROOT / "planning" / "thinking_cache.py"
 # fit worse than the identity it replaces, a negative slope (which reverses a ranking and
 # makes the planner prefer the candidate it is sure will fail), and a non-monotone map.
 CALIB = ROOT / "agent" / "calibration.py"
+# G126: the planning stack's only production caller and its learning path. All three
+# were silent when broken -- no posterior, no trace, no crash -- so each rule gets an
+# anchor. `agent.regression.test_live_schedule_tap` is the witness for all of them.
+SCHED = ROOT / "planning" / "schedule.py"
+LTAP = ROOT / "planning" / "live_tap.py"
 LPOL = ROOT / "combat" / "live_policy.py"
 # §L.34 moved the live path onto `contract_from_board` / `board_block` / `live_view`. The decision
 # reads only the contract's two booleans, so a wrong contract is a silently different refusal rate on
@@ -111,6 +125,7 @@ PAGE_TEST = ROOT.parent / "tools" / "test_fight_state_fields.js"
 # literal goes to zero matches on the next generation, and the driver reports that as SKIP —
 # which reads like a pass in a wall of CAUGHT lines.
 import re as _re
+
 _PAGE_STAMP = (_re.search(r"var AGENT_BUILD = '([^']+)';",
                           PAGE.read_text(encoding="utf-8")) or (None, ""))[1]
 SCAN = ROOT / "tools" / "group_scan.py"
@@ -309,6 +324,10 @@ SNIPPET = ("import agent.regression as r\n"
            # module run instead -- two cold plans at 136 ms each would put a minute on
            # every mutation in this list.
            "    r.test_thinking_cache_semantics,\n"
+           # G126: the production wiring is read off autopilot.py and one real outcome
+           # is driven through the tap, so a removed caller or a forked store fails
+           # here instead of going unnoticed for another month.
+           "    r.test_live_schedule_tap,\n"
            "    r.test_move_calibration_semantics,\n"
            "    r.test_the_search_borders_are_bounded,\n"
            # The brain has to say which code wrote a row: the page stamp never
@@ -2627,8 +2646,9 @@ MUTATIONS = [
      '            if _LOG_BYTES + len(line) >= LOG_MAX_BYTES:',
      '            if False:'),
     ("log: the server stops stamping its own latency", CSRV,
-     '    decision["server_latency_ms"] = round(\n'
-     '        (time.perf_counter() - started) * 1000.0, 1)',
+     # 2026-11-13: the server now measures once, feeds the latency histogram and
+     # stamps the decision from that same value. Re-pin to the new single line.
+     '    decision["server_latency_ms"] = round(elapsed_ms, 2)',
      '    decision["server_latency_ms"] = None'),
     # The checker itself. Neither of these is visible to the gate's own `doc_facts` check -- the
     # mutated tool would report the green answer -- so only the self-witness fixture can see them.
@@ -3055,8 +3075,9 @@ MUTATIONS = [
      '                    int slotIdx = _freshIdentityMode ? FarmEngine.AccountIndexOf(_instanceId) : -1;',
      '                    int slotIdx = -1;'),
     ("reset: the slot never returns to normal seeding", CWEB2,
-     '                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch { }',
-     '                        try { } catch { }'),
+     # The host now logs the caught exception; the mutation still removes the delete.
+     '                        try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }',
+     '                        try { } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }'),
     ("ai-row: the pill is painted once and never again", CMAINF,
      '                if (aiStateChanged) RepaintAiColumn();',
      '                if (false) RepaintAiColumn();'),
@@ -3148,8 +3169,9 @@ MUTATIONS = [
      " (document.body||document.documentElement).appendChild(d);return 'shown';",
      " return 'not-shown';"),
     ("waf: the grant is requested once and never retried", CWEB2,
-     '            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch { }',
-     '            try { } catch { }'),
+     # Same logged-catch change: keep the catch intact, remove only the re-navigation.
+     '            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }',
+     '            try { } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }'),
     ("waf: giving up says nothing an operator can act on", CWEB2,
      '"[OAUTH-POPUP] [WAF-CHALLENGE] Ankama\'s challenge did not "',
      '"[OAUTH-POPUP] silent "'),
@@ -3224,6 +3246,22 @@ MUTATIONS = [
      CALIB,
      "        return sigmoid(self.a * z + self.b)",
      "        return sigmoid(-self.a * z + self.b)"),
+    # -- G126: the planning stack's production caller, and its three silent failures --
+    ("G126: the executed step is no longer fed to the planning stack", AUTO,
+     "                self._note_schedule(call, result, latency_ms, before)",
+     "                pass  # mutated: the only production caller is gone"),
+    ("G126: the tap is built without the loop's store, forking learning state", AUTO,
+     "        pilot.schedule_tap = attach_schedule_tap(pilot.experience)",
+     "        pilot.schedule_tap = attach_schedule_tap(None)"),
+    ("G126: discovered entity ids are dropped, so result payloads learn nothing", SCHED,
+     "            updates = self._learn(action, outcome, outcome.entities, source, level,",
+     "            updates = self._learn(action, outcome, entity, source, level,"),
+    ("G126: the economy's save clobbers the schedule's restore state again", SCHED,
+     "    economy = Economy(cost, experience=experience, state_file=economy_state_file)",
+     "    economy = Economy(cost, experience=experience, state_file=state_file)"),
+    ("G126: the tool-to-arm map is ignored, so no posterior ever moves", LTAP,
+     '                action=ARM_BY_TOOL.get(tool, ""),',
+     '                action="",'),
 ]
 
 
@@ -3280,8 +3318,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
             p = os.path.normcase(os.path.abspath(str(file)))
             if p == _target_norm:
                 return _real_open(_SHADOW, *args, **kwargs)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ignored %s", exc, exc_info=True)
         return _real_open(file, *args, **kwargs)
     builtins.open = _hooked_open
 
@@ -3291,8 +3329,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
         try:
             if os.path.normcase(str(self.resolve())) == _target_norm:
                 return _shadow_text
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ignored %s", exc, exc_info=True)
         return _real_read_text(self, *args, **kwargs)
     pathlib.Path.read_text = _hooked_read_text
 
@@ -3301,8 +3339,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
         try:
             if os.path.normcase(str(self.resolve())) == _target_norm:
                 return _shadow_content
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ignored %s", exc, exc_info=True)
         return _real_read_bytes(self, *args, **kwargs)
     pathlib.Path.read_bytes = _hooked_read_bytes
 
@@ -3316,8 +3354,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
                     if os.path.normcase(os.path.abspath(str(arg))) == _target_norm:
                         new_cmd.append(_SHADOW)
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("ignored %s", exc, exc_info=True)
                 new_cmd.append(arg)
             cmd = new_cmd
         return _real_run(cmd, *args, **kwargs)
@@ -3332,8 +3370,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
                     if os.path.normcase(os.path.abspath(str(arg))) == _target_norm:
                         new_cmd.append(_SHADOW)
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("ignored %s", exc, exc_info=True)
                 new_cmd.append(arg)
             cmd = new_cmd
         return _real_popen(cmd, *args, **kwargs)
@@ -3341,6 +3379,7 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
 
     # 5. importlib loader hook for python modules
     import importlib.abc, importlib.machinery
+
     class ShadowMetaFinder(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path, target=None):
             for finder in sys.meta_path:
@@ -3358,8 +3397,8 @@ if _TARGET and _SHADOW and os.path.exists(_SHADOW):
                                 )
                                 s.has_location = True
                                 return s
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("ignored %s", exc, exc_info=True)
                     if spec:
                         return spec
             return None
@@ -3557,3 +3596,5 @@ if __name__ not in ("__main__", "__mp_main__"):
 
 if __name__ == "__main__":
     main()
+
+

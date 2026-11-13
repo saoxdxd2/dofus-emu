@@ -22,6 +22,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	_ "net/http/pprof"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -1318,14 +1320,37 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			p.handleAssetStore(w, r)
 			return
+		case strings.HasPrefix(r.URL.Path, "/debug/pprof"):
+			if !p.adminAuthorized(r) {
+				http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+				return
+			}
+			http.DefaultServeMux.ServeHTTP(w, r)
+			return
 		}
 	}
 	isLocal := isLoopbackRequestHost(r.Host, p.port)
 	if r.Method == http.MethodGet && isLocal {
 		switch r.URL.Path {
-		case "/__health", "/__telemetry", "/__audit":
+		case "/__health", "/__telemetry", "/__audit", "/__profiler":
 			if !p.adminAuthorized(r) {
 				http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+				return
+			}
+			if r.URL.Path == "/__profiler" {
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				w.Header().Set("Content-Type", "application/json")
+				payload := map[string]any{
+					"heap_inuse_bytes": m.HeapInuse,
+					"heap_alloc_bytes": m.HeapAlloc,
+					"heap_sys_bytes":   m.HeapSys,
+					"num_goroutine":    runtime.NumGoroutine(),
+					"conns_active":     p.telemetry.snapshot().connsActive,
+					"gc_cycles":        m.NumGC,
+					"total_alloc":      m.TotalAlloc,
+				}
+				_ = json.NewEncoder(w).Encode(payload)
 				return
 			}
 			if r.URL.Path == "/__audit" {

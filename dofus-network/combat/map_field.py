@@ -68,6 +68,8 @@ from scipy.sparse.csgraph import connected_components, shortest_path
 
 from combat.battle_solver import (NB_CELLS, _CARDINAL_NEIGHBOURS, _POINTS,
                                   cell_point, line_points)
+import logging
+logger = logging.getLogger(__name__)
 
 MAPS_DIR = Path(__file__).resolve().parent.parent / "data" / "maps"
 LOS_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "map_los"
@@ -578,26 +580,26 @@ def _store_los(map_id: Optional[int], los: np.ndarray) -> None:
 def _report(limit: int) -> int:
     files = sorted(MAPS_DIR.glob("*.json"))
     if not files:
-        print("no maps in %s" % MAPS_DIR)
+        logger.debug("no maps in %s" % MAPS_DIR)
         return 1
     rows = []
     for path in files[:limit]:
         try:
             field = MapField.from_map_id(int(path.stem))
         except Exception as exc:  # pragma: no cover - a bad file is reported
-            print("%-14s unreadable: %s" % (path.stem, exc))
+            logger.debug("%-14s unreadable: %s" % (path.stem, exc))
             continue
         rows.append(field.summary())
     if not rows:
         return 1
-    print("%-14s %8s %8s %6s %7s %8s %9s %8s" % (
+    logger.debug("%-14s %8s %8s %6s %7s %8s %9s %8s" % (
         "map", "walk", "see", "comp", "deg", "diam", "open@4", "deadend"))
     for row in rows[:20]:
-        print("%-14s %8d %8d %6d %7.2f %8d %9.2f %8d" % (
+        logger.debug("%-14s %8d %8d %6d %7.2f %8d %9.2f %8d" % (
             row["map_id"], row["walkable"], row["see_through"], row["components"],
             row["mean_degree"], row["diameter"], row["mean_openness_4"],
             row["dead_ends"]))
-    print("\n%d maps, mean walkable %.0f, mean diameter %.1f" % (
+    logger.debug("\n%d maps, mean walkable %.0f, mean diameter %.1f" % (
         len(rows), float(np.mean([r["walkable"] for r in rows])),
         float(np.mean([r["diameter"] for r in rows]))))
 
@@ -608,16 +610,16 @@ def _report(limit: int) -> int:
     if walkable.size:
         me = int(walkable[np.argmax(probe.closeness[walkable])])
         profile = probe.danger_profile(me, mp=5, min_range=1, max_range=4)
-        print("\nmap %s: one enemy standing on %d, 5 MP, a 1-4 range spell"
+        logger.debug("\nmap %s: one enemy standing on %d, 5 MP, a 1-4 range spell"
               % (probe.map_id, me))
-        print("  %-9s %6s %11s %6s %7s" % ("distance", "cells", "threatened", "safe", "mean"))
+        logger.debug("  %-9s %6s %11s %6s %7s" % ("distance", "cells", "threatened", "safe", "mean"))
         for row in profile:
-            print("  %-9d %6d %11d %6d %7.2f" % (
+            logger.debug("  %-9d %6d %11d %6d %7.2f" % (
                 row["distance"], row["cells"], row["threatened"], row["safe"], row["mean"]))
         mixed = [row for row in profile if row["threatened"] and row["safe"]]
-        print("  %d of %d distances hold both safe and threatened cells --"
+        logger.debug("  %d of %d distances hold both safe and threatened cells --"
               % (len(mixed), len(profile)))
-        print("  distance alone cannot decide whether standing there is safe.")
+        logger.debug("  distance alone cannot decide whether standing there is safe.")
     return 0
 
 
@@ -625,7 +627,7 @@ def _warm(map_ids: Sequence[int]) -> int:
     for map_id in map_ids:
         field = field_for(int(map_id))
         _ = field.los
-        print("%d: los %s" % (map_id, "cached" if _cache_path(map_id).exists() else "not written"))
+        logger.debug("%d: los %s" % (map_id, "cached" if _cache_path(map_id).exists() else "not written"))
     return 0
 
 

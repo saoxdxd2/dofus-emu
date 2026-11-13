@@ -112,7 +112,7 @@ def parse_line(line: str, default_scheme: str) -> str | None:
     return "%s://%s:%s" % (scheme, host, int(port))
 
 
-def split_entry(entry: str):
+def split_entry(entry: str) -> Any:
     scheme, _, rest = entry.partition("://")
     userinfo = ""
     if "@" in rest:

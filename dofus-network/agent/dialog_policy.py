@@ -10,6 +10,8 @@ should subsume, not merely tune.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
 import os
@@ -34,8 +36,8 @@ def _load_dialog_data() -> Dict[str, Any]:
     if _DATA_PATH.exists():
         try:
             return json.loads(_DATA_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ignored %s", exc, exc_info=True)
     return {}
 
 
@@ -412,3 +414,5 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "reply": tied[0]}
     return {**decision, "status": "choose", "reason": "objective token overlap",
             "reply": scored[0]}
+
+

@@ -35,6 +35,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.schema import canonicalize_args  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 _TEXT_ARGS = {
     "query", "zaap", "npc", "name", "item", "area", "monster", "resource",
@@ -344,35 +346,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     report = evaluate(predictions)
     report["policy"] = label
     totals = report["totals"]
-    print(f"tool-use benchmark — {label}")
-    print(f"  cases        : {totals['cases']}")
-    print(f"  tool accuracy: {_ratio(totals['tool_ok'], totals['cases'])}")
-    print(f"  call accuracy: {_ratio(totals['call_ok'], totals['cases'])}")
+    logger.debug(f"tool-use benchmark — {label}")
+    logger.debug(f"  cases        : {totals['cases']}")
+    logger.debug(f"  tool accuracy: {_ratio(totals['tool_ok'], totals['cases'])}")
+    logger.debug(f"  call accuracy: {_ratio(totals['call_ok'], totals['cases'])}")
     for lang, stats in report["by_lang"].items():
-        print(f"  [{lang}] tool {_ratio(stats['tool_ok'], stats['cases'])}  "
+        logger.debug(f"  [{lang}] tool {_ratio(stats['tool_ok'], stats['cases'])}  "
               f"call {_ratio(stats['call_ok'], stats['cases'])}")
-    print("  by tool (tool/call):")
+    logger.debug("  by tool (tool/call):")
     for tool, stats in report["by_tool"].items():
-        print(f"    {tool:<17} {stats['tool_ok']}/{stats['cases']}  "
+        logger.debug(f"    {tool:<17} {stats['tool_ok']}/{stats['cases']}  "
               f"{stats['call_ok']}/{stats['cases']}")
 
     if args.show_failures:
         for failure in report["failures"]:
             predicted = failure["predicted"]
-            print(f"  MISS {failure['id']}: {failure['goal']}")
-            print(f"       expected {failure['expected']}")
-            print(f"       predicted {predicted}")
+            logger.debug(f"  MISS {failure['id']}: {failure['goal']}")
+            logger.debug(f"       expected {failure['expected']}")
+            logger.debug(f"       predicted {predicted}")
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"  report       : {args.out}")
+        logger.debug(f"  report       : {args.out}")
 
     if args.min_tool_accuracy is not None and totals["cases"]:
         accuracy = totals["tool_ok"] / totals["cases"]
         if accuracy < args.min_tool_accuracy:
-            print(f"  FAIL: tool accuracy {accuracy:.3f} < {args.min_tool_accuracy:.3f}")
+            logger.debug(f"  FAIL: tool accuracy {accuracy:.3f} < {args.min_tool_accuracy:.3f}")
             return 1
     return 0
 

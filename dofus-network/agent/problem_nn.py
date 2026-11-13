@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = Path(
@@ -513,20 +515,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     memory = ProblemMemory(Path(args.rows))
     rows = memory.rows()
-    print("rows: %d (need %d to train)" % (len(rows), MIN_ROWS))
+    logger.debug("rows: %d (need %d to train)" % (len(rows), MIN_ROWS))
     if args.report:
         counts: Dict[str, int] = {}
         for row in rows:
             key = "%s/%s" % (row.get("remedy"), row.get("outcome"))
             counts[key] = counts.get(key, 0) + 1
         for key in sorted(counts):
-            print("  %-20s %d" % (key, counts[key]))
+            logger.debug("  %-20s %d" % (key, counts[key]))
         return 0
     if len(rows) < MIN_ROWS:
         return 1
     net = train(rows, epochs=args.epochs)
     net.save(Path(args.model))
-    print("trained on %d rows -> %s" % (net.rows, args.model))
+    logger.debug("trained on %d rows -> %s" % (net.rows, args.model))
     return 0
 
 

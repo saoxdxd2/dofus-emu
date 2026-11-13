@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Phase", "Outcome", "State", "Transition", "Machine", "DEFAULT_MACHINE",
@@ -442,20 +444,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = iter_dicts(args.path, limit=args.limit or None)
     result = replay_path_rows(rows, args)
     if args.json:
-        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+        logger.debug(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     else:
-        print("replay: %d rows, %d transitions, final=%s%s"
+        logger.debug("replay: %d rows, %d transitions, final=%s%s"
               % (result.rows, len(result.transitions), result.final_state,
                  " (blocked)" if result.blocked else ""))
-        print("signatures: %d distinct, longest repeat %d"
+        logger.debug("signatures: %d distinct, longest repeat %d"
               % (result.distinct_signatures, result.longest_repeat))
         if result.first_stuck_at is not None:
             stuck = result.first_stuck or {}
-            print("first cycle at row %d: %s (x%d in %d ticks)"
+            logger.debug("first cycle at row %d: %s (x%d in %d ticks)"
                   % (result.first_stuck_at, stuck.get("signature"), stuck.get("repeats", 0),
                      stuck.get("window", 0)))
         else:
-            print("cycles: none detected")
+            logger.debug("cycles: none detected")
     if args.fail_on_stuck and result.first_stuck_at is not None:
         return 2
     return 0

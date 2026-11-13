@@ -49,6 +49,8 @@ from combat.encounter.heuristic import heuristic_actions
 from combat.encounter.model import forward, greedy_actions
 from combat.encounter.strike import pre_fight, round_strikes
 from combat.encounter.touch_source import TouchData
+import logging
+logger = logging.getLogger(__name__)
 
 # This file sits at <repo>/dofus-network/combat/preflight.py, and the brain's own data lives under
 # dofus-network/, so the walk stops one level above the repository root. Getting this wrong points
@@ -457,18 +459,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     pf = Preflight(args.touch_dir, slots=args.slots, lang=args.lang)
     plan = pf.plan(args.dungeon, args.level, args.player_class, args.distance)
     if args.json:
-        print(json.dumps(plan, indent=1, sort_keys=True, default=str))
+        logger.debug(json.dumps(plan, indent=1, sort_keys=True, default=str))
     else:
-        print("%s (dungeon %d, optimal level %s): %s"
+        logger.debug("%s (dungeon %d, optimal level %s): %s"
               % (plan["dungeon"], plan["dungeon_id"], plan["dungeon_optimal_level"],
                  plan["verdict"]))
         for reason in plan["reasons"]:
-            print("  - %s" % reason)
-        print("  simulated outcome: %s after %s team turns"
+            logger.debug("  - %s" % reason)
+        logger.debug("  simulated outcome: %s after %s team turns"
               % (plan["estimate_and_verification"]["verified_outcome"],
                  plan["estimate_and_verification"]["verified_turns"]))
         for line in plan["limitations"]:
-            print("  limitation: %s" % line)
+            logger.debug("  limitation: %s" % line)
     return 0
 
 

@@ -13,17 +13,25 @@ removed 2026-11-07, and the forecaster loads its checkpoint lazily.
 from __future__ import annotations
 
 import hmac
+
 import json
 import logging
+
+
 import re
+
 import sys
+
 import threading
+
 import time
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Any, List
 import urllib.parse
+
 
 # Ensure networkhealth is in path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -288,8 +296,8 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         if status_file.is_file():
             try:
                 ui_telemetry = json.loads(status_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         return {
             "status": "online",
             "service": "dofus-sentinel-ai",
@@ -888,3 +896,5 @@ def run_sentinel_service(host: str = "127.0.0.1", port: int = 8890) -> None:
 
 if __name__ == "__main__":
     run_sentinel_service()
+
+

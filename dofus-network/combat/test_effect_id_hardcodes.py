@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import sys
+import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -37,85 +38,53 @@ WEIGHTS = (
 )
 
 
-def collect_failures(text: str) -> tuple[list[str], list[str]]:
-    """Return (failure messages, ok messages) for one solver source."""
-    failures: list[str] = []
-    oks: list[str] = []
+class TestEffectIdHardcodes(unittest.TestCase):
+    def test_no_hardcoded_client_constants(self) -> None:
+        """pytest entry point. A failed check is an assertion failure, never an
+        import-time exit, so one red test cannot abort collection for the rest."""
+        failures = self._collect_failures()
+        self.assertFalse(failures, "\n".join(failures))
 
-    # --- Hardcoded effect IDs from client 1.74.9 -----------------------------
-    effect_id_pattern = re.compile(
-        r"^\s*\d+:\s*\(\"(?:steal|damage|heal)\",\s*\"(?:WATER|EARTH|AIR|FIRE|NEUTRAL|HEAL)\"\)",
-        re.MULTILINE,
-    )
-    effect_ids = sorted({int(m.group(0).split(":")[0])
-                         for m in effect_id_pattern.finditer(text)})
-    if effect_ids:
-        failures.append(f"battle_solver.py hardcodes {len(effect_ids)} client effect IDs "
-                        f"(from bundle 1.74.9): {effect_ids}")
-    else:
-        oks.append("no hardcoded effect IDs in battle_solver.py")
+    def _collect_failures(self) -> list[str]:
+        """Return the list of failure messages for one solver source."""
+        text = SOLVER.read_text(encoding="utf-8", errors="replace")
+        failures: list[str] = []
 
-    # --- Hardcoded grid size -------------------------------------------------
-    if "NB_CELLS = 560" in text:
-        failures.append("battle_solver.py hardcodes NB_CELLS = 560 (tactical grid size "
-                        "from client 1.74.9 — derive from live board instead)")
-    else:
-        oks.append("NB_CELLS is not hardcoded")
+        # --- Hardcoded effect IDs from client 1.74.9 -----------------------------
+        effect_id_pattern = re.compile(
+            r"^\s*\d+:\s*\(\"(?:steal|damage|heal)\",\s*\"(?:WATER|EARTH|AIR|FIRE|NEUTRAL|HEAL)\"\)",
+            re.MULTILINE,
+        )
+        effect_ids = sorted({int(m.group(0).split(":")[0])
+                             for m in effect_id_pattern.finditer(text)})
+        if effect_ids:
+            failures.append(f"battle_solver.py hardcodes {len(effect_ids)} client effect IDs "
+                            f"(from bundle 1.74.9): {effect_ids}")
 
-    # --- Hardcoded lru_cache sizes -------------------------------------------
-    cache_sizes = re.findall(r"@lru_cache\(maxsize=(\d+)\)", text)
-    if cache_sizes:
-        failures.append(f"battle_solver.py hardcodes lru_cache maxsize values: "
-                        f"{cache_sizes} (make configurable)")
-    else:
-        oks.append("no hardcoded lru_cache sizes")
+        # --- Hardcoded grid size -------------------------------------------------
+        if "NB_CELLS = 560" in text:
+            failures.append("battle_solver.py hardcodes NB_CELLS = 560 (tactical grid size "
+                            "from client 1.74.9 — derive from live board instead)")
 
-    # --- Hardcoded AP/MP weights ---------------------------------------------
-    for literal, name in WEIGHTS:
-        if literal in text:
-            failures.append(f"battle_solver.py hardcodes {name} "
-                            f"({literal.split('=')[0].strip()} — tune from live data "
-                            "or make configurable)")
-        else:
-            oks.append(f"{name} not hardcoded")
+        # --- Hardcoded lru_cache sizes -------------------------------------------
+        cache_sizes = re.findall(r"@lru_cache\(maxsize=(\d+)\)", text)
+        if cache_sizes:
+            failures.append(f"battle_solver.py hardcodes lru_cache maxsize values: "
+                            f"{cache_sizes} (make configurable)")
 
-    # --- Hardcoded teleport positions ----------------------------------------
-    if "TELEPORT_POSITIONS = 8" in text:
-        failures.append("battle_solver.py hardcodes TELEPORT_POSITIONS = 8")
-    else:
-        oks.append("TELEPORT_POSITIONS not hardcoded")
+        # --- Hardcoded AP/MP weights ---------------------------------------------
+        for literal, _name in WEIGHTS:
+            if literal in text:
+                failures.append(f"battle_solver.py hardcodes {_name} "
+                                f"({literal.split('=')[0].strip()} — tune from live data "
+                                "or make configurable)")
 
-    return failures, oks
+        # --- Hardcoded teleport positions ----------------------------------------
+        if "TELEPORT_POSITIONS = 8" in text:
+            failures.append("battle_solver.py hardcodes TELEPORT_POSITIONS = 8")
 
-
-def run_checks(verbose: bool = True) -> list[str]:
-    """Read the solver, print the report when verbose, return the failures."""
-    text = SOLVER.read_text(encoding="utf-8", errors="replace")
-    failures, oks = collect_failures(text)
-    if verbose:
-        for msg in oks:
-            print(f"ok   {msg}")
-        for msg in failures:
-            print(f"FAIL {msg}")
-    return failures
-
-
-def test_no_hardcoded_client_constants() -> None:
-    """pytest entry point. A failed check is an assertion failure, never an
-    import-time exit, so one red test cannot abort collection for the rest."""
-    failures = run_checks(verbose=False)
-    assert not failures, "\n".join(failures)
-
-
-def main() -> int:
-    failures = run_checks(verbose=True)
-    print()
-    if failures:
-        print(f"{len(failures)} combat hardcode(s) still present")
-        return 1
-    print("no combat hardcodes detected (unexpected — review needed)")
-    return 0
+        return failures
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    unittest.main()

@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Microsoft.Win32;
 
 namespace DofusFarm.Hardware
@@ -39,7 +40,7 @@ namespace DofusFarm.Hardware
                 string cName = cpuName == null ? "" : cpuName.ToString().Trim();
                 if (cName.Length > 0) specs.CpuName = cName;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] HardwareSpecs.Detect: " + ex.Message); }
 
             try
             {
@@ -53,7 +54,7 @@ namespace DofusFarm.Hardware
                         specs.FreeRamGB = Math.Round(mem.ullAvailPhys / (1024.0 * 1024.0 * 1024.0), 1);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] HardwareSpecs.Detect: " + ex.Message); }
 
             try
             {
@@ -84,7 +85,7 @@ namespace DofusFarm.Hardware
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] HardwareSpecs.Detect: " + ex.Message); }
 
             if (specs.HostRamGB <= 8.5)
             {
@@ -146,7 +147,7 @@ namespace DofusFarm.Hardware
                 int ex = CountPhysicalCoresEx();
                 if (ex > 0) return ex;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] HardwareSpecs.CountPhysicalCores: " + ex.Message); }
 
             IntPtr buffer = IntPtr.Zero;
             try
@@ -216,3 +217,5 @@ namespace DofusFarm.Hardware
         #endregion
     }
 }
+
+

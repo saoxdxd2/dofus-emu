@@ -41,6 +41,8 @@ from pathlib import Path
 
 from agent.schema import TOOLS
 from typing import Any, Dict, Iterable, Optional, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_APP_DATA = Path(
@@ -583,19 +585,19 @@ def _main(argv: list[str]) -> int:
     if "--sessions" in args:
         rows = read_steps(log)
         if not rows:
-            print("no steps in %s" % log)
+            logger.debug("no steps in %s" % log)
             return 0
-        print("%-10s %6s  %-46s %s" % ("session", "steps", "verdicts", "tools"))
+        logger.debug("%-10s %6s  %-46s %s" % ("session", "steps", "verdicts", "tools"))
         for sid, e in sorted(sessions(rows).items(), key=lambda kv: -kv[1]["last"]):
             vd = " ".join("%s=%d" % (k, v) for k, v in sorted(e["verdicts"].items()))
-            print("%-10s %6d  %-46s %s" % (sid, e["n"], vd, ",".join(sorted(e["tools"]))[:40]))
-        print("\nlog: %s" % log)
+            logger.debug("%-10s %6d  %-46s %s" % (sid, e["n"], vd, ",".join(sorted(e["tools"]))[:40]))
+        logger.debug("\nlog: %s" % log)
         return 0
 
     if "--show" in args:
         i = args.index("--show")
         if i + 1 >= len(args):
-            print("usage: --show <session> [n]")
+            logger.debug("usage: --show <session> [n]")
             return 2
         sid = args[i + 1]
         limit = 20
@@ -606,33 +608,33 @@ def _main(argv: list[str]) -> int:
                 pass
         rows = [r for r in read_steps(log) if str(r.get("session")) == sid]
         if not rows:
-            print("no steps for session %s in %s" % (sid, log))
+            logger.debug("no steps for session %s in %s" % (sid, log))
             return 0
         for r in rows[-limit:]:
-            print("%4s  %-16s %-8s %-5s %s" % (
+            logger.debug("%4s  %-16s %-8s %-5s %s" % (
                 r.get("index"), r.get("tool"), r.get("verdict"),
                 r.get("source", "?"), (r.get("note") or "")[:60]))
-        print("\nlabel one:  python -m agent.verifier --label %s <index> <verdict> \"why\"" % sid)
+        logger.debug("\nlabel one:  python -m agent.verifier --label %s <index> <verdict> \"why\"" % sid)
         return 0
 
     if "--stats" in args or not args:
-        print("human labels: %d in %s" % (human.count(), human.path))
-        print("steps log:    %s" % log)
+        logger.debug("human labels: %d in %s" % (human.count(), human.path))
+        logger.debug("steps log:    %s" % log)
         rows = read_steps(log)
         if rows:
-            print("sessions:     %d (%d steps)" % (len(sessions(rows)), len(rows)))
+            logger.debug("sessions:     %d (%d steps)" % (len(sessions(rows)), len(rows)))
         return 0
 
     if "--label" in args:
         i = args.index("--label")
         rest = args[i + 1:]
         if len(rest) < 3:
-            print("usage: --label <session> <index> <verdict> [note]")
+            logger.debug("usage: --label <session> <index> <verdict> [note]")
             return 2
         session, index, verdict = rest[0], int(rest[1]), rest[2]
         note = " ".join(rest[3:]) if len(rest) > 3 else ""
         human.add(session, index, verdict, note)
-        print("recorded %s/%s -> %s" % (session, index, verdict))
+        logger.debug("recorded %s/%s -> %s" % (session, index, verdict))
 
         # Point at the next step that still has only a rule label: that is the
         # queue a reviewer actually works through.
@@ -640,12 +642,12 @@ def _main(argv: list[str]) -> int:
         pending = [r for r in rows if r.get("source") != "human"]
         if pending:
             nxt = pending[0]
-            print("next unlabeled: %s (%s, %s)" % (nxt.get("index"), nxt.get("tool"), nxt.get("verdict")))
+            logger.debug("next unlabeled: %s (%s, %s)" % (nxt.get("index"), nxt.get("tool"), nxt.get("verdict")))
         else:
-            print("session %s is fully reviewed" % session)
+            logger.debug("session %s is fully reviewed" % session)
         return 0
 
-    print(__doc__)
+    logger.debug(__doc__)
     return 2
 
 

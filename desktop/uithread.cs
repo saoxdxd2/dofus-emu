@@ -15,6 +15,7 @@
 using System;
 using System.Threading;
 using System.Windows.Forms;
+using System.Diagnostics;
 
 namespace DofusFarm.UI
 {
@@ -30,7 +31,7 @@ namespace DofusFarm.UI
             _context = SynchronizationContext.Current;
             if (_context == null)
             {
-                try { _context = new WindowsFormsSynchronizationContext(); } catch { }
+                try { _context = new WindowsFormsSynchronizationContext(); } catch (Exception ex) { Debug.WriteLine("[WARN] UiThread.Capture: " + ex.Message); }
             }
             // The one queue every background thread posts into. Starting it here, on
             // the UI thread before the message loop, is what makes the first frame tick
@@ -80,7 +81,7 @@ namespace DofusFarm.UI
 
             if (_main != null && _main.IsHandleCreated)
             {
-                try { _main.BeginInvoke(action); return; } catch { }
+                try { _main.BeginInvoke(action); return; } catch (Exception ex) { Debug.WriteLine("[WARN] UiThread.Post: " + ex.Message); }
             }
 
             // Last resort: no context, no handle. Run it where we are and let the
@@ -100,7 +101,7 @@ namespace DofusFarm.UI
             }
             if (_main != null && _main.IsHandleCreated)
             {
-                try { _main.Invoke(action); return; } catch { }
+                try { _main.Invoke(action); return; } catch (Exception ex) { Debug.WriteLine("[WARN] UiThread.Send: " + ex.Message); }
             }
             Post(action);
         }
@@ -113,3 +114,5 @@ namespace DofusFarm.UI
         }
     }
 }
+
+

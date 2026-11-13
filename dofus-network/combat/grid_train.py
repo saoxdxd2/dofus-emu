@@ -25,6 +25,8 @@ from typing import Any, Dict, Optional, Tuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     from combat import grid_model
@@ -100,15 +102,15 @@ def _batch(data: Dict[str, jax.Array], indices: np.ndarray) -> Dict[str, jax.Arr
     return {key: value[indices] for key, value in data.items()}
 
 
-def _tree_zeros(params):
+def _tree_zeros(params) -> Any:
     return jax.tree_util.tree_map(jnp.zeros_like, params)
 
 
-def adam_init(params):
+def adam_init(params) -> Any:
     return {"m": _tree_zeros(params), "v": _tree_zeros(params), "t": 0}
 
 
-def adam_update(params, grads, opt, lr: float = 3e-4):
+def adam_update(params, grads, opt, lr: float = 3e-4) -> Any:
     b1, b2, eps = 0.9, 0.999, 1e-8
     t = opt["t"] + 1
     norm = jnp.sqrt(sum(jnp.sum(g * g) for g in jax.tree_util.tree_leaves(grads)))
@@ -149,7 +151,7 @@ def _loss(params, batch) -> Tuple[jax.Array, Dict[str, jax.Array]]:
 
 @jax.jit
 def _eval_step(params, cells, cell_mask, fighters, fighter_mask,
-               plans, plan_mask, targets):
+               plans, plan_mask, targets) -> Any:
     """One evaluation batch, compiled.
 
     Eager `grid_model.forward` over 30.7 M parameters costs tens of seconds per
@@ -211,14 +213,14 @@ def main(argv: Optional[list] = None) -> int:
         # The recorded corpus is pass-only, so this is the expected state of a
         # fresh checkout. Point at the generator that produces actionable rows
         # instead of at the empty directory.
-        print("no training rows. Build the synthetic curriculum first:\n"
+        logger.debug("no training rows. Build the synthetic curriculum first:\n"
               "  python -m combat.grid_synth --curriculum 200 --out %s" % args.data)
         return 2
     params = grid_model.init_params(
         jax.random.PRNGKey(args.seed), hidden=args.hidden,
         cell_layers=args.cell_layers, fighter_layers=args.fighter_layers,
         plan_layers=args.plan_layers)
-    print("params", grid_model.param_count(params), "train", train["labels"].shape[0],
+    logger.debug("params", grid_model.param_count(params), "train", train["labels"].shape[0],
           "val", val["labels"].shape[0], "test", test["labels"].shape[0])
     opt = adam_init(params)
     grad = jax.jit(jax.value_and_grad(_loss, has_aux=True))
@@ -239,7 +241,7 @@ def main(argv: Optional[list] = None) -> int:
         if val["labels"].shape[0]:
             row["val"] = evaluate(params, val, args.batch)
         history.append(row)
-        print(json.dumps(row, sort_keys=True))
+        logger.debug(json.dumps(row, sort_keys=True))
     metrics = {"history": history, "config": {
         "hidden": args.hidden, "cell_layers": args.cell_layers,
         "fighter_layers": args.fighter_layers, "plan_layers": args.plan_layers,
@@ -247,7 +249,7 @@ def main(argv: Optional[list] = None) -> int:
     }}
     if test["labels"].shape[0]:
         metrics["test"] = evaluate(params, test, args.batch)
-        print("test", json.dumps(metrics["test"], sort_keys=True))
+        logger.debug("test", json.dumps(metrics["test"], sort_keys=True))
 
     # Verification before live boards: the corpus manifest records the
     # uniform-guess floor over its own winning sets. A ranker that cannot beat
@@ -268,7 +270,7 @@ def main(argv: Optional[list] = None) -> int:
         passed = float(evaluated["top1"]) > float(threshold)
         metrics["verification"] = {"top1": evaluated["top1"], "floor": floor,
                                   "threshold": threshold, "passed": passed}
-        print("verification", json.dumps(metrics["verification"], sort_keys=True))
+        logger.debug("verification", json.dumps(metrics["verification"], sort_keys=True))
         verified = passed or args.allow_below_floor
     args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / "model.pkl").open("wb") as handle:
@@ -276,9 +278,9 @@ def main(argv: Optional[list] = None) -> int:
                      "config": metrics["config"], "metrics": metrics}, handle)
     (args.out / "metrics.json").write_text(
         json.dumps(metrics, indent=1, sort_keys=True), encoding="utf-8")
-    print("wrote", args.out)
+    logger.debug("wrote", args.out)
     if not verified:
-        print("checkpoint written but verification FAILED: top-1 does not beat the "
+        logger.debug("checkpoint written but verification FAILED: top-1 does not beat the "
               "uniform-guess floor; pass --allow-below-floor to accept it deliberately")
         return 1
     return 0

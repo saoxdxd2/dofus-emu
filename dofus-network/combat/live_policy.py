@@ -835,9 +835,10 @@ class LivePolicy:
         if plan is None:
             return None
         try:
-            from combat import threat
-
-            model = threat.build(board, memory=threat.default_memory())
+            model = getattr(getattr(self, "solver", None), "last_threat", None)
+            if model is None:
+                from combat import threat
+                model = threat.build(board, memory=threat.default_memory())
             return {
                 "cell": int(plan.final_cell),
                 "exposure": round(float(plan.exposure), 2),

@@ -9,6 +9,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Diagnostics;
 
 namespace DofusFarm.Engine
 {
@@ -96,7 +97,7 @@ namespace DofusFarm.Engine
                     else if (Same(key, "oauth_browser")) settings.OauthBrowser = ParseBool(value, settings.OauthBrowser);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] RuntimeSettings.Load: " + ex.Message); }
             return settings;
         }
 
@@ -119,7 +120,7 @@ namespace DofusFarm.Engine
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);
                 lock (_lock) { _current = this; }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] RuntimeSettings.Save: " + ex.Message); }
         }
 
         public static int ClampRefresh(int ms)
@@ -143,3 +144,4 @@ namespace DofusFarm.Engine
         }
     }
 }
+

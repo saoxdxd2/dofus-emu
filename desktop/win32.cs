@@ -30,6 +30,12 @@ namespace DofusFarm.Native
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int GetGuiResources(IntPtr hProcess, int uiFlags);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetProcessHandleCount(IntPtr hProcess, out uint pdwHandleCount);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
             byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
@@ -141,6 +147,16 @@ namespace DofusFarm.Native
 
     public static class Win32
     {
+        public static int GetGuiResources(IntPtr hProcess, int uiFlags)
+        {
+            return NativeMethods.GetGuiResources(hProcess, uiFlags);
+        }
+
+        public static bool GetProcessHandleCount(IntPtr hProcess, out uint pdwHandleCount)
+        {
+            return NativeMethods.GetProcessHandleCount(hProcess, out pdwHandleCount);
+        }
+
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
             int X, int Y, int cx, int cy, uint uFlags);
@@ -415,7 +431,7 @@ namespace DofusFarm.Native
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] EnsureDeviceWindowInteractive: " + ex.Message); }
         }
 
         public static void HideEmulatorConsole(IEnumerable<int> launcherPids)

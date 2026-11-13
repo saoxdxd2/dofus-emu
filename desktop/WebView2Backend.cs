@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -65,7 +65,7 @@ namespace DofusFarm.Engine
             }
             else
             {
-                OnLog?.Invoke(string.Format("[WEBVIEW2-BACKEND] ⚠️ {0}", reason));
+                OnLog?.Invoke(string.Format("[WEBVIEW2-BACKEND] ?? {0}", reason));
             }
         }
 
@@ -215,9 +215,9 @@ namespace DofusFarm.Engine
                                     + "\n" + options.DisguiseScript;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
                 }
                 else
                 {
@@ -419,8 +419,8 @@ namespace DofusFarm.Engine
                 {
                     // CloseFromHost, not Close: it records that the app asked, so the
                     // close log can be told apart from the player shutting the window.
-                    try { form.CloseFromHost("WebView2Backend.Stop"); } catch { }
-                    try { form.Dispose(); } catch { }
+                    try { form.CloseFromHost("WebView2Backend.Stop"); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
+                    try { form.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
                 });
             }
 
@@ -483,7 +483,7 @@ namespace DofusFarm.Engine
                         }
                     }, null, delayMs, Timeout.Infinite);
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
             }
         }
 
@@ -558,7 +558,7 @@ namespace DofusFarm.Engine
                 if (hFg == IntPtr.Zero) return 0;
 
                 IntPtr root = hFg;
-                try { root = DofusFarm.Native.Win32.GetAncestor(hFg, DofusFarm.Native.Win32.GA_ROOT); } catch { }
+                try { root = DofusFarm.Native.Win32.GetAncestor(hFg, DofusFarm.Native.Win32.GA_ROOT); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
 
                 foreach (var f in _activeForms.Values)
                 {
@@ -567,7 +567,7 @@ namespace DofusFarm.Engine
                     if (hFg == h || root == h) return f.BrowserProcessId;
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
             return 0;
         }
 
@@ -658,7 +658,7 @@ namespace DofusFarm.Engine
         private void SetState(string instanceId, ClientInstanceState newState)
         {
             _states[instanceId] = newState;
-            try { OnStateChanged?.Invoke(instanceId, newState); } catch { }
+            try { OnStateChanged?.Invoke(instanceId, newState); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
         }
 
         private static void SafeUiInvoke(Control c, Action action)
@@ -675,7 +675,7 @@ namespace DofusFarm.Engine
         {
             lock (_autoTileLock)
             {
-                if (_autoTileDebounceTimer != null) { try { _autoTileDebounceTimer.Dispose(); } catch { } _autoTileDebounceTimer = null; }
+                if (_autoTileDebounceTimer != null) { try { _autoTileDebounceTimer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); } _autoTileDebounceTimer = null; }
             }
             foreach (var kvp in _activeForms)
             {
@@ -683,14 +683,16 @@ namespace DofusFarm.Engine
                 {
                     SafeUiInvoke(kvp.Value, () =>
                     {
-                        try { kvp.Value.CloseFromHost("WebView2Backend.CloseAll"); } catch { }
-                        try { kvp.Value.Dispose(); } catch { }
+                        try { kvp.Value.CloseFromHost("WebView2Backend.CloseAll"); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
+                        try { kvp.Value.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
                     });
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2Backend: " + ex.Message); }
             }
             _activeForms.Clear();
             _states.Clear();
         }
     }
 }
+
+

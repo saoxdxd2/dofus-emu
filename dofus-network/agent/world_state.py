@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from agent.jsonio import utf8_console
+import logging
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = int(os.environ.get("DOFUS_WORLD_SCHEMA_VERSION", "2"))
 
@@ -842,16 +844,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             # The report can carry a client field name, so the console has to be
             # UTF-8 before anything is printed.
             utf8_console()
-            print(json.dumps(report, ensure_ascii=False, indent=1))
+            logger.debug(json.dumps(report, ensure_ascii=False, indent=1))
             return 0
-        print("observations        %d (%d with a map block)"
+        logger.debug("observations        %d (%d with a map block)"
               % (report["observations"], report["with_map"]))
-        print("schema version      %d" % report["schema_version"])
-        print("unknown top-level   %s"
+        logger.debug("schema version      %d" % report["schema_version"])
+        logger.debug("unknown top-level   %s"
               % (", ".join("%s=%d" % kv for kv in report["unknown"].items()) or "none"))
-        print("unknown entity      %s"
+        logger.debug("unknown entity      %s"
               % (", ".join("%s=%d" % kv for kv in report["unknown_entity"].items()) or "none"))
-        print("dropped by slots    %s"
+        logger.debug("dropped by slots    %s"
               % (", ".join("%s=%d" % kv for kv in report["dropped"].items()) or "none"))
         return 0
 
@@ -859,7 +861,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.show and index >= args.show:
             break
         state = from_observation(obs)
-        print(json.dumps(state.to_dict(), ensure_ascii=False, separators=(",", ":")))
+        logger.debug(json.dumps(state.to_dict(), ensure_ascii=False, separators=(",", ":")))
     return 0
 
 

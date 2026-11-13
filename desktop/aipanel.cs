@@ -188,7 +188,7 @@ namespace DofusFarm.UI
                     sb.AppendLine("shortcut." + kv.Key + "=" + kv.Value.ToString());
                 File.WriteAllText(PathFor(baseDir), sb.ToString());
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
         }
 
         private static int ParseInt(string v, int fallback)
@@ -809,7 +809,7 @@ namespace DofusFarm.UI
             // caller to be the UI thread.
             if (IsHandleCreated && InvokeRequired)
             {
-                try { Invoke((MethodInvoker)HarvestUiIntoSettings); } catch { }
+                try { Invoke((MethodInvoker)HarvestUiIntoSettings); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 return;
             }
             _settings.Mode = _cmbMode.SelectedIndex == 2 ? "auto" : (_cmbMode.SelectedIndex == 1 ? "order" : "off");
@@ -959,7 +959,7 @@ namespace DofusFarm.UI
 
             string work = Path.Combine(_baseDir, "dofus-network");
             string stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
-            try { Directory.CreateDirectory(stateDir); } catch { }
+            try { Directory.CreateDirectory(stateDir); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             // A stop file left over from a previous run makes the loop exit on its
             // first check -- it looks like "started" and does nothing. Clearing it
             // here is the difference between a no-op and a run.
@@ -1032,10 +1032,10 @@ namespace DofusFarm.UI
                                      : (File.Exists(baseline) ? baseline : null);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 if (verifier != null) sb.Append(" --verifier-model \"").Append(verifier).Append("\"");
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
 
             // One loop child per selected instance. They share the goals file and
             // the stop file, so Stop ends all of them at once, but each writes its
@@ -1081,7 +1081,7 @@ namespace DofusFarm.UI
                     string childStop = StopFilePath(instance);
                     // A stop file left from a previous per-instance stop would make
                     // this child exit on its first check, looking like it started.
-                    try { if (File.Exists(childStop)) File.Delete(childStop); } catch { }
+                    try { if (File.Exists(childStop)) File.Delete(childStop); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                     string args = sb.ToString()
                         + " --stop-file \"" + childStop + "\""
                         + " --log \"" + childLog + "\""
@@ -1163,7 +1163,7 @@ namespace DofusFarm.UI
                 foreach (KeyValuePair<Process, string> kv in _instanceByProc)
                 {
                     if (!string.Equals(kv.Value, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
-                    try { if (!kv.Key.HasExited) return kv.Value; } catch { }
+                    try { if (!kv.Key.HasExited) return kv.Value; } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 }
             }
             return null;
@@ -1341,7 +1341,7 @@ namespace DofusFarm.UI
                 foreach (KeyValuePair<Process, string> kv in _instanceByProc)
                 {
                     if (string.IsNullOrEmpty(kv.Value)) continue;
-                    try { if (!kv.Key.HasExited && !ids.Contains(kv.Value)) ids.Add(kv.Value); } catch { }
+                    try { if (!kv.Key.HasExited && !ids.Contains(kv.Value)) ids.Add(kv.Value); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 }
             }
             return ids;
@@ -1421,7 +1421,7 @@ namespace DofusFarm.UI
                 return !brainStillListsIt;
             }
             try { File.WriteAllText(StopFilePath(instanceId), why + " at " + DateTime.Now.ToString("HH:mm:ss")); }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             Append("[ai] " + instanceId + ": stop requested (" + why + "); waiting for its current step");
             bool exited = false;
             try
@@ -1430,10 +1430,10 @@ namespace DofusFarm.UI
                 if (!exited)
                 {
                     Append("[ai] " + instanceId + ": child did not exit; killing it");
-                    try { target.Kill(); exited = target.WaitForExit(2000); } catch { }
+                    try { target.Kill(); exited = target.WaitForExit(2000); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             return exited;
         }
 
@@ -1466,10 +1466,10 @@ namespace DofusFarm.UI
                     string instance;
                     if (!attributed.TryGetValue(p, out instance) || string.IsNullOrEmpty(instance)) continue;
                     try { File.WriteAllText(StopFilePath(instance), why + " at " + DateTime.Now.ToString("HH:mm:ss")); }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
 
             if (children.Count == 0)
             {
@@ -1486,10 +1486,10 @@ namespace DofusFarm.UI
                     if (!p.WaitForExit(4000))
                     {
                         Append("[ai] a child did not exit; killing it");
-                        try { p.Kill(); } catch { }
+                        try { p.Kill(); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             }
         }
 
@@ -1653,7 +1653,7 @@ namespace DofusFarm.UI
                         port = parsed;
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             return "http://127.0.0.1:" + port.ToString() + "/directive";
         }
 
@@ -1942,7 +1942,7 @@ namespace DofusFarm.UI
             string stateDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DofusFarm");
-            try { Directory.CreateDirectory(stateDir); } catch { }
+            try { Directory.CreateDirectory(stateDir); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
 
             var psi = new ProcessStartInfo();
             psi.FileName = python;
@@ -2179,7 +2179,7 @@ namespace DofusFarm.UI
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try { FetchBrainStatus(); }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 finally { Interlocked.Exchange(ref _brainStatusBusy, 0); }
             });
         }
@@ -2245,7 +2245,7 @@ namespace DofusFarm.UI
                         Append("[ai] " + id + " finished: " + reason);
                 }
                 TryIdleTraining();
-                try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
+                try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             }
         }
 
@@ -2403,7 +2403,7 @@ namespace DofusFarm.UI
             if (InvokeRequired)
             {
                 try { UiDispatcher.Instance.Post("aipanel-services", UpdateServiceUi); }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 return;
             }
             bool brain = _brainService.Connected;
@@ -2479,7 +2479,7 @@ namespace DofusFarm.UI
                 foreach (KeyValuePair<Process, string> kv in _instanceByProc)
                 {
                     if (!string.Equals(kv.Value, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
-                    try { if (!kv.Key.HasExited) return true; } catch { }
+                    try { if (!kv.Key.HasExited) return true; } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 }
             }
             return false;
@@ -2532,9 +2532,9 @@ namespace DofusFarm.UI
                 int code = p.ExitCode;
                 Append("[ai] brain daemon exited (code " + code.ToString() + ")");
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             if (had) TryIdleTraining();
-            try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
+            try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
         }
 
         private void StopBrainProcess()
@@ -2552,7 +2552,7 @@ namespace DofusFarm.UI
             {
                 if (!process.HasExited) process.Kill();
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
         }
 
         // -- child process ----------------------------------------------------
@@ -2565,7 +2565,7 @@ namespace DofusFarm.UI
                 List<Process> children;
                 lock (_procLock) { children = new List<Process>(_procs); }
                 foreach (Process p in children)
-                    try { if (!p.HasExited) return true; } catch { }
+                    try { if (!p.HasExited) return true; } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
                 return false;
             }
         }
@@ -2592,7 +2592,7 @@ namespace DofusFarm.UI
                            + (string.IsNullOrEmpty(reason) ? "" : ": " + reason));
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             // Idle training and the UI flip belong to the LAST child, not the first:
             // with several loops running, the quickest one finishing would train on
             // half a run and show "idle" while the others were still playing.
@@ -2607,7 +2607,7 @@ namespace DofusFarm.UI
                 {
                     BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); });
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             }
         }
 
@@ -2702,7 +2702,7 @@ namespace DofusFarm.UI
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             return null;
         }
 
@@ -2831,7 +2831,7 @@ namespace DofusFarm.UI
             {
                 if (_log != null) _log(line);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
         }
 
         private static string Shorten(string s, int max)
@@ -2844,12 +2844,14 @@ namespace DofusFarm.UI
         {
             if (disposing)
             {
-                try { if (_serviceTimer != null) { _serviceTimer.Stop(); _serviceTimer.Dispose(); } } catch { }
-                try { if (_streamCts != null) _streamCts.Cancel(); } catch { }
-                try { StopAuto("window closed"); } catch { }
-                try { StopBrainProcess(); } catch { }
+                try { if (_serviceTimer != null) { _serviceTimer.Stop(); _serviceTimer.Dispose(); } } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
+                try { if (_streamCts != null) _streamCts.Cancel(); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
+                try { StopAuto("window closed"); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
+                try { StopBrainProcess(); } catch (Exception ex) { Debug.WriteLine("[WARN] aipanel: " + ex.Message); }
             }
             base.Dispose(disposing);
         }
     }
 }
+
+

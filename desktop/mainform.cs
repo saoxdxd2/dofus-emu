@@ -411,12 +411,12 @@ namespace DofusFarm.UI
                         if (File.Exists(deepLinkPath))
                         {
                             string url = File.ReadAllText(deepLinkPath).Trim();
-                            try { File.Delete(deepLinkPath); } catch { }
+                            try { File.Delete(deepLinkPath); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                             if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);
                         }
                         if (!File.Exists(path)) return;
                         string name = File.ReadAllText(path).Trim();
-                        try { File.Delete(path); } catch { }
+                        try { File.Delete(path); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                         if (string.IsNullOrEmpty(name)) return;
                         if (name.StartsWith("reset:", StringComparison.OrdinalIgnoreCase))
                         {
@@ -429,11 +429,11 @@ namespace DofusFarm.UI
                             LaunchInstanceFromCommandLine(name);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Trace.WriteLine("[CLI] LaunchRequestTimer tick error: " + ex.Message); }
                 };
                 _launchRequestTimer.Start();
             }
-            catch { }
+            catch (Exception ex) { Trace.WriteLine("[CLI] InitLaunchRequestTimer error: " + ex.Message); }
         }
 
         /// <summary>Give the OAuth callback to the client that asked for it.
@@ -450,7 +450,7 @@ namespace DofusFarm.UI
             try
             {
                 string target = null;
-                try { target = OAuthBrowserHandoff.TakePending(); } catch { }
+                try { target = OAuthBrowserHandoff.TakePending(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                 if (string.IsNullOrEmpty(target))
                 {
                     List<string> ids = null;
@@ -526,7 +526,7 @@ namespace DofusFarm.UI
                     {
                         if (IsLocalPortListening(sentinelPort))
                         {
-                            try { _sentinelProcess.Dispose(); } catch { }
+                            try { _sentinelProcess.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                             _sentinelProcess = null;
                             Log(string.Format("🧠 Singleton AI Sentinel already running on port {0} - reusing it.", sentinelPort));
                         }
@@ -536,7 +536,7 @@ namespace DofusFarm.UI
 
                 }
 
-                catch { }
+                catch (Exception ex) { Log("⚠ Singleton AI Sentinel failed to start: " + ex.Message); }
 
             });
 
@@ -657,7 +657,7 @@ namespace DofusFarm.UI
 
             string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
 
-            if (File.Exists(iconPath)) { try { Icon = new Icon(iconPath); } catch { } }
+            if (File.Exists(iconPath)) { try { Icon = new Icon(iconPath); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } }
 
 
 
@@ -1144,7 +1144,7 @@ namespace DofusFarm.UI
         {
             foreach (int id in _hotkeys.Keys)
             {
-                try { UnregisterHotKey(Handle, id); } catch { }
+                try { UnregisterHotKey(Handle, id); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
             }
             _hotkeys.Clear();
         }
@@ -1217,7 +1217,7 @@ namespace DofusFarm.UI
             {
                 // Changing the egress invalidates every relay that is already
                 // running: they hold the old upstream in their command line.
-                try { _engine.StopAllProxies(); } catch { }
+                try { _engine.StopAllProxies(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
             }, ApplyRuntimeSettings);
             _pageShortcuts = new ShortcutsPage(baseDir, _aiPanel.Settings, delegate { _aiPanel.SaveSettings(); });
 
@@ -1229,7 +1229,7 @@ namespace DofusFarm.UI
                 Log("[NET] egress: " + startupNet.Summary + "  |  relay " + startupNet.BasePort + "+slot  |  " +
                     (startupNet.FailClosed ? "fail closed" : "will fall back to direct"));
             }
-            catch { }
+            catch (Exception ex) { Log("[NET] Failed reading network settings: " + ex.Message); }
             _pageLogs = new LogsPage(baseDir);
 
             _pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(20, 22, 28) };
@@ -1363,7 +1363,7 @@ namespace DofusFarm.UI
                 foreach (string id in ids)
                     if (!string.IsNullOrEmpty(id)) PushAiState(id);
             }
-            catch { }
+            catch (Exception ex) { Trace.WriteLine("[MainForm] PushAiState error: " + ex.Message); }
         }
 
         private static string JsQuote(string s)
@@ -1455,7 +1455,7 @@ namespace DofusFarm.UI
                                                        : Color.FromArgb(203, 213, 225);
                 }
             }
-            catch { }
+            catch (Exception ex) { Trace.WriteLine("[MainForm] RefreshAiLive error: " + ex.Message); }
         }
 
         /// <summary>Repaint the AI column alone.
@@ -1475,7 +1475,7 @@ namespace DofusFarm.UI
                 DataGridViewColumn col = _grid.Columns["Ai"];
                 if (col != null) _grid.InvalidateColumn(col.Index);
             }
-            catch { }
+            catch (Exception ex) { Trace.WriteLine("[MainForm] RepaintAiColumn error: " + ex.Message); }
         }
 
         /// <summary>
@@ -1527,7 +1527,7 @@ namespace DofusFarm.UI
                         }
                     });
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                 Interlocked.Exchange(ref _netBusy, 0);
             });
         }
@@ -1862,7 +1862,7 @@ namespace DofusFarm.UI
 
             }
 
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
             finally { _suppressGpuEvent = false; }
 
@@ -1982,7 +1982,7 @@ namespace DofusFarm.UI
                             if (_webViewBackend != null)
                                 live = _webViewBackend.GetActiveInstanceIds().Count;
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                         if (live > 0)
                         {
@@ -2063,7 +2063,7 @@ namespace DofusFarm.UI
 
                 }
 
-                catch { }
+                catch (Exception ex) { Trace.WriteLine("[MainForm] HardwareSpecs.Detect error: " + ex.Message); }
 
             });
 
@@ -2354,7 +2354,7 @@ namespace DofusFarm.UI
 
         {
 
-            try { if (_logWriter != null) { _logWriter.Flush(); _logWriter.Dispose(); } } catch { }
+            try { if (_logWriter != null) { _logWriter.Flush(); _logWriter.Dispose(); } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
             _logWriter = null;
 
@@ -2386,7 +2386,7 @@ namespace DofusFarm.UI
 
             }
 
-            catch { }
+            catch (Exception ex) { Trace.WriteLine("[MainForm] RotateLogFile error: " + ex.Message); }
 
         }
 
@@ -2514,7 +2514,7 @@ namespace DofusFarm.UI
 
 
 
-            try { _logSignal.Set(); } catch { }
+            try { _logSignal.Set(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2590,7 +2590,7 @@ namespace DofusFarm.UI
 
 
 
-            try { thread.Join(2000); } catch { }
+            try { thread.Join(2000); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2602,7 +2602,7 @@ namespace DofusFarm.UI
 
 
 
-                try { if (_logWriter != null) { _logWriter.Flush(); _logWriter.Dispose(); _logWriter = null; } } catch { }
+                try { if (_logWriter != null) { _logWriter.Flush(); _logWriter.Dispose(); _logWriter = null; } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2634,7 +2634,7 @@ namespace DofusFarm.UI
 
 
 
-                try { _logSignal.WaitOne(1000); } catch { }
+                try { _logSignal.WaitOne(1000); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2770,7 +2770,7 @@ namespace DofusFarm.UI
 
 
 
-                    try { if (_logWriter != null) { _logWriter.Dispose(); _logWriter = null; } } catch { }
+                    try { if (_logWriter != null) { _logWriter.Dispose(); _logWriter = null; } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2802,7 +2802,7 @@ namespace DofusFarm.UI
 
 
 
-                    try { if (_logWriter != null) { _logWriter.Flush(); _logWritesSinceFlush = 0; } } catch { }
+                    try { if (_logWriter != null) { _logWriter.Flush(); _logWritesSinceFlush = 0; } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -2892,7 +2892,7 @@ namespace DofusFarm.UI
 
 
 
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -3239,7 +3239,7 @@ namespace DofusFarm.UI
 
                 }
 
-                catch { }
+                catch (Exception ex) { Trace.WriteLine("[MainForm] RefreshGrid error: " + ex.Message); }
 
                 finally
 
@@ -3348,7 +3348,7 @@ namespace DofusFarm.UI
 
                     {
 
-                        try { _engine.Adb("", "start-server", 6000); } catch { }
+                        try { _engine.Adb("", "start-server", 6000); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -3512,7 +3512,7 @@ namespace DofusFarm.UI
 
                 }
 
-                catch { }
+                catch (Exception ex) { Log("Window layout error: " + ex.Message); }
 
             });
 
@@ -3616,7 +3616,7 @@ namespace DofusFarm.UI
 
             string mode = idx == 1 ? "angle_indirect" : (idx == 2 ? "swiftshader_indirect" : "host");
 
-            ThreadPool.QueueUserWorkItem(delegate { try { _engine.SetConfiguredGpuMode(mode); } catch { } });
+            ThreadPool.QueueUserWorkItem(delegate { try { _engine.SetConfiguredGpuMode(mode); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } });
 
         }
 
@@ -4245,7 +4245,7 @@ namespace DofusFarm.UI
                     {
                         try { _aiPanel.ToggleAi(aiSlot); }
                         catch (Exception ex) { Log(string.Format("[AI] {0}: toggle failed: {1}", aiSlot, ex.Message)); }
-                        finally { try { SafeBeginInvoke(delegate { RefreshGrid(true); }); } catch { } }
+                        finally { try { SafeBeginInvoke(delegate { RefreshGrid(true); }); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } }
                     });
                     break;
                 }
@@ -4421,7 +4421,7 @@ namespace DofusFarm.UI
                     manualLogin = System.IO.File.Exists(
                         System.IO.Path.Combine(_engine.AppBaseDir, "manual-login.flag"));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                 // A slot the operator reset must not be handed the pool entry it was reset
                 // to escape. `accounts.txt` is positional, so the banned guest came back on
@@ -4438,7 +4438,7 @@ namespace DofusFarm.UI
                     freshIdentity = System.IO.File.Exists(
                         System.IO.Path.Combine(WebView2ProfileDir(inst.Name), "force_fresh_identity.flag"));
                 }
-                catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                 System.Collections.Generic.KeyValuePair<string, string>? acc = null;
                 if (!manualLogin && !freshIdentity) acc = FarmEngine.GetAccountForSlot(slot);
@@ -4511,7 +4511,7 @@ namespace DofusFarm.UI
                     choice.Direct ? "DIRECT" : upstream, choice.Reason));
                 // Start the clock: how long this session lasts is the only real evidence about
                 // whether this egress can carry a game.
-                try { ProxySupervisor.Instance.NoteSessionStart(choice.Direct ? "DIRECT" : upstream); } catch { }
+                try { ProxySupervisor.Instance.NoteSessionStart(choice.Direct ? "DIRECT" : upstream); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                 bool wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
 
@@ -4528,7 +4528,7 @@ namespace DofusFarm.UI
 
                     opts.ProxyPort = localProxyPort;
 
-                    try { opts.CacheDir = System.IO.Path.Combine(_engine.AppBaseDir, "asset_cache"); } catch { }
+                    try { opts.CacheDir = System.IO.Path.Combine(_engine.AppBaseDir, "asset_cache"); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                     Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
 
@@ -4605,7 +4605,7 @@ namespace DofusFarm.UI
 
 
 
-            try { StopLogWriter(); } catch { }
+            try { StopLogWriter(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
 
 
@@ -4618,14 +4618,14 @@ namespace DofusFarm.UI
         protected override void OnFormClosing(FormClosingEventArgs e)
 
         {
-            try { UnregisterGlobalShortcuts(); } catch { }
-            try { if (_aiLiveTimer != null) { _aiLiveTimer.Stop(); _aiLiveTimer.Dispose(); _aiLiveTimer = null; } } catch { }
-            try { if (_netLiveTimer != null) { _netLiveTimer.Stop(); _netLiveTimer.Dispose(); _netLiveTimer = null; } } catch { }
+            try { UnregisterGlobalShortcuts(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
+            try { if (_aiLiveTimer != null) { _aiLiveTimer.Stop(); _aiLiveTimer.Dispose(); _aiLiveTimer = null; } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
+            try { if (_netLiveTimer != null) { _netLiveTimer.Stop(); _netLiveTimer.Dispose(); _netLiveTimer = null; } } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
             // Persist the AI panel's mode, budgets and shortcuts. Doing it here
             // rather than on every keystroke keeps the file from being rewritten
             // while the loop is starting up.
-            try { if (_aiPanel != null) _aiPanel.SaveSettings(); } catch { }
+            try { if (_aiPanel != null) _aiPanel.SaveSettings(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
             if (e.CloseReason == CloseReason.UserClosing && !_isClosing)
 
@@ -4685,7 +4685,7 @@ namespace DofusFarm.UI
 
 
 
-            if (_syncTimer != null) { try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { } _syncTimer = null; }
+            if (_syncTimer != null) { try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _syncTimer = null; }
 
             if (_engine != null) _engine.OnLog -= Log;
 
@@ -4693,9 +4693,9 @@ namespace DofusFarm.UI
 
             if (_governor != null) { _governor.OnLog -= Log; _governor.Stop(); }
 
-            if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch { } _agentBridge = null; }
+            if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _agentBridge = null; }
 
-            if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } }
+            if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } }
 
 
 
@@ -4741,15 +4741,15 @@ namespace DofusFarm.UI
 
                         }
 
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                         finally { _sentinelProcess = null; }
 
                     }
 
                 }
-                catch { }
-                try { FarmEngine.StopWarp(); } catch { }
+                catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
+                try { FarmEngine.StopWarp(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
                 finally
 
                 {
@@ -4758,7 +4758,7 @@ namespace DofusFarm.UI
 
                     Interlocked.Exchange(ref _shutdownComplete, 1);
 
-                    try { UiDispatcher.Instance.Post("form-close", Close); } catch { }
+                    try { UiDispatcher.Instance.Post("form-close", Close); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); }
 
                 }
 
@@ -4780,15 +4780,15 @@ namespace DofusFarm.UI
 
                 _isClosing = true;
 
-                if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch { } _agentBridge = null; }
+                if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _agentBridge = null; }
 
-                if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } _webViewBackend = null; }
+                if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _webViewBackend = null; }
 
-                if (_cellBadgeFont != null) { try { _cellBadgeFont.Dispose(); } catch { } _cellBadgeFont = null; }
+                if (_cellBadgeFont != null) { try { _cellBadgeFont.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _cellBadgeFont = null; }
 
-                if (_customNameFont != null) { try { _customNameFont.Dispose(); } catch { } _customNameFont = null; }
+                if (_customNameFont != null) { try { _customNameFont.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } _customNameFont = null; }
 
-                if (Icon != null) { try { Icon.Dispose(); } catch { } }
+                if (Icon != null) { try { Icon.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] mainform: " + ex.Message); } }
 
             }
 
@@ -5189,4 +5189,6 @@ namespace DofusFarm.UI
     }
 
 }
+
+
 

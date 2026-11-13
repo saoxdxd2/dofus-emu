@@ -122,6 +122,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 METHODS = ("identity", "temperature", "platt", "isotonic")
 DEFAULT_METHOD = "platt"
@@ -669,7 +671,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     from agent.foresight import load as load_net
     net = load_net(args.model / "foresight.json")
     if net is None:
-        print("no artifact at %s" % (args.model / "foresight.json"), file=sys.stderr)
+        logger.debug("no artifact at %s" % (args.model / "foresight.json"), file=sys.stderr)
         return 2
     net.attach_calibration(None)  # fit against the raw logits, never the sidecar's output
 
@@ -677,15 +679,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     rows = [r for r in rows if r.get("at")]
     rows.sort(key=lambda r: float(r["at"]))
     if len(rows) < 200:
-        print("not enough actionable rows (%d) to calibrate" % len(rows), file=sys.stderr)
+        logger.debug("not enough actionable rows (%d) to calibrate" % len(rows), file=sys.stderr)
         return 2
     logits, labels, groups = _score_rows(net, rows)
     if not logits:
-        print("the artifact scored no rows", file=sys.stderr)
+        logger.debug("the artifact scored no rows", file=sys.stderr)
         return 2
 
     if args.backtest:
-        print(json.dumps(backtest(logits, labels, groups, folds=args.backtest,
+        logger.debug(json.dumps(backtest(logits, labels, groups, folds=args.backtest,
                                   window=args.folds_window, min_group=args.min_group),
                          indent=1))
         return 0
@@ -729,7 +731,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     out["shipped"] = {"method": args.method,
                       "report": evaluate(shipped_probs, rep_y),
                       "reliability_report": reliability(shipped_probs, rep_y)}
-    print(json.dumps(out, indent=1))
+    logger.debug(json.dumps(out, indent=1))
     if args.write:
         # The shipped artifact must be fitted on the *recent* era, not the whole corpus. The
         # corpus contains an era in which `nav.goto` moved the character 17.3% of the time and a
@@ -749,7 +751,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                          .get("summary") if len(logits) >= 2500 else None),
         })
         path = save(args.model / "calibration.json", shipped)
-        print("wrote %s (fitted on the last %d rows, base rate %.3f)"
+        logger.debug("wrote %s (fitted on the last %d rows, base rate %.3f)"
               % (path, tail, sum(ry) / len(ry)))
     return 0
 

@@ -38,6 +38,8 @@ from combat.duel import (DuelState, Duelist, engaged_cells, live_spell,
                          solver_policy, value_policy)
 from combat.encounter.build_dataset import load_class_loadouts
 from combat.normal_build_duel import build_duelist
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAP = REPO_ROOT / "data" / "maps" / "100139008.json"
@@ -165,7 +167,7 @@ def run(args: argparse.Namespace) -> int:
         try:
             model = pickle.loads(Path(args.value).read_bytes())["model"]
         except Exception as exc:  # noqa: BLE001
-            print("value model could not be loaded: %s" % exc)
+            logger.debug("value model could not be loaded: %s" % exc)
     rows: List[Dict[str, Any]] = []
     policy_names = ["solver", "two_ply"] + (["value"] if model is not None else [])
     for boss in ([args.boss] if args.boss else list(BOSSES)):
@@ -173,7 +175,7 @@ def run(args: argparse.Namespace) -> int:
             row = run_matchup(cells, solver, boss, policy, args.games, args.seed,
                               model=model)
             rows.append(row)
-            print("%-18s %-8s wins %2d/%-2d (%.2f, ci %s) lost %d drew %d turns %s hp_left %s"
+            logger.debug("%-18s %-8s wins %2d/%-2d (%.2f, ci %s) lost %d drew %d turns %s hp_left %s"
                   % (boss, policy, row["wins"], row["games"],
                      row.get("win_rate") or 0.0, row.get("win_rate_ci95"),
                      row.get("losses") or 0, row.get("draws") or 0,
@@ -192,7 +194,7 @@ def run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(verdict, indent=2), encoding="utf-8")
-    print("wrote " + str(out))
+    logger.debug("wrote " + str(out))
     return 0
 
 

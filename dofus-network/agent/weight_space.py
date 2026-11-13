@@ -35,6 +35,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -275,12 +277,12 @@ def _top_indices(row: Sequence[float], names: Sequence[str],
             if abs(row[i]) > 1e-9]
 
 
-def _gelu(z):
+def _gelu(z) -> Any:
     import numpy as np
     return 0.5 * z * (1.0 + np.vectorize(math.erf)(z / math.sqrt(2.0)))
 
 
-def _activations(weights: Dict[str, Any], x):
+def _activations(weights: Dict[str, Any], x) -> dict[str, Any]:
     import numpy as np
     names = sorted(n for n in weights if n.endswith(".weight"))
     h, out = x, {}
@@ -331,7 +333,7 @@ def build_unit_manifest(weights: Dict[str, Any],
             "tools": list(tools), "layers": layers}
 
 
-def forward(weights: Dict[str, Any], x):
+def forward(weights: Dict[str, Any], x) -> Any:
     import numpy as np
     arr = np.asarray(x, dtype="float64")
     names = sorted(n for n in weights if n.endswith(".weight"))
@@ -345,7 +347,7 @@ def forward(weights: Dict[str, Any], x):
     return h
 
 
-def _softmax(logits):
+def _softmax(logits) -> Any:
     import numpy as np
     z = logits - logits.max(axis=1, keepdims=True)
     e = np.exp(z)
@@ -601,7 +603,7 @@ def apply_edits(manifest: Dict[str, Any], edits: Sequence[Dict[str, Any]],
                 *, base_sha256: Optional[str] = None,
                 max_changes: int = 20, max_abs_delta: float = 1.0,
                 max_l2: float = 2.0,
-                allowed_tensors: Optional[Sequence[str]] = None):
+                allowed_tensors: Optional[Sequence[str]] = None) -> tuple[Dict[str, Any], dict[str, Any]]:
     if base_sha256 and manifest["base"].get("sha256") != base_sha256:
         raise EditRejected("base sha256 mismatch: edit was made against other weights")
     if len(edits) > max_changes:
@@ -1088,7 +1090,7 @@ def _replay_candidate(cand_onnx: Path, val: Path) -> int:
     rule, so a retrain cannot be promoted on a metric an edit would be denied.
     """
     verdict = candidate_verdict(cand_onnx, val)
-    print(json.dumps(verdict, ensure_ascii=False, indent=2))
+    logger.debug(json.dumps(verdict, ensure_ascii=False, indent=2))
     if "error" in verdict:
         return 3 if "pin" in verdict["error"] else 4
     return 0 if verdict["gate"]["promote"] else 2
@@ -1155,15 +1157,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "inventory":
-        print(json.dumps(inventory(), ensure_ascii=False, indent=2))
+        logger.debug(json.dumps(inventory(), ensure_ascii=False, indent=2))
         return 0
     if args.command == "export":
         manifest = export_manifest()
         problems = validate_manifest(manifest)
         if problems:
-            print("manifest problems: %s" % problems); return 1
+            logger.debug("manifest problems: %s" % problems); return 1
         Path(args.out).write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        print("exported %d tensors (%d params) -> %s"
+        logger.debug("exported %d tensors (%d params) -> %s"
               % (len(manifest["tensors"]), manifest["base"]["params"], args.out))
         return 0
     if args.command == "replay":
@@ -1180,16 +1182,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                    "reachable_tools", "unreachable_tools")}
         replay["split"] = split_provenance(Path(args.val))
         replay["pin"] = check_pin(Path(args.val))
-        print(json.dumps(replay, ensure_ascii=False, indent=2))
+        logger.debug(json.dumps(replay, ensure_ascii=False, indent=2))
         return 0
     if args.command == "promote":
         verdict = candidate_verdict(Path(args.onnx), Path(args.val))
         if "error" in verdict:
-            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+            logger.debug(json.dumps(verdict, ensure_ascii=False, indent=2))
             return 3
         passed = bool(verdict["gate"]["promote"])
         if not passed and not args.force:
-            print(json.dumps({
+            logger.debug(json.dumps({
                 "promoted": False, "gate": verdict["gate"],
                 "hint": "the gate rejected this artifact; --force installs it "
                         "anyway and records that it was forced",
@@ -1197,7 +1199,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         installed = install_candidate(Path(args.onnx))
         record = pin_provenance(Path(args.val), Path(PROVENANCE_PATH))
-        print(json.dumps({
+        logger.debug(json.dumps({
             "promoted": True, "forced": not passed,
             "arch": verdict.get("arch"), "params": verdict.get("params"),
             "gate": verdict["gate"], **installed,
@@ -1209,25 +1211,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         backups = sorted(BACKUPS_DIR.glob("tool_policy.*.onnx"),
                          key=lambda p: p.stat().st_mtime)
         if not backups:
-            print(json.dumps({"error": "no backups in %s" % BACKUPS_DIR}, indent=2))
+            logger.debug(json.dumps({"error": "no backups in %s" % BACKUPS_DIR}, indent=2))
             return 3
         target = Path(args.backup) if args.backup else backups[-1]
         if not target.is_file():
-            print(json.dumps({"error": "no such backup: %s" % target}, indent=2))
+            logger.debug(json.dumps({"error": "no such backup: %s" % target}, indent=2))
             return 3
         side = target.with_suffix(".json")
         shutil.copy2(target, BASE_ONNX)
         if side.is_file():
             shutil.copy2(side, BASE_SIDECAR)
         record = pin_provenance(Path(args.val), Path(PROVENANCE_PATH))
-        print(json.dumps({"restored": str(target), "to": str(BASE_ONNX),
+        logger.debug(json.dumps({"restored": str(target), "to": str(BASE_ONNX),
                           "baseline": {k: record["metrics"][k] for k in
                                        ("val_accuracy", "optimal", "macro_f1")}},
                          ensure_ascii=False, indent=2))
         return 0
     if args.command == "pin":
         record = pin_provenance(Path(args.val), Path(args.out))
-        print(json.dumps({
+        logger.debug(json.dumps({
             "pinned_at": record["pinned_at"],
             "corpus": record["corpus"],
             "metrics": {k: record["metrics"][k] for k in
@@ -1238,7 +1240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.command == "verify":
         status = check_pin(Path(args.val))
-        print(json.dumps(status, ensure_ascii=False, indent=2))
+        logger.debug(json.dumps(status, ensure_ascii=False, indent=2))
         return 0 if status["match"] else 1
     if args.command == "apply":
         payload = json.loads(Path(args.edit_file).read_text(encoding="utf-8"))
@@ -1246,7 +1248,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         manifest = export_manifest()
         pin = check_pin()
         if not pin["match"] and not args.allow_unpinned:
-            print(json.dumps({
+            logger.debug(json.dumps({
                 "delta_id": args.delta_id, "status": "blocked",
                 "reason": "validation corpus does not match the pinned baseline",
                 "pin": pin,
@@ -1259,7 +1261,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # policy has no such coordinate system, so an edit applied to it would be a
         # silent no-op dressed up as a promotion. Say so instead.
         if (manifest["base"].get("arch") or "mlp") != "mlp":
-            print(json.dumps({
+            logger.debug(json.dumps({
                 "error": "base artifact is %s, not a dense MLP"
                          % manifest["base"].get("arch"),
                 "hint": "weight-space edits do not apply to a sequence policy; "
@@ -1283,7 +1285,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                   cand_metrics.pop("_correct"))
         record = publish_candidate(args.delta_id, candidate, diff, base_metrics,
                                    cand_metrics, edits, paired=paired)
-        print(json.dumps({"delta_id": record["delta_id"], "status": record["status"],
+        logger.debug(json.dumps({"delta_id": record["delta_id"], "status": record["status"],
                           "gate": record["gate"], "paired": paired,
                           "base": base_metrics["val_accuracy"],
                           "candidate": cand_metrics["val_accuracy"],
@@ -1291,7 +1293,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          ensure_ascii=False, indent=2))
         return 0 if record["status"] == "accepted" else 2
     if args.command == "rollback":
-        print(json.dumps(rollback_candidate(args.delta_id), ensure_ascii=False, indent=2))
+        logger.debug(json.dumps(rollback_candidate(args.delta_id), ensure_ascii=False, indent=2))
         return 0
     if args.command == "editor-prompt":
         spec = json.loads(Path(args.spec_file).read_text(encoding="utf-8"))
@@ -1299,7 +1301,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         tools = manifest["base"]["tools"]
         problems = validate_skill_spec(spec, tools)
         if problems:
-            print("invalid skill spec: %s" % problems); return 1
+            logger.debug("invalid skill spec: %s" % problems); return 1
         rows = read_val_rows()
         metrics = evaluate(manifest_weights(manifest), rows, tools)
         units = build_unit_manifest(manifest_weights(manifest),
@@ -1308,7 +1310,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(prompt, ensure_ascii=False, indent=2),
                                   encoding="utf-8")
-        print("editor prompt -> %s" % args.out)
+        logger.debug("editor prompt -> %s" % args.out)
         return 0
     return 1
 

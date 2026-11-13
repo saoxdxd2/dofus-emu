@@ -53,10 +53,23 @@ class PlayerState:
     profession_levels: Dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
+        # The key must match the field name: schedule.py restores this with
+        # `PlayerState(**payload["player"])`. It said `professions` until 2026-11-13,
+        # which made every `restore()` raise TypeError on a state file written by
+        # `submit()`. Measured, not inferred.
         return {
             "level": self.level, "kamas": self.kamas, "x": self.x, "y": self.y,
-            "professions": dict(self.profession_levels),
+            "profession_levels": dict(self.profession_levels),
         }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "PlayerState":
+        """Rebuild from either the current shape or a pre-2026-11-13 state file."""
+        fields = {name for name in cls.__dataclass_fields__}
+        values = {k: v for k, v in (payload or {}).items() if k in fields}
+        if "profession_levels" not in values and "professions" in (payload or {}):
+            values["profession_levels"] = dict(payload["professions"])
+        return cls(**values)
 
 
 @dataclass

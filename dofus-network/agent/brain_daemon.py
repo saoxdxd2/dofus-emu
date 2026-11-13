@@ -22,16 +22,26 @@ concurrent threads.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
+
 import json
-import logging
+
+
 import os
+
 import subprocess
+
 import sys
+
 import threading
+
 import time
+
 import traceback
+
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -422,8 +432,8 @@ class BrainDaemon:
         if hasattr(policy, "store") and getattr(policy, "store", None) is None:
             try:
                 policy.store = executor.store
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         log_path = self.log_dir / ("autopilot.%s.jsonl" % instance)
         stop_path = self.log_dir / ("AUTOPILOT_STOP.%s" % instance)
         try:
@@ -575,13 +585,13 @@ class BrainDaemon:
             item.state = "error"
             try:
                 traceback.print_exc()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
         finally:
             try:
                 item.pilot.stop_client()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ignored %s", exc, exc_info=True)
             with self._lock:
                 if item.state == "running":
                     item.state = "finished" if completed else "exited"
@@ -653,3 +663,5 @@ class BrainDaemon:
             # steps and no reason" and a line the operator can act on.
             "console": console_status(),
         }
+
+

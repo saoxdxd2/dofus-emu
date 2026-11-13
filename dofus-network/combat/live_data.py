@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from combat.cli import run_main
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAY_LOG = REPO_ROOT / "trajectories" / "play_dofus-05.jsonl"
@@ -493,7 +495,7 @@ def run(args: argparse.Namespace) -> int:
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=1),
                                       encoding="utf-8")
-    print(json.dumps(summary, indent=1))
+    logger.debug(json.dumps(summary, indent=1))
     return 0
 
 
@@ -505,7 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     return run_main(build_parser, run, argv)
 
 

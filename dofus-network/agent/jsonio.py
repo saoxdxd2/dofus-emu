@@ -8,7 +8,7 @@ Kaggle toolkit dependency-free.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterator
 
 try:
     import orjson as _orjson
@@ -41,7 +41,7 @@ def loads(data: Any) -> Any:
     return json.loads(data)
 
 
-def iter_rows(path: Any):
+def iter_rows(path: Any) -> Iterator[dict]:
     """Every JSON object in a line-delimited log, one record per object.
 
     Two reasons a line is not one record here. A writer that forgets its trailing
@@ -76,7 +76,7 @@ def iter_rows(path: Any):
                     index += 1
 
 
-def iter_array(path: Any, chunk_bytes: int = 1 << 20):
+def iter_array(path: Any, chunk_bytes: int = 1 << 20) -> Iterator[Any]:
     """Every object of a JSON array file, one at a time, holding one block of the file at a time.
 
     `data/cache/items_full.json` is a single-line array of 21,554 item records. `loads()` on it

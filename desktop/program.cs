@@ -1,7 +1,9 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using DofusFarm.Native;
@@ -30,7 +32,7 @@ namespace DofusFarm
                 File.AppendAllText(baseLog, line);
                 return;
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
 
             try
             {
@@ -38,7 +40,7 @@ namespace DofusFarm
                 if (!Directory.Exists(fallbackDir)) Directory.CreateDirectory(fallbackDir);
                 File.AppendAllText(Path.Combine(fallbackDir, "DofusFarm.log"), line);
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
         }
 
         /// <summary>The instance named by `--launch <name>`, or null.</summary>
@@ -79,7 +81,7 @@ namespace DofusFarm
                 File.WriteAllText(temp, name);
                 MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
         }
 
         /// <summary>Hand an OAuth callback to the running app, through its own channel.
@@ -102,7 +104,7 @@ namespace DofusFarm
                 File.WriteAllText(temp, url);
                 MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
         }
 
         private static string DeepLinkFromArgs(string[] args)
@@ -136,7 +138,7 @@ namespace DofusFarm
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
         }
 
         /// <summary>
@@ -200,7 +202,7 @@ namespace DofusFarm
             {
                 File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, fileName), sb.ToString());
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
             return code;
         }
 
@@ -284,7 +286,7 @@ namespace DofusFarm
                 WriteDeepLinkRequest(probe);
                 string read = File.Exists(file) ? File.ReadAllText(file).Trim() : null;
                 check(read == probe, "the callback file round-trips unchanged");
-                try { if (File.Exists(file)) File.Delete(file); } catch { }
+                try { if (File.Exists(file)) File.Delete(file); } catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
             }
             catch (Exception ex)
             {
@@ -338,12 +340,107 @@ namespace DofusFarm
             }
         }
 
+        private static int RunSoakSlot(string[] args)
+        {
+            string slot = args.Length > 1 ? args[1] : "dofus-01";
+            int port = 8081;
+            if (args.Length > 2) int.TryParse(args[2], out port);
+            int durationSec = 30;
+            if (args.Length > 3) int.TryParse(args[3], out durationSec);
+            string outJson = args.Length > 4 ? args[4] : ("soak_" + slot + ".json");
+
+            var samples = new System.Collections.Generic.List<string>();
+            var proc = Process.GetCurrentProcess();
+            IntPtr hProcess = proc.Handle;
+
+            UiDispatcher.Instance.Start();
+
+            var cts = new CancellationTokenSource();
+            var sw = Stopwatch.StartNew();
+
+            var timer = new System.Windows.Forms.Timer();
+            timer.Interval = 1000;
+            timer.Tick += delegate
+            {
+                uint handleCount = 0;
+                Win32.GetProcessHandleCount(hProcess, out handleCount);
+                int gdi = Win32.GetGuiResources(hProcess, 0);
+                int user = Win32.GetGuiResources(hProcess, 1);
+                proc.Refresh();
+                double pwsMb = proc.PrivateMemorySize64 / (1024.0 * 1024.0);
+                double wsMb = proc.WorkingSet64 / (1024.0 * 1024.0);
+                long dropped = UiDispatcher.Instance.Dropped;
+                long pending = UiDispatcher.Instance.Pending;
+                double elapsed = sw.Elapsed.TotalSeconds;
+
+                string sample = string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "{{\"elapsed\":{0:F2},\"private_mb\":{1:F2},\"working_set_mb\":{2:F2},\"gdi\":{3},\"user\":{4},\"handles\":{5},\"dropped\":{6},\"pending\":{7}}}",
+                    elapsed, pwsMb, wsMb, gdi, user, handleCount, dropped, pending);
+                samples.Add(sample);
+
+                UiDispatcher.Instance.Post("slot-" + slot, delegate { });
+                UiDispatcher.Instance.Log(msg => { }, string.Format("[{0}] soak step at {1:F1}s", slot, elapsed));
+
+                if (sw.Elapsed.TotalSeconds >= durationSec)
+                {
+                    timer.Stop();
+                    Application.ExitThread();
+                }
+            };
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                while (!cts.IsCancellationRequested && sw.Elapsed.TotalSeconds < durationSec)
+                {
+                    try
+                    {
+                        var req = (HttpWebRequest)WebRequest.Create(string.Format("http://127.0.0.1:{0}/__health", port));
+                        req.Timeout = 1000;
+                        using (var resp = req.GetResponse()) { }
+                    }
+                    catch { }
+                    Thread.Sleep(250);
+                }
+            });
+
+            timer.Start();
+            Application.Run();
+            cts.Cancel();
+
+            string json = "{\"slot\":\"" + slot + "\",\"duration\":" + durationSec + ",\"samples\":[" + string.Join(",", samples.ToArray()) + "]}";
+            try
+            {
+                if (!string.IsNullOrEmpty(outJson) && outJson != "-")
+                {
+                    string target = Path.GetFullPath(outJson);
+                    string dir = Path.GetDirectoryName(target);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                        Directory.CreateDirectory(dir);
+                    File.WriteAllText(target, json, new UTF8Encoding(false));
+                }
+                else
+                    Console.WriteLine(json);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("[WARN] RunSoakSlot save: " + ex.Message);
+            }
+            return 0;
+        }
+
         // This attribute must sit directly on the entry point. It was left attached
         // to a helper method inserted above Main, so the process started in MTA and
         // every WebView2 init failed with RPC_E_CHANGED_MODE (0x80010106).
         [STAThread]
         static void Main(string[] args)
         {
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--soak-slot", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.Exit(RunSoakSlot(args));
+                return;
+            }
             if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "--bundle-selftest", StringComparison.OrdinalIgnoreCase))
             {
@@ -390,9 +487,9 @@ namespace DofusFarm
             if (!createdNew)
             {
                 string forwarded = null;
-                try { forwarded = LaunchNameFromArgs(args); } catch { }
+                try { forwarded = LaunchNameFromArgs(args); } catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                 string resetName = null;
-                try { resetName = ResetNameFromArgs(args); } catch { }
+                try { resetName = ResetNameFromArgs(args); } catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                 if (!string.IsNullOrEmpty(resetName)) forwarded = "reset:" + resetName;
                 if (!string.IsNullOrEmpty(forwarded)) WriteLaunchRequest(forwarded);
                 FocusExistingInstance();
@@ -414,7 +511,7 @@ namespace DofusFarm
                     File.Move(logPath, prevPath);
                 }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
 
             try
             {
@@ -460,7 +557,7 @@ namespace DofusFarm
                                 mainForm.LaunchInstanceFromCommandLine(wanted);
                             }));
                         }
-                        catch { }
+                        catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                     };
                 }
                 Application.Run(mainForm);
@@ -472,11 +569,13 @@ namespace DofusFarm
             {
                 if (_singleInstanceMutex != null)
                 {
-                    try { _singleInstanceMutex.ReleaseMutex(); } catch { }
-                    try { _singleInstanceMutex.Dispose(); } catch { }
+                    try { _singleInstanceMutex.ReleaseMutex(); } catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
+                    try { _singleInstanceMutex.Dispose(); } catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                     _singleInstanceMutex = null;
                 }
             }
         }
     }
 }
+
+

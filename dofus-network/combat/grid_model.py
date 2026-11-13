@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 from typing import Any, Dict, Optional, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     from combat.grid_backend import (XP, f32, relu, softmax, rsqrt, tree_map,
@@ -297,10 +299,10 @@ def main(argv: Optional[list] = None) -> int:
         # init_params draws from the random stream, which needs jax. On a numpy
         # backend we can still report the architecture but cannot initialise or
         # run a forward pass -- that is training-box work.
-        print("params <jax required to initialise> hidden", args.hidden,
+        logger.debug("params <jax required to initialise> hidden", args.hidden,
               "layers", args.cell_layers, args.fighter_layers, args.plan_layers,
               "backend", BACKEND)
-        print("forward-check skipped: numpy backend is inference only")
+        logger.debug("forward-check skipped: numpy backend is inference only")
         return 0
     import jax  # noqa: import only on the training box; guarded by HAS_JAX
     params = init_params(jax.random.PRNGKey(0),
@@ -309,7 +311,7 @@ def main(argv: Optional[list] = None) -> int:
                          fighter_layers=args.fighter_layers,
                          plan_layers=args.plan_layers)
     count = param_count(params)
-    print("params", count, "hidden", args.hidden,
+    logger.debug("params", count, "hidden", args.hidden,
           "layers", args.cell_layers, args.fighter_layers, args.plan_layers)
     if args.forward_check:
         cells = XP.zeros((2, 560, CELL_FEATS), dtype=f32)
@@ -327,7 +329,7 @@ def main(argv: Optional[list] = None) -> int:
         plan_mask = XP.ones((2, MAX_PLANS), dtype=bool)
         out = forward(params, cells, cell_mask, fighters, fighter_mask,
                       plans, plan_mask, active_cells=args.active_cells)
-        print("active cells", args.active_cells, "scores", out["scores"].shape, "finite",
+        logger.debug("active cells", args.active_cells, "scores", out["scores"].shape, "finite",
               bool(XP.isfinite(out["scores"]).all()),
               "value", out["value"].shape,
               bool(XP.isfinite(out["value"]).all()))

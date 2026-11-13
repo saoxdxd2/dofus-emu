@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -32,7 +33,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
@@ -67,13 +68,10 @@ def _percentile(values: List[float], q: float) -> Optional[float]:
 def _rss_mb() -> float:
     """Current process RSS in MB (best-effort, falls back to 0)."""
     try:
-        import resource
-
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     except Exception:
         try:
             import psutil
-
             return psutil.Process().memory_info().rss / (1024 * 1024)
         except Exception:
             return 0.0
@@ -95,9 +93,11 @@ def _time_it(fn, number: int = 100) -> List[float]:
 
 def bench_proxy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
     """Run the Go proxy benchmark binary, return scorecard section."""
-    result: Dict[str, Any] = {"component": "proxy", "status": "skipped",
-                              "latency_ms": {}, "rss_mb": {}, "budget": budgets,
-                              "within_budget": True, "details": []}
+    result: Dict[str, Any] = {
+        "component": "proxy", "status": "skipped",
+        "latency_ms": {}, "rss_mb": {}, "budget": budgets,
+        "within_budget": True, "details": [],
+    }
 
     proxy_exe = REPO / "scripts" / "dofus-net-proxy.exe"
     if not proxy_exe.exists():
@@ -123,7 +123,6 @@ def bench_proxy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
              "-allow-hosts", ""],
             capture_output=True, text=True, timeout=60,
         )
-        # Parse the textual benchmark output for p95 and peak RSS.
         text = proc.stdout + proc.stderr
         for line in text.splitlines():
             if "95th percentile:" in line:
@@ -158,13 +157,14 @@ def bench_proxy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
 
 def bench_onnx_policy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
     """Run bench_encoder.py on available checkpoint, return scorecard section."""
-    result: Dict[str, Any] = {"component": "onnx_policy", "status": "skipped",
-                              "latency_ms": {}, "rss_mb": {}, "budget": budgets,
-                              "within_budget": True, "details": []}
+    result: Dict[str, Any] = {
+        "component": "onnx_policy", "status": "skipped",
+        "latency_ms": {}, "rss_mb": {}, "budget": budgets,
+        "within_budget": True, "details": [],
+    }
 
     checkpoint = REPO / "models" / "d_seq" / "policy.onnx"
     if not checkpoint.exists():
-        # Look for any onnx checkpoint.
         ckpts = list((REPO / "models").rglob("*.onnx")) if (REPO / "models").exists() else []
         if ckpts:
             checkpoint = ckpts[0]
@@ -190,9 +190,7 @@ def bench_onnx_policy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any
         result["details"].append(proc.stdout[:1000])
         if proc.returncode == 0:
             result["status"] = "ok"
-            # Try to parse a JSON report if --out was used; otherwise parse text.
-            # For simplicity, measure wall time as proxy latency.
-            result["latency_ms"]["p95"] = elapsed * 1000.0 / 100.0  # rough per-example
+            result["latency_ms"]["p95"] = elapsed * 1000.0 / 100.0
         else:
             result["status"] = "failed"
             result["details"].append(proc.stderr[:200])
@@ -212,9 +210,11 @@ def bench_onnx_policy(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any
 
 def bench_battle_solver(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
     """Benchmark combat battle_solver.resolve latency."""
-    result: Dict[str, Any] = {"component": "battle_solver", "status": "skipped",
-                              "latency_ms": {}, "rss_mb": {}, "budget": budgets,
-                              "within_budget": True, "details": []}
+    result: Dict[str, Any] = {
+        "component": "battle_solver", "status": "skipped",
+        "latency_ms": {}, "rss_mb": {}, "budget": budgets,
+        "within_budget": True, "details": [],
+    }
 
     solver = REPO / "dofus-network" / "combat" / "battle_solver.py"
     if not solver.exists():
@@ -223,10 +223,16 @@ def bench_battle_solver(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, A
 
     try:
         spec = importlib.util.spec_from_file_location("battle_solver", solver)
+        if spec is None or spec.loader is None:
+            result["details"].append("cannot load battle_solver; skipping")
+            return result
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            result["details"].append("battle_solver load error: " + str(exc)[:200])
+            return result
 
-        # Try to find a resolve/fight function.
         fn = None
         for name in ("resolve", "fight", "simulate", "compute"):
             if hasattr(mod, name):
@@ -260,9 +266,11 @@ def bench_battle_solver(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, A
 
 def bench_kb(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
     """Benchmark knowledge base lookup latency."""
-    result: Dict[str, Any] = {"component": "kb", "status": "skipped",
-                              "latency_ms": {}, "rss_mb": {}, "budget": budgets,
-                              "within_budget": True, "details": []}
+    result: Dict[str, Any] = {
+        "component": "kb", "status": "skipped",
+        "latency_ms": {}, "rss_mb": {}, "budget": budgets,
+        "within_budget": True, "details": [],
+    }
 
     kb = REPO / "dofus-network" / "planning" / "kb.py"
     if not kb.exists():
@@ -271,8 +279,15 @@ def bench_kb(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
 
     try:
         spec = importlib.util.spec_from_file_location("kb_mod", kb)
+        if spec is None or spec.loader is None:
+            result["details"].append("cannot load kb; skipping")
+            return result
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            result["details"].append("kb load error: " + str(exc)[:200])
+            return result
 
         fn = None
         for name in ("lookup", "get", "query", "search"):
@@ -307,9 +322,11 @@ def bench_kb(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
 
 def bench_append_store(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, Any]:
     """Benchmark WAL append + slice latency and peak RSS."""
-    result: Dict[str, Any] = {"component": "append_store", "status": "skipped",
-                              "latency_ms": {}, "rss_mb": {}, "budget": budgets,
-                              "within_budget": True, "details": []}
+    result: Dict[str, Any] = {
+        "component": "append_store", "status": "skipped",
+        "latency_ms": {}, "rss_mb": {}, "budget": budgets,
+        "within_budget": True, "details": [],
+    }
 
     store_mod = REPO / "dofus-network" / "storage" / "append_store.py"
     if not store_mod.exists():
@@ -319,12 +336,18 @@ def bench_append_store(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, An
     tmpdb = out_dir / "bench_store.db"
     try:
         spec = importlib.util.spec_from_file_location("append_store_bench", store_mod)
+        if spec is None or spec.loader is None:
+            result["details"].append("cannot load append_store; skipping")
+            return result
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            result["details"].append("append_store load error: " + str(exc)[:200])
+            return result
 
         AppendStore = mod.AppendStore
 
-        # Append benchmark.
         def do_append():
             with AppendStore(str(tmpdb)) as s:
                 s.append({"index": 1, "kind": "bench", "payload": "x" * 100}, kind="bench")
@@ -333,7 +356,6 @@ def bench_append_store(out_dir: Path, budgets: Dict[str, float]) -> Dict[str, An
         result["latency_ms"]["append_p50"] = round(_percentile(append_lat, 0.5), 3)
         result["latency_ms"]["append_p95"] = round(_percentile(append_lat, 0.95), 3)
 
-        # Slice benchmark.
         with AppendStore(str(tmpdb)) as s:
             for i in range(50):
                 s.append({"index": i, "kind": "bench", "payload": "x" * 100}, kind="bench")
@@ -398,7 +420,6 @@ def run_all(budget_overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
 
     elapsed = time.perf_counter() - started
 
-    # Aggregate: global SLO checks.
     worst_p95 = 0.0
     worst_rss = 0.0
     any_budget_violation = False
@@ -437,7 +458,6 @@ def run_all(budget_overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
                           and not any_failure),
     }
 
-    # Cleanup temp dir.
     import shutil
     shutil.rmtree(out_dir, ignore_errors=True)
     return scorecard

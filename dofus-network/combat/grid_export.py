@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 from torch import nn
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     from combat import grid_model
@@ -248,7 +250,7 @@ def _export(model: TorchGrid, inputs: Sequence[np.ndarray], path: Path) -> Path:
     return path
 
 
-def _session(path: Path):
+def _session(path: Path) -> Any:
     import onnxruntime as ort
 
     options = ort.SessionOptions()
@@ -368,12 +370,12 @@ def selftest(checkpoint: Optional[Path], config: Dict[str, Any], out: Path,
         "fp32_ms": round(fp_ms, 2),
         "int8_ms": round(q_ms, 2),
     }
-    print(json.dumps(report, indent=1, sort_keys=True))
+    logger.debug(json.dumps(report, indent=1, sort_keys=True))
     ok = (report["fp32_rank_match"] == 1.0
           and report["int8_rank_match"] == 1.0
           and report["fp32_max_abs"] < 2e-3
           and report["int8_max_abs"] < 5e-1)
-    print("export selftest:", "PASS" if ok else "FAIL",
+    logger.debug("export selftest:", "PASS" if ok else "FAIL",
           "| int8 %.2f ms" % q_ms)
     return 0 if ok else 1
 
@@ -404,7 +406,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.selftest:
         return selftest(args.checkpoint, config, args.out, args.active_cells, args.seed)
     metadata = export(args.checkpoint, config, args.out, args.active_cells, args.seed)
-    print(json.dumps(metadata, indent=1, sort_keys=True))
+    logger.debug(json.dumps(metadata, indent=1, sort_keys=True))
     return 0
 
 

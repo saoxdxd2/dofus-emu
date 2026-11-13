@@ -22,6 +22,8 @@ game accepted a packet.
 """
 
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
 import os
@@ -87,15 +89,15 @@ def check(label: str, condition: Any, detail: Any = "") -> None:
     # by this repeatedly, and the fix belongs here rather than in 1,600 call sites.
     text = "%s: %s" % (label, detail) if detail else label
     _FAILURES.append(text)
-    print("FAIL %s" % text)
+    logger.debug("FAIL %s" % text)
 
 
 def section(title: str) -> None:
-    print("\n== %s ==" % title)
+    logger.debug("\n== %s ==" % title)
 
 
 # Suites the gate hands to another toolchain (node, go, the C# compiler) record
-# themselves here, because a `print("SKIP: …")` + `return` registers no check: with the
+# themselves here, because a `logger.debug("SKIP: …")` + `return` registers no check: with the
 # tool missing the summary still read "N checks, 0 failed, exit 0" while 40 JS page
 # suites, the relay tests and the host compile were all absent (read at the four call
 # sites on 2026-10-31).
@@ -158,7 +160,7 @@ def test_verdict_vocabulary() -> None:
           sorted(verifier.READ_ONLY_TOOLS))
 
 
-def _new_verifier():
+def _new_verifier() -> Any:
     from agent.verifier import Verifier
     # A human path that does not exist loads empty and never touches the real
     # %LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl.
@@ -658,7 +660,7 @@ def test_shared_resources() -> None:
     # asking whether the cache returns the same object is a question about a store
     # this tree does not have.
     if first is None:
-        print("   SKIP: no canonical knowledge store in this checkout "
+        logger.debug("   SKIP: no canonical knowledge store in this checkout "
               "(data/knowledge/dofus_knowledge.sqlite is not tracked)")
     else:
         check("the canonical store is cached per path", first is second)
@@ -683,10 +685,10 @@ def test_shared_resources() -> None:
     try:
         from agent.model_cache import onnx_session
     except ImportError:
-        print("   SKIP: onnxruntime not installed")
+        logger.debug("   SKIP: onnxruntime not installed")
         return
     if not model.is_file():
-        print("   SKIP: tool_policy.onnx not present")
+        logger.debug("   SKIP: tool_policy.onnx not present")
         return
     one = onnx_session(str(model))
     two = onnx_session(str(model))
@@ -776,11 +778,19 @@ def test_brain_reports_stale_code() -> None:
     daemon_src = (REPO_ROOT / "agent" / "brain_daemon.py").read_text(encoding="utf-8")
     # The first version of this probe crashed inside health() on an undefined
     # `logger`, and /brain/health returned an empty reply: a currency probe that
-    # dies looks exactly like a dead daemon. The file has no `logger` name, so the
-    # warning has to go through the module-level logging calls it already uses.
+    # dies looks exactly like a dead daemon. The invariant is *no undefined logger*,
+    # not "the string logger. never appears": since 2026-11-13 the module binds a
+    # module-level logger for its ignored-exception paths, so `logger.` is safe as
+    # long as that binding exists. The stale-code warning itself still goes through
+    # the module-level logging call.
     check("the stale-code warning uses the module's own logging convention",
-          "logging.warning(" in daemon_src and "logger." not in daemon_src,
-          (daemon_src.count("logging.warning("), daemon_src.count("logger.")))
+          "logging.warning(" in daemon_src
+          and ("logger." not in daemon_src or "logger = logging.getLogger(" in daemon_src),
+          (daemon_src.count("logging.warning("), daemon_src.count("logger."),
+           daemon_src.count("logger = logging.getLogger(")))
+    check("and any logger the module uses is actually defined",
+          "logger." not in daemon_src or
+          daemon_src.index("logger = logging.getLogger(") < daemon_src.index("logger."))
     check("and a path it cannot stat is skipped, not raised",
           "except (OSError, ValueError):" in daemon_src)
     check("the health reply carries the verdict, not only liveness",
@@ -1830,7 +1840,7 @@ def test_free_form_uses_interactive() -> None:
               "measured: two free-form claims were each followed ~0.3 s later "
               "by serverDisconnecting SERVER_GONE")
     else:
-        print("  - page checks: skipped (scripts/ not in this mirror)")
+        logger.debug("  - page checks: skipped (scripts/ not in this mirror)")
         _delegation("page checks", False, REPO_ROOT / "scripts",
                     "scripts/ is not in this mirror")
 
@@ -2640,6 +2650,11 @@ def test_combat_suites() -> None:
                    # non-combat suite in this loop and it is here because the loop is
                    # the only place the gate delegates to a module runner.
                    "planning.test_thinking_cache",
+                   # G126's production caller. The tap must reuse the loop's store,
+                   # keep every state file out of the staged `data/kb` tree, never
+                   # raise into the loop, and never submit a goal on its own (which
+                   # would put a fabricated objective in front of the policy).
+                   "planning.test_live_tap",
                    # The recalibration of `move_prob`. Three hardcoded cuts in
                    # `planner_nn` (0.20, 0.20, 0.25) are only meaningful if 0.20
                    # means one in five, and on the newest era it did not: the base
@@ -2671,7 +2686,7 @@ def test_combat_suites() -> None:
             if proc.returncode != 0 else None
         if absent:
             # Same policy as `tools/gate.py`: a wheel this box lacks is not a regression.
-            print("   SKIP: %s needs %r, which this interpreter does not ship"
+            logger.debug("   SKIP: %s needs %r, which this interpreter does not ship"
                   % (module, absent))
             check("%s is skipped for a missing optional wheel (%s)" % (module, absent),
                   True, absent)
@@ -2716,7 +2731,7 @@ def test_env_scatter_and_mask_are_witnessed() -> None:
 def test_go_relay_suites() -> None:
     section("Go relay tests (delegated to go, criterion 6)")
     if not shutil.which("go"):
-        print("   SKIP: go not on PATH")
+        logger.debug("   SKIP: go not on PATH")
         _delegation("go relay tests", False, ROOT / "scripts", "go not on PATH")
         return
     scripts = ROOT / "scripts"
@@ -2877,7 +2892,7 @@ def test_csharp_compile() -> None:
     section("C# host compiles (same compiler and sources as builder/build.cs)")
     compiler = _find_csharp_compiler()
     if compiler is None:
-        print("   SKIP: no C# compiler found")
+        logger.debug("   SKIP: no C# compiler found")
         _delegation("C# host compile", False, ROOT / "desktop", "no C# compiler found")
         return
     desktop = ROOT / "desktop"
@@ -2937,7 +2952,7 @@ def test_cs_secret_redaction() -> None:
     section("The manager recorder's ticket regex, executed (not grepped)")
     compiler = _find_csharp_compiler()
     if compiler is None:
-        print("   SKIP: no C# compiler found")
+        logger.debug("   SKIP: no C# compiler found")
         _delegation("recorder regex probe", False, ROOT / "desktop",
                     "no C# compiler found")
         return
@@ -3024,7 +3039,7 @@ def _cs_logic_probe(sources, program, label) -> None:
     """
     compiler = _find_csharp_compiler()
     if compiler is None:
-        print("   SKIP: no C# compiler found")
+        logger.debug("   SKIP: no C# compiler found")
         _delegation(label, False, ROOT / "desktop", "no C# compiler found")
         return
     _delegation(label, True, ROOT / "desktop")
@@ -4076,6 +4091,13 @@ def test_consult_gate_is_fitted_and_live() -> None:
         def ctx(self):
             return {}
 
+        def live_penalty(self, tools):
+            # `_choose_tool` reads `self.bias_tracker.live_penalty(...)` before it
+            # reaches the consult gate. A shim that omits it takes the broad
+            # "model unusable" fallback instead, and `last_margin` stays None --
+            # measured 2026-11-13 as a TypeError in this very test.
+            return {}
+
     tools = ["nav.goto", "quest.advance", "farm.start", "fight.join", "inv.list"]
 
     def arm(logits):
@@ -4097,6 +4119,7 @@ def test_consult_gate_is_fitted_and_live() -> None:
         nn.stack = None
         nn.stack_mode = "off"
         nn.tracker = StubTracker()
+        nn.bias_tracker = StubTracker()
         nn.note = ""
         nn.last_margin = None
         nn.last_deferral = None
@@ -4132,7 +4155,7 @@ def test_consult_gate_is_fitted_and_live() -> None:
     # the missing one is the difference between one red check and a section
     # abort that hides every check after it.
     if pinned is None or not pinned.with_suffix(".json").is_file():
-        print("   SKIP: bound model or its sidecar is absent from this checkout")
+        logger.debug("   SKIP: bound model or its sidecar is absent from this checkout")
         return
     m = export_manifest(pinned, pinned.with_suffix(".json"))
     check("the bound artifact's input width is the width of the rows it is scored on",
@@ -4397,7 +4420,7 @@ def test_the_witness_instrument_sees_what_a_test_touches() -> None:
 def test_js_page_suites() -> None:
     section("JS page suites (delegated to node)")
     if not _have_node():
-        print("   SKIP: node not on PATH")
+        logger.debug("   SKIP: node not on PATH")
         _delegation("JS page suites", False, ROOT / "tools", "node not on PATH")
         return
     for script in ("tools/test_keep_alive.js", "tools/test_npc_actor.js",
@@ -5259,7 +5282,7 @@ def test_console_guard() -> None:
     #   /brain/status -> dofus-02 | state=error | alive=False
     #                    error: OSError: [Errno 22] Invalid argument
     #                    traceback: agent/autopilot.py:4719 in _base_policy
-    #                               print(f"[autopilot] policy: {planner.note}; ...")
+    #                               logger.debug(f"[autopilot] policy: {planner.note}; ...")
     #
     # so the policy could not be built and no loop ever ran, while the panel
     # logged "auto started" and the row correctly said AI OFF. The operator's
@@ -5285,7 +5308,7 @@ def test_console_guard() -> None:
         dead = GuardedStream(_Dead(), "stdout")
         _sys.stdout = dead
         try:
-            print("[autopilot] policy: nn; stack none")
+            logger.debug("[autopilot] policy: nn; stack none")
             wrote = True
         except OSError:
             wrote = False
@@ -5501,7 +5524,7 @@ def test_bundle_resilience() -> None:
     tool = ROOT / "tools" / "apply-map-resilience.js"
     bundle = ROOT / "desktop" / "client" / "www" / "build" / "script.js"
     if not _have_node():
-        print("   SKIP: node not on PATH")
+        logger.debug("   SKIP: node not on PATH")
         return
     if not tool.exists():
         check("resilience tool present", False, str(tool))
@@ -8092,8 +8115,8 @@ def test_mutation_journal_recovery() -> None:
     if journal.exists():
         return
 
-    source = "print('the working tree, intact')\n"
-    broken = "print('deliberately broken by a mutation')\n"
+    source = "logger.debug('the working tree, intact')\n"
+    broken = "logger.debug('deliberately broken by a mutation')\n"
     tmp = Path(tempfile.mkdtemp())
     try:
         victim = tmp / "victim.py"
@@ -8129,8 +8152,8 @@ def test_mutation_journal_recovery() -> None:
         # the Kaggle-mirror drift check caught it. The journal carries the raw bytes.
         import base64
         crlf = tmp / "crlf.py"
-        crlf_source = b"print('crlf intact')\r\nprint('two lines')\r\n"
-        crlf.write_bytes(b"print('broken by a mutation')\r\n")
+        crlf_source = b"logger.debug('crlf intact')\r\nprint('two lines')\r\n"
+        crlf.write_bytes(b"logger.debug('broken by a mutation')\r\n")
         journal.write_text(json.dumps({
             "path": str(crlf),
             "original_b64": base64.b64encode(crlf_source).decode("ascii")}),
@@ -8776,7 +8799,7 @@ def test_encounter_model_and_checkpoint() -> None:
             XP.sum(first["target"]))],
     }
     if os.environ.get("DOFUS_GOLDEN"):
-        print("  current fingerprint:", fingerprint)
+        logger.debug("  current fingerprint:", fingerprint)
     totals_close = all(abs(got - want) <= 0.02
                        for got, want in zip(fingerprint["totals"], GOLDEN_FORWARD["totals"]))
     check("one forward pass fingerprints to the reviewed values",
@@ -9311,7 +9334,7 @@ def test_installed_payload_and_dependencies() -> None:
         check("the stage left no empty folder placeholders behind",
               verdict.get("empty_dir_entries") == 0, verdict.get("empty_dir_entries"))
     else:
-        print("   SKIP: setup.exe is not built in this checkout (compile.bat writes it)")
+        logger.debug("   SKIP: setup.exe is not built in this checkout (compile.bat writes it)")
 
     deps = subprocess.run([sys.executable, str(tools / "shipped_deps.py")],
                           capture_output=True, text=True, timeout=300, cwd=str(ROOT))
@@ -9384,7 +9407,7 @@ def test_installed_payload_and_dependencies() -> None:
          "        __import__(name)\n"
          "    except Exception as exc:\n"
          "        bad.append(name + ':' + type(exc).__name__)\n"
-         "print('FAILS:' + ','.join(bad) if bad else 'ALL-IMPORT-OK')\n"
+         "logger.debug('FAILS:' + ','.join(bad) if bad else 'ALL-IMPORT-OK')\n"
          % (str(REPO_ROOT), core_roots)],
         capture_output=True, text=True, timeout=600, cwd=str(REPO_ROOT))
     check("every core entry point imports with torch absent (the installed copy's reality)",
@@ -9508,14 +9531,14 @@ def test_installed_payload_and_dependencies() -> None:
     if usable_runtime:
         check("the interpreter that ships exists in the tree", True, str(embedded))
     else:
-        print("   SKIP: no usable vendored runtime in this checkout "
+        logger.debug("   SKIP: no usable vendored runtime in this checkout "
               "(runtimes/python/Lib is gitignored)")
     if usable_runtime:
         probe = subprocess.run(
             [str(embedded), "-c",
              "import sys; sys.path.insert(0, %r); "
              "import agent.commands, agent.brain_daemon, ai.lexical_policy, ai.onnx_policy, "
-             "combat.grid_infer; print('imports-ok')" % str(REPO_ROOT)],
+             "combat.grid_infer; logger.debug('imports-ok')" % str(REPO_ROOT)],
             capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT))
         check("the shipped interpreter can import the modules the app loads",
               "imports-ok" in probe.stdout, (probe.stderr or probe.stdout)[-300:])
@@ -9595,7 +9618,7 @@ def test_installed_payload_and_dependencies() -> None:
                 err = (jax_leaves.get("_err") or "") + (numpy_leaves.get("_err") or "")
                 absent = next((m for m in OPTIONAL_IMPORTS
                                if "No module named '%s'" % m in err), None)
-                print("   SKIP: the two-backend benchmark needs %s; both arms exited %s/%s"
+                logger.debug("   SKIP: the two-backend benchmark needs %s; both arms exited %s/%s"
                       % (absent or "a working backend", jax_leaves.get("_rc"),
                          numpy_leaves.get("_rc")))
                 check("the two-backend benchmark is skipped for a missing wheel, not "
@@ -9717,7 +9740,7 @@ def test_docs_quote_measurements_by_tag() -> None:
             # nothing to compare there is nothing here that can be wrong, and the
             # alternative -- failing a clean clone because a local file is absent --
             # is the reason this gate stopped being trusted.
-            print("   SKIP: client-patches.quarantine is set but this checkout has no "
+            logger.debug("   SKIP: client-patches.quarantine is set but this checkout has no "
                   "script.js.bak (gitignored runtime state)")
         elif quarantined:
             check("quarantined: the served bundle is byte-for-byte the vendor's",
@@ -10438,6 +10461,10 @@ def test_one_log_record_per_line() -> None:
         pilot = object.__new__(Autopilot)          # the writer needs only these
         pilot.log_path = log
         pilot._log_size = 0
+        # `_append_log_line` gained an optional AppendStore reader. A shim built
+        # with `__new__` never ran `__init__`, so leaving it out raises
+        # AttributeError instead of exercising the writer (2026-11-13).
+        pilot.store = None
         pilot._append_log_line(dumps_bytes({"kind": "brain", "session": "s1",
                                             "state": "reused"}))
         pilot._append_log_line(dumps_bytes({"kind": "step", "index": 1, "session": "s1",
@@ -10488,10 +10515,15 @@ def test_one_log_record_per_line() -> None:
 
         # Every module that reads an autopilot-format log -- the only logs with glued
         # lines today -- has to go through that reader, or it repeats G97's undercount.
+        # `autopilot.py` is the *writer*: its two json.loads calls parse the in-memory
+        # blob it is about to append, not a file on disk, so a salvage reader is not
+        # applicable there. It was flagged by this source-level heuristic even at HEAD
+        # (measured 2026-11-13); excluding it keeps the rule aimed at readers.
         strays = []
         for folder in ("agent", "tools", "ai", "sim", "combat", "advisor"):
             for path in (REPO_ROOT / folder).rglob("*.py"):
-                if "__pycache__" in path.parts or path.name == "jsonio.py":
+                if ("__pycache__" in path.parts or path.name == "jsonio.py"
+                        or path.name == "autopilot.py"):
                     continue
                 source = path.read_text(encoding="utf-8", errors="replace")
                 if not any(marker in source for marker in
@@ -10501,6 +10533,12 @@ def test_one_log_record_per_line() -> None:
                     strays.append(str(path.relative_to(REPO_ROOT)))
         check("every reader of the autopilot log format uses the salvage reader",
               not strays, strays[:6])
+        writer = (REPO_ROOT / "agent" / "autopilot.py").read_text(
+            encoding="utf-8", errors="replace")
+        body = writer.split("def _append_log_line", 1)[1].split("\n    def ", 1)[0]
+        check("the excluded module really is the writer, not a hidden reader",
+              'self.log_path.open("ab")' in body and ".read_text" not in body
+              and "iter_rows(" not in body)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -11657,7 +11695,7 @@ def test_kaggle_toolkit_sync() -> None:
             "modules = [importlib.import_module(name) for name in names]; "
             "assert all(Path(m.__file__).resolve().is_relative_to(Path.cwd()) "
             "for m in modules), 'import escaped the toolkit'; "
-            "print('TOOLKIT_IMPORT_OK')"
+            "logger.debug('TOOLKIT_IMPORT_OK')"
         )
         result = subprocess.run([sys.executable, "-E", "-c", probe], cwd=live_toolkit,
                                 capture_output=True, text=True, timeout=60)
@@ -12570,7 +12608,7 @@ def test_lexical_command_policy() -> None:
             check("enabling it explicitly is what lets the model answer",
                   on.get("source") == "model", on)
         else:
-            print("   SKIP: models/lexical_policy is not in this checkout (15 MB, not tracked)")
+            logger.debug("   SKIP: models/lexical_policy is not in this checkout (15 MB, not tracked)")
     finally:
         os.environ.pop("DOFUS_LEARNED_COMMAND_MODEL", None)
         os.environ.pop("DOFUS_COMMAND_MODEL_ENABLED", None)
@@ -14833,7 +14871,7 @@ def test_cause_head_artifact() -> None:
     section("Cause head artifact (experimental; not a promotion gate)")
     path = REPO_ROOT / "models" / "cause_head.json"
     if not path.is_file():
-        print("   SKIP: models/cause_head.json not present")
+        logger.debug("   SKIP: models/cause_head.json not present")
         return
     import json as _json
     metrics = _json.loads(path.read_text(encoding="utf-8"))
@@ -14843,7 +14881,7 @@ def test_cause_head_artifact() -> None:
     check("the experimental artifact is not marked as promoted",
           metrics.get("promotion_ready") is not True, metrics.get("promotion_ready"))
     if not (metrics.get("split_audit") or {}).get("valid"):
-        print("   UNVERIFIED MODEL: no passing input-level split audit; scores are not promotion evidence")
+        logger.debug("   UNVERIFIED MODEL: no passing input-level split audit; scores are not promotion evidence")
     check("the MLP-alone result is not hidden by the ensemble",
           "mlp_val" in metrics and "ensemble" in metrics,
           sorted(metrics))
@@ -18679,7 +18717,7 @@ def test_egress_preflight() -> None:
             check("network.ini is read as keys", cfg.get("mode") in
                   ("auto", "custom", "direct", "wireproxy", "warp"), cfg.get("mode"))
         else:
-            print("   SKIP: network.ini is local-only (gitignored: it holds credentials)")
+            logger.debug("   SKIP: network.ini is local-only (gitignored: it holds credentials)")
         entries = live_ready.egress()
         check("the real preflight reports a level for the actual config",
               entries.get("level") in ("PASS", "FAIL", "WARN", "INFO"), entries)
@@ -18928,7 +18966,7 @@ def test_no_suite_stops_answering() -> None:
     if not previous:
         check("per-suite counts are recorded for the next run to compare against",
               len(CHECK_COUNTS) > 50, len(CHECK_COUNTS))
-        print("   FIRST RUN: no previous per-suite counts to compare against")
+        logger.debug("   FIRST RUN: no previous per-suite counts to compare against")
         return
     # This test's own count is only recorded once it returns, so it is absent from CHECK_COUNTS
     # while it runs; comparing it against the previous run would accuse itself of going silent.
@@ -18942,7 +18980,7 @@ def test_no_suite_stops_answering() -> None:
           sorted(_RETIRED_SUITES))
     added = sorted(name for name in CHECK_COUNTS if name not in previous)
     if added:
-        print("   new since the previous run: %s" % ", ".join(added))
+        logger.debug("   new since the previous run: %s" % ", ".join(added))
     own = _CHECKS - entered
     check("the per-suite counts account for every check this run registered",
           sum(CHECK_COUNTS.values()) + own == _CHECKS,
@@ -19006,7 +19044,7 @@ def _run_test(fn) -> None:
             # A recorded skip, not a silent one: `test_no_suite_stops_answering` reads a
             # suite whose check count fell to zero as a suite that went quiet, so the
             # row has to exist. The label is the record of what did not run and why.
-            print("   SKIP: %s needs %r, which this interpreter does not ship"
+            logger.debug("   SKIP: %s needs %r, which this interpreter does not ship"
                   % (name, absent))
             check("test %s is skipped for a missing optional wheel (%s)"
                   % (name, absent), absent in OPTIONAL_IMPORTS, absent)
@@ -19236,6 +19274,31 @@ def run() -> Tuple[int, List[str]]:
     # instrumented. If the host cannot install it, the ratchet says so rather than
     # passing on an empty map.
     from agent import witness
+    # Domain-specific test suites moved from regression.py into regression_suites/
+    from agent.regression_suites.combat import (
+        test_side_swap, test_move_gate, test_damage_calibration_join,
+        test_damage_calibration_live_evidence, test_combat_suites)
+    from agent.regression_suites.nav import (
+        test_doorless_map_asks_for_the_neighbour, test_free_form_searches_new_maps,
+        test_objective_travel_is_bounded, test_return_bound,
+        test_the_search_borders_are_bounded, test_search_prefers_fresh_maps)
+    from agent.regression_suites.quest import (
+        test_objective_buckets, test_objective_parameter_table,
+        test_stuck_objective_retired, test_quest_advance_shapes,
+        test_quest_area_rejects_the_prompt_echo, test_live_transitions,
+        test_quest_data_wait, test_quest_accept_planner)
+    from agent.regression_suites.dialog import (
+        test_dialog_ranking, test_prompt_fidelity, test_named_mob_focus,
+        test_dialog_labels, test_dialog_repeat_guard, test_dialog_label_reader,
+        test_talk_needs_resolved_actor)
+    from agent.regression_suites.proxy import (
+        test_command_routing_and_bridge_fast_fail, test_egress_preflight,
+        test_host_launch_guard, test_auto_live_guards, test_auto_live_summarise)
+    from agent.regression_suites.memory import (
+        test_durable_memory, test_delegated_suites_report_themselves,
+        test_delegated_suites_cannot_silently_vanish, test_knowledge_index_storage,
+        test_knowledge_index, test_the_memory_vetoes_what_the_context_refuted)
+
     witness.install()
     _run_test(test_durable_memory)
     _run_test(test_quest_area_rejects_the_prompt_echo)
@@ -19467,6 +19530,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_knowledge_index)
     _run_test(test_combat_suites)
     _run_test(test_thinking_cache_semantics)
+    _run_test(test_live_schedule_tap)
     _run_test(test_env_scatter_and_mask_are_witnessed)
     _run_test(test_go_relay_suites)
     _run_test(test_csharp_error_swallowing_is_bounded)
@@ -19508,7 +19572,7 @@ def test_delegated_suites_report_themselves() -> None:
 def test_delegated_suites_cannot_silently_vanish() -> None:
     """A skipped delegation whose sources are in the tree is a red gate.
 
-    The four delegations used to `print("SKIP: <tool> not on PATH")` and return without
+    The four delegations used to `logger.debug("SKIP: <tool> not on PATH")` and return without
     registering a check, so a host without node, `go` or a C# compiler reported
     "N checks, 0 failed, exit 0" with 40 page suites, the relay tests and the host
     compile all absent (read at the call sites 2026-10-31). Sources genuinely missing --
@@ -21449,6 +21513,70 @@ def test_knowledge_index() -> None:
               loaded.get((2, 300), {}).get("text") == "t", list(loaded)[:3])
 
 
+def test_live_schedule_tap() -> None:
+    """G126: the planning stack has a production caller, and it cannot decide anything.
+
+    `serve.py --schedule` is the only other construction site and nothing launches
+    that flag; the host starts `run_autopilot.py`. This checks the wiring in the real
+    loop and then drives one outcome through the real tap, in a temp app-data root.
+    """
+    section("G126: live outcomes reach the planning stack")
+    from types import SimpleNamespace
+
+    from agent.executor import ToolResult
+    from planning.experience import ExperienceStore
+    from planning.live_tap import attach
+
+    pilot = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8",
+                                                            errors="replace")
+    check("main builds the tap from the loop's own ExperienceStore",
+          "attach_schedule_tap(pilot.experience)" in pilot)
+    check("the executed step is fed to the tap, not a simulated one",
+          "self._note_schedule(call, result, latency_ms, before)" in pilot)
+    at_exec = pilot.find("result = self.runtime.executor.execute(")
+    at_tap = pilot.find("self._note_schedule(call, result, latency_ms, before)")
+    check("the tap sees the real result, immediately after the executor returns",
+          0 <= at_exec < at_tap and at_tap - at_exec < 1200,
+          at_tap - at_exec if at_exec >= 0 else "no executor call")
+    check("the tap is never wired as the policy's objective provider",
+          "objective_provider = pilot.schedule_tap" not in pilot
+          and "runtime.objective_provider = pilot.schedule_tap" not in pilot)
+    check("the tap imports lazily so a missing planner cannot break startup",
+          "from planning.live_tap import attach as attach_schedule_tap" in pilot)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "appdata" / "DofusFarm"
+        store = ExperienceStore(log_path=root / "experience.jsonl",
+                                snapshot_path=root / "posteriors.json")
+        kb_before = {p.name: p.stat().st_mtime_ns
+                     for p in (REPO_ROOT / "data" / "kb").glob("*.json*") if p.is_file()}
+        tap = attach(store, root=root, env={})
+        check("the loop can attach a real tap", tap is not None)
+        if tap is None:
+            return
+        rep = tap.observe(
+            SimpleNamespace(tool="fight.join", args={"monster_id": 68}),
+            ToolResult(tool="fight.join", ok=True,
+                       data={"monster_id": 68, "item_id": 1001,
+                             "kills": 20, "drops": 1},
+                       latency_ms=180000.0, source="live"),
+            elapsed_ms=180000.0, observation={"level": 60})
+        check("one verified outcome moves at least two posteriors",
+              rep is not None and len(rep["updates"]) >= 2,
+              None if rep is None else [u["param"] for u in rep["updates"]])
+        check("the economy's save did not clobber the schedule's state",
+              tap.manager.state_file != tap.manager.economy.state_file)
+        check("recording an action never creates a plan or an objective",
+              tap.manager.plan is None and tap.objective() is None)
+        check("every state file stayed out of the staged data/kb tree",
+              all(tap.root == p.parent for p in tap.paths.values()))
+        kb_after = {p.name: p.stat().st_mtime_ns
+                    for p in (REPO_ROOT / "data" / "kb").glob("*.json*") if p.is_file()}
+        check("no repository knowledge-base file was rewritten by a live step",
+              kb_before == kb_after,
+              sorted(set(kb_before) ^ set(kb_after)))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     checks, failures = run()
     # The gate's own count is a countable claim in the prose. Recording it here means
@@ -21463,11 +21591,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         }), encoding="utf-8")
     except OSError:
         pass
-    print("\n%d checks, %d failed" % (checks, len(failures)))
+    logger.debug("\n%d checks, %d failed" % (checks, len(failures)))
     if failures:
-        print("\nFAILURES:\n  " + "\n  ".join(failures))
+        logger.debug("\nFAILURES:\n  " + "\n  ".join(failures))
         return 1
-    print("all regression cases passed")
+    logger.debug("all regression cases passed")
     return 0
 
 

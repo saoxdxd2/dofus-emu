@@ -45,6 +45,8 @@ from combat.duel import (CLASS_NAMES, DuelState, Duelist, live_spell,
                          value_policy)
 
 from combat.cli import run_main
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAP = REPO_ROOT / "data" / "maps" / "100139008.json"
@@ -222,7 +224,7 @@ def _play_matchups(matchups: Dict[str, Tuple[Any, Any]], cells, args, solver,
             "draw": draws / total,
             "mean_turns": float(np.mean(turns)) if turns else 0.0,
         }
-        print(("%s/%s" % (mirror_key, name) if mirror_key else name),
+        logger.debug(("%s/%s" % (mirror_key, name) if mirror_key else name),
               json.dumps(result[name], sort_keys=True))
     return result
 
@@ -283,7 +285,7 @@ def run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    print(f"wrote {out}")
+    logger.debug(f"wrote {out}")
     return 0
 
 
@@ -299,7 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     return run_main(build_parser, run, argv)
 
 
