@@ -1328,11 +1328,11 @@ namespace DofusFarm.Engine
                 }
                 TriggerGameResize();
 
-                BeginInvoke(new Action(async () =>
+                UiDispatcher.Instance.Guard("resize-delay", async () =>
                 {
                     await Task.Delay(150);
-                    TriggerGameResize();
-                }));
+                    UiDispatcher.Instance.Post("game-resize", TriggerGameResize);
+                });
             }
         }
 
@@ -1759,7 +1759,7 @@ namespace DofusFarm.Engine
                 {
                     LogLine(string.Format("[{0}] [ACCOUNT GUARD] This account was set manually - change it in Edit so every instance uses a unique login", _instanceId));
                 }
-                if (InvokeRequired) BeginInvoke(new Action(Close)); else Close();
+                if (InvokeRequired) UiDispatcher.Instance.Post("form-close", Close); else Close();
             }
             catch { }
         }
@@ -1863,7 +1863,7 @@ namespace DofusFarm.Engine
 
                 if (InvokeRequired)
                 {
-                    BeginInvoke(new Action(() => TriggerVisualAlert(sender, text, isMod)));
+                    UiDispatcher.Instance.Post("visual-alert", () => TriggerVisualAlert(sender, text, isMod));
                 }
                 else
                 {
@@ -1954,11 +1954,10 @@ namespace DofusFarm.Engine
 
         private void SafeUiInvoke(Action action)
         {
-            if (IsDisposed) return;
+            if (IsDisposed || action == null) return;
             try
             {
-                if (InvokeRequired) BeginInvoke(action);
-                else action();
+                UiDispatcher.Instance.Post(action);
             }
             catch { }
         }
@@ -2275,7 +2274,7 @@ namespace DofusFarm.Engine
             var tcs = new TaskCompletionSource<bool>();
             try
             {
-                BeginInvoke((Action)delegate
+                UiDispatcher.Instance.Post("ui-async", null, delegate
                 {
                     try { action(); tcs.TrySetResult(true); }
                     catch (Exception ex) { tcs.TrySetException(ex); }
@@ -2290,11 +2289,11 @@ namespace DofusFarm.Engine
             var tcs = new TaskCompletionSource<T>();
             try
             {
-                BeginInvoke((Action)(async delegate
+                UiDispatcher.Instance.Post("ui-async-func", null, async delegate
                 {
                     try { tcs.TrySetResult(await func()); }
                     catch (Exception ex) { tcs.TrySetException(ex); }
-                }));
+                });
             }
             catch (Exception ex) { tcs.TrySetException(ex); }
             return tcs.Task;
@@ -2531,7 +2530,7 @@ namespace DofusFarm.Engine
 
             if (InvokeRequired)
             {
-                BeginInvoke(new Action<string>(HandleDeepLinkUri), uri);
+                UiDispatcher.Instance.Post("deeplink-uri", () => HandleDeepLinkUri(uri));
                 return;
             }
 
@@ -2613,7 +2612,7 @@ namespace DofusFarm.Engine
 
             if (InvokeRequired)
             {
-                BeginInvoke(new Action<string>(OpenOAuthDialog), url);
+                UiDispatcher.Instance.Post("oauth-open", () => OpenOAuthDialog(url));
                 return;
             }
 
@@ -2653,7 +2652,7 @@ namespace DofusFarm.Engine
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(CloseOAuthDialog));
+                UiDispatcher.Instance.Post("oauth-close", CloseOAuthDialog);
                 return;
             }
 
@@ -2698,7 +2697,7 @@ namespace DofusFarm.Engine
                     _isUpdatingZoom = true;
                     _currentZoomFactor = clampedZoom;
                     _webView.ZoomFactor = clampedZoom;
-                    BeginInvoke(new Action(() => { _isUpdatingZoom = false; }));
+                    UiDispatcher.Instance.Post("zoom-reset", () => { _isUpdatingZoom = false; });
                     TriggerGameResize();
                 }
             }

@@ -709,7 +709,40 @@ namespace DofusBuild
                 // listed only numpy+requests under a stale "this machine runs Python 3.15, use
                 // Colab" header. Anyone who pip-installed from the second got an env where the
                 // ONNX and lexical paths cannot load. One file, one tier list.
-                || p.EndsWith("/dofus-network/requirements.txt", StringComparison.OrdinalIgnoreCase);
+                || p.EndsWith("/dofus-network/requirements.txt", StringComparison.OrdinalIgnoreCase)
+                // The offline/dev tier, mirrored by tools/payload_audit.py::DEV_TIER. Measured
+                // 2026-11-13 on the 68,086,784-byte build: 81 entries / 4,859,672 B in-zip.
+                // Every string below is an exact copy of a DEV_TIER probe, and
+                // agent.regression.test_dev_tier_staging_parity fails if either side drifts.
+                // The runtime readers are deliberately NOT here: data/kb/* (planning/kb.py),
+                // data/map_los/* (combat/map_field.py), models/board_pca_v1.json
+                // (combat/board_pca.py), models/encounter_selfplay.pkl, and the whole of
+                // data/cache + data/knowledge, which REQUIRED insists on.
+                || p.IndexOf("models/encounter_wsp_", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/weight_edits", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/soft/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("models/tool_policy.manifest.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("models/duel_value_v4_0.pkl", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/replay/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/world_state_dataset/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/auto_live/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/wsp_scale/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/fight_head_", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/session_closes.jsonl", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/cleanroom_", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/gate_report.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/gate_suites.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/gate_regression.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/acquisition_report.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/kb_coverage.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/brain_ram_baseline.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/cluster_editability.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/tool_policy_selflearning_verdict.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/fight_observation_baseline.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/evidence/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/live_evidence/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/cache/spells_extra.json", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/cache/dofusbook_builds_temporix_invalid", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir, bool includeLegacyEmulator = false)

@@ -82,6 +82,11 @@ from planning.machine import CycleDetector
 from combat.fight_estimate import FightAdvisor, FightOutcomeLog
 from combat.brain_service import ensure_brain
 
+try:
+    from storage.append_store import AppendStore
+except Exception:  # noqa: BLE001
+    AppendStore = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
 DEFAULT_STOP = REPO_ROOT / "AUTOPILOT_STOP"
@@ -606,6 +611,13 @@ class Autopilot:
         self._command_shadow_status: Dict[str, Any] = {}
         self._command_shadow_rows = 0
         self.log_path = Path(log_path)
+        self.wired_to_storage: bool = True
+        self.store: Optional[Any] = None
+        if AppendStore is not None and self.log_path.suffix.lower() in (".db", ".sqlite", ".sqlite3"):
+            try:
+                self.store = AppendStore(self.log_path, payload_format="msgpack")
+            except Exception:
+                self.store = None
         # Rolling (map, cell, action) window. The counters below bound how long the
         # loop waits; this names what it keeps doing, which is the question a log of
         # 1,200 `noop` rows could not answer.
@@ -927,12 +939,35 @@ class Autopilot:
             # a caller cannot repeat it.
             blob = blob + b"\n"
         blob = _stamp_brain_build(blob)
+        if self.store is not None:
+            try:
+                rec = json.loads(blob.decode("utf-8", "replace"))
+                kind = str(rec.get("kind") or "step")
+                self.store.append(rec, kind=kind)
+            except Exception:
+                pass
+        elif AppendStore is not None and self.log_path.with_suffix(".db").is_file():
+            try:
+                with AppendStore(self.log_path.with_suffix(".db"), payload_format="msgpack") as s:
+                    rec = json.loads(blob.decode("utf-8", "replace"))
+                    kind = str(rec.get("kind") or "step")
+                    s.append(rec, kind=kind)
+            except Exception:
+                pass
         try:
             with self.log_path.open("ab") as handle:
                 handle.write(blob)
             self._log_size += len(blob)
         except OSError:
             pass  # a full disk must not stop the bot from stopping cleanly
+
+    def close(self) -> None:
+        """Close the trajectory store and any active file handles."""
+        if self.store is not None:
+            try:
+                self.store.close()
+            except Exception:
+                pass
 
     def _ensure_command_shadow(self) -> Any:
         """Load the command model once, fail-open. Logs one status row per session."""

@@ -17,7 +17,9 @@ import (
 
 type CacheEntry struct {
 	IPs       []net.IP
-	ExpiresAt time.Time
+	ExpiresAt time.Time // fully expired: don't serve, block and refresh
+	StaleAt   time.Time // start serving stale while refreshing in background
+	Negative  bool      // true if this is a negative cache entry (lookup failed)
 }
 
 type lookupCall struct {
@@ -27,23 +29,29 @@ type lookupCall struct {
 }
 
 type Resolver struct {
-	mu         sync.RWMutex
-	cache      map[string]CacheEntry
-	inflight   map[string]*lookupCall
-	sf         singleflight.Group
-	rr         uint64
-	ttl        time.Duration
-	customDNS  string
-	netResolve *net.Resolver
+	mu          sync.RWMutex
+	cache       map[string]CacheEntry
+	inflight    map[string]*lookupCall
+	sf          singleflight.Group
+	rr          uint64
+	ttl         time.Duration
+	negativeTTL time.Duration // TTL for negative (failed lookup) cache entries
+	customDNS   string
+	netResolve  *net.Resolver
 }
 
 func NewResolver(customDNS string, ttl time.Duration) *Resolver {
+	return NewResolverWithNegTTL(customDNS, ttl, 30*time.Second)
+}
+
+func NewResolverWithNegTTL(customDNS string, ttl, negativeTTL time.Duration) *Resolver {
 	r := &Resolver{
-		cache:      make(map[string]CacheEntry, 128),
-		inflight:   make(map[string]*lookupCall),
-		ttl:        ttl,
-		customDNS:  customDNS,
-		netResolve: net.DefaultResolver,
+		cache:       make(map[string]CacheEntry, 128),
+		inflight:    make(map[string]*lookupCall),
+		ttl:         ttl,
+		negativeTTL: negativeTTL,
+		customDNS:   customDNS,
+		netResolve:  net.DefaultResolver,
 	}
 	if customDNS != "" {
 		customDNS = ensureHostPort(customDNS, "53")
@@ -81,8 +89,20 @@ func (r *Resolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
 	entry, found := r.cache[host]
 	r.mu.RUnlock()
 	if found && now.Before(entry.ExpiresAt) {
+		// Fresh entry: serve immediately.
+		if now.Before(entry.StaleAt) {
+			return r.pickIP(entry.IPs), nil
+		}
+		// Stale but still within TTL: serve the stale IPs immediately and
+		// kick off a non-blocking background refresh. This is stale-while-revalidate.
+		// Negative entries are not refreshed in the background.
+		if !entry.Negative {
+			go r.refreshInBackground(ctx, host)
+		}
 		return r.pickIP(entry.IPs), nil
 	}
+
+	// Not cached or fully expired: block on a singleflight lookup.
 	v, err, _ := r.sf.Do(host, func() (any, error) {
 		ips, err := r.netResolve.LookupIP(ctx, "ip4", host)
 		if err != nil && r.netResolve != net.DefaultResolver {
@@ -97,7 +117,12 @@ func (r *Resolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
 			}
 		}
 		if err == nil {
-			r.cache[host] = CacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl)}
+			staleAt := float64Duration(r.ttl, 0.8) // last 20% is the SWR window
+			r.cache[host] = CacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl), StaleAt: now.Add(staleAt)}
+		} else {
+			// Negative cache: failed lookups get a short TTL so a flapping
+			// or dead host doesn't stall every dial.
+			r.cache[host] = CacheEntry{Negative: true, ExpiresAt: now.Add(r.negativeTTL), StaleAt: now.Add(r.negativeTTL)}
 		}
 		return ips, err
 	})
@@ -105,6 +130,30 @@ func (r *Resolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
 		return nil, err
 	}
 	return r.pickIP(v.([]net.IP)), nil
+}
+
+// refreshInBackground performs a non-blocking lookup and updates the cache.
+// Callers already received the stale entry, so this only warms the cache for
+// the next request.
+func (r *Resolver) refreshInBackground(ctx context.Context, host string) {
+	ips, err := r.netResolve.LookupIP(ctx, "ip4", host)
+	if err != nil && r.netResolve != net.DefaultResolver {
+		ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	}
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil {
+		staleAt := float64Duration(r.ttl, 0.8)
+		r.cache[host] = CacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl), StaleAt: now.Add(staleAt)}
+	} else {
+		r.cache[host] = CacheEntry{Negative: true, ExpiresAt: now.Add(r.negativeTTL), StaleAt: now.Add(r.negativeTTL)}
+	}
+}
+
+// float64Duration multiplies a time.Duration by a float64 factor.
+func float64Duration(d time.Duration, f float64) time.Duration {
+	return time.Duration(float64(d) * f)
 }
 
 // ResolveAddr rewrites host:port to ip:port when the host resolves. A failed

@@ -283,6 +283,13 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _status_payload(self) -> Dict[str, Any]:
+        ui_telemetry = {"dropped": 0, "pending": 0, "status": "healthy"}
+        status_file = REPO_ROOT / "data" / "ui_dispatcher_status.json"
+        if status_file.is_file():
+            try:
+                ui_telemetry = json.loads(status_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         return {
             "status": "online",
             "service": "dofus-sentinel-ai",
@@ -294,6 +301,7 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                 "total_spells": len(self.repo.spells_by_id),
                 "total_monsters": len(self.repo.monsters_by_id),
             },
+            "ui_dispatcher": ui_telemetry,
             "port": 8890,
             "time": time.time(),
         }
@@ -515,7 +523,17 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
             return
 
-        if self.path == "/sentinel/eval_chat":
+        if self.path in ("/sentinel/telemetry/ui", "/telemetry/ui"):
+            status_file = REPO_ROOT / "data" / "ui_dispatcher_status.json"
+            try:
+                status_file.parent.mkdir(parents=True, exist_ok=True)
+                status_file.write_text(json.dumps(req), encoding="utf-8")
+                self._send_json(200, {"status": "ok", "ui_dispatcher": req})
+            except Exception as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+
+        elif self.path == "/sentinel/eval_chat":
             sender = req.get("sender", "Unknown")
             text = req.get("text", "")
             is_mod = bool(req.get("is_mod", False))

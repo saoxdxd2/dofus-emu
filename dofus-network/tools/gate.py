@@ -193,7 +193,7 @@ def main(argv=None):
 
     only = args.only or ""
     steps = []                                     # (label, command, seconds or None)
-    if not only or "kaggle" in only:
+    if (not only or "kaggle" in only) and (ROOT / "kaggle" / "toolkit").is_dir():
         steps.append(("toolkit mirror", drift_check(), None))
     for path in suites(args.only):
         steps.append((path.relative_to(ROOT).as_posix(), command_for(path), None))

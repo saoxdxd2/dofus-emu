@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	DefaultBudget int64 = 200 << 20 // 200 MB per proxy instance
-	BufferSize          = 64 << 10
+	DefaultBudget      int64   = 200 << 20 // 200 MB per proxy instance
+	BufferSize                 = 64 << 10
+	HighWatermarkRatio float64 = 0.85 // 85% threshold for cache shedding / stream-bypass
 )
 
 // Budget is a soft per-instance cap on bytes held by in-flight copies. It is
@@ -88,6 +89,58 @@ func (b *Budget) Release(n int64) {
 		b.used = 0
 	}
 	b.mu.Unlock()
+}
+
+// HighWatermark returns the byte threshold (85% of Max) above which caching is shed.
+func (b *Budget) HighWatermark() int64 {
+	return int64(float64(b.Max()) * HighWatermarkRatio)
+}
+
+// ShedOrBypass returns true when active reservations cross the 85% high watermark
+// or when requested bytes cannot fit within the remaining budget.
+func (b *Budget) ShedOrBypass(requested int64) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	high := int64(float64(b.max) * HighWatermarkRatio)
+	return b.used >= high || (requested > 0 && b.used+requested > b.max)
+}
+
+// ReserveWithCleanup atomically reserves up to n bytes and returns the granted amount
+// along with a cleanup func that releases the granted bytes exactly once.
+func (b *Budget) ReserveWithCleanup(n int64) (int64, func()) {
+	granted := b.Reserve(n)
+	if granted <= 0 {
+		return 0, func() {}
+	}
+	var once sync.Once
+	return granted, func() {
+		once.Do(func() {
+			b.Release(granted)
+		})
+	}
+}
+
+// ReserveExact attempts to atomically reserve exactly n bytes.
+// If n would cause used to exceed max, it reserves nothing and returns false.
+func (b *Budget) ReserveExact(n int64) (func(), bool) {
+	if b == nil || n <= 0 {
+		return func() {}, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.used+n > b.max {
+		return func() {}, false
+	}
+	b.used += n
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.Release(n)
+		})
+	}, true
 }
 
 // LimitReader caps a single copy at min(requested, remaining budget). When the

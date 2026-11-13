@@ -166,6 +166,7 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G126** | The whole `planning/` brain is built at startup and never asked to plan or record anything | measured 2026-11-13 |
 | **G127** | `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work | measured 2026-11-13, partly fixed |
 | **G128** | Three review tasks aimed at dead code: the combat world model has no caller, its buff branch is unreachable, and the Win32 handles are already closed | measured 2026-11-13 |
+| **G129** | The 60 MiB installer cap is now binding on a real knowledge index | measured 2026-11-13, rebuild owed |
 
 ---
 
@@ -8125,3 +8126,86 @@ not worth the risk to a running farm.
 real inert rate by era and layer; `ai/glicko2.py` added an archetype-stratified
 release gate. Guards: `agent/test_inert_attribution` (45 tests) and
 `ai/test_glicko2` (29 tests), both delegated from `test_combat_suites`.
+
+---
+
+## G129. The 60 MiB installer cap is now binding on a real knowledge index *(measured 2026-11-13, rebuild owed)*
+
+**What failed.** `python tools/payload_audit.py setup.exe --gate` fails on
+`over_budget=True`: `setup.exe` is 68,086,784 B (64.9 MiB) against a 62,914,560 B
+(60 MiB) cap — over by **5,172,224 B (4.93 MiB)**, 726 entries, 67,716,026 B of
+compressed zip plus ~370,758 B of SFX. This is checked by
+`agent.regression.test_installed_payload_and_dependencies`, so it is a real gate
+failure, not just a standalone probe.
+
+**It is a post-gate regression, not a long-standing defect.** The recorded full gate
+(`data/last_gate_run.json`) ran at **2026-11-13 05:26:07** with **2,448 checks, 0
+failed**, including 41 payload checks. `setup.exe` was rebuilt at **07:17:39**, after
+that run. The preceding build was 62,903,808 B — only **10,752 B** under the cap, so
+there was effectively no headroom left before any new content arrived.
+
+**What grew, and why it is not junk.** 88 payload entries have a DOS timestamp at or
+after 05:26. Three of them are the runtime knowledge index, regenerated 06:52-07:09
+and read by `dofus-network/planning/kb.py`:
+
+```
+  compressed        entry
+    2,705,500       dofus-network/data/kb/dofus_kb.npz
+    2,595,811       dofus-network/data/kb/dofus_kb.bin
+      755,911       dofus-network/data/kb/dofus_names.bin
+    6,057,222       total — legitimate runtime data, not excludable
+```
+
+The stem-grep `--readers` report calls these "read" for the right reason. It also calls
+`data/map_los/*.npz` orphaned, which is **wrong**: `combat/map_field.py` loads them by
+map id. `models/board_pca_v1.json` (`combat/board_pca.py`) and
+`models/encounter_selfplay.pkl` are runtime too. None of these are in the exclusion.
+
+**What was actually junk.** 81 entries / **4,859,672 B in-zip** have no shipped runtime
+reader — only offline fit scripts, benchmark CLI defaults, the argv-driven editor
+`agent/weight_space.py`, docstrings and dev reports. The three
+`models/encounter_wsp_{all,pass01,pass02}.pkl` alone are 2,399,962 B;
+`models/duel_value_v4_0.pkl` is only a default argument in two offline benchmarks and
+a comment in two modules; `data/replay/planner_obs.jsonl` is this box's observation
+log (`agent/observe.py` names it in a docstring, and an installed copy writes its own).
+
+**Fix applied this session.** One named tier, in two languages, with a witness:
+
+* `tools/payload_audit.py` — `DEV_TIER` (25 exact probes), spliced into `FORBIDDEN`.
+* `builder/build.cs` — the same 25 strings added to `SkipDevPayload`, so the next
+  `compile.bat` stops staging them.
+* `agent/regression.py` — `test_dev_tier_staging_parity()` parses both files with
+  `ast`/`re`, asserts the sets are identical, that `FORBIDDEN` enforces the tier, that
+  no probe is a substring of another (so `gate()`'s hit counts stay honest), and that
+  no probe swallows a directory with a real runtime reader. Run directly: green.
+
+The builder and the gate have disagreed before (the `.bak` infix, the `runtimes/`
+comment that the `dofus-network/` loop never consulted); this test is the reason they
+cannot drift silently again. On the current artifact the gate now reports those 81
+entries as `forbidden`, which is the correct instruction: rebuild.
+
+**What is still owed.** Removing the whole dev tier projects
+**63,227,112 B** — still **312,552 B (305 KiB) over** the cap. That residual is not
+more junk: after the trim the runtime floor is ~60.3 MiB, so a 60 MiB cap leaves
+essentially zero headroom and will trip again on the next legitimate file. Two honest
+options, both the operator's call:
+
+1. Keep 60 MiB and cut another ~0.3 MiB of dev-only source (e.g.
+   `agent/regression.py`, 329,917 B, which no installed-machine entry point imports).
+   This passes with ~17 KiB of margin and breaks on the next source edit.
+2. Recalibrate the cap to the measured runtime floor plus real headroom (64 MiB gives
+   3.7 MiB) and record why. This deliberately revisits the 105 MiB -> 60 MiB decision
+   quoted in `ARCH_REASSESSMENT.md:1188`; the reason to revisit it is that the product
+   gained 6.06 MiB of runtime KB data the cap was never sized for.
+
+The cap was **not** changed here, and `setup.exe` was **not** rebuilt: the builder
+compiles C# (blocked in this sandbox), terminates live `DofusFarm` processes, and the
+operator is running the host.
+
+**Falsifier.** After the operator rebuilds with `compile.bat`, run
+`python tools/payload_audit.py setup.exe --gate` and
+`python -m unittest` on the parity test. `forbidden` must be empty; if a runtime
+reader was excluded, the installed KB/LOS/PCA paths fail at load. The projected
+63,227,112 B is a computation over the current zip's central directory, not a claim
+about a binary that has been built — if the rebuilt artifact differs materially, this
+section's numbers are wrong and must be remeasured.

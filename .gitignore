@@ -112,6 +112,9 @@ dofus-network/models/**
 
 # Agent trajectory logs (training data, stays local)
 dofus-network/trajectories/
+trajectories/
+*.db-wal
+*.db-shm
 
 # Generated tool-use SFT corpus (training data, stays local)
 dofus-network/data/agent_sft/
@@ -218,6 +221,7 @@ AGENTS.MD
 /gate_out*.txt
 /reg_out.txt
 /reg_err.txt
+*_err.txt
 /_obs_*.json
 /_rewrite_*.py
 

@@ -2043,6 +2043,15 @@ func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, c
 }
 
 func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct string, r io.Reader, expectedLen int64, dst io.Writer) error {
+	if p.cacheBudget != nil && p.cacheBudget.ShedOrBypass(expectedLen) {
+		p.prefetchLog("[BUDGET] high watermark crossed (%d/%d bytes); bypassing cache for %s",
+			p.cacheBudget.Used(), p.cacheBudget.Max(), targetStr)
+		if dst != nil {
+			_, copyErr := npcache.CopyBounded(dst, r, p.cacheBudget, p.cachePool, expectedLen)
+			return copyErr
+		}
+		return nil
+	}
 	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
 	tf, err := os.Create(tmpPath)
 	if err != nil {

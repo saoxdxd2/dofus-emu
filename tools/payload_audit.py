@@ -116,6 +116,41 @@ def scan_secrets(blob: bytes, base: int, rows) -> dict:
     return hits
 
 
+# The offline/dev tier, named once. `builder/build.cs::SkipDevPayload` must refuse the same
+# strings; `agent.regression.test_dev_tier_staging_parity` proves they agree. Measured
+# 2026-11-13 against the 68,086,784-byte build: 81 entries / 4,859,672 B in-zip whose only
+# references are offline fit scripts, benchmark defaults, CLI editors, docstrings and dev
+# reports -- no shipped runtime reader. The three encounter_wsp pkls alone are 2,399,962 B.
+# `data/replay/planner_obs.jsonl` is this machine's observation log (agent/observe.py mentions
+# it only in a docstring); an installed copy writes its own, exactly as it does trajectories.
+# `models/duel_value_v4_0.pkl` is a default CLI argument in two offline benchmarks and a
+# comment in two modules, not a load. `models/weight_edits*` and tool_policy.manifest.json are
+# the argv-driven editor in agent/weight_space.py. Kept: data/kb/* (planning/kb.py),
+# data/map_los/* (combat/map_field.py), models/board_pca_v1.json (combat/board_pca.py), and
+# models/encounter_selfplay.pkl -- each has a real runtime reader.
+DEV_TIER = (
+    "models/encounter_wsp_",
+    "/models/weight_edits",
+    "/models/soft/",
+    "models/tool_policy.manifest.json",
+    "models/duel_value_v4_0.pkl",
+    "/data/replay/",
+    "/data/world_state_dataset/",
+    "/data/auto_live/",
+    "/data/wsp_scale/",
+    "/data/fight_head_",
+    "/session_closes.jsonl",
+    "/data/cleanroom_",
+    "/data/gate_report.json", "/data/gate_suites.json", "/data/gate_regression.json",
+    "/data/acquisition_report.json", "/data/kb_coverage.json",
+    "/data/brain_ram_baseline.json", "/data/cluster_editability.json",
+    "/data/tool_policy_selflearning_verdict.json",
+    "/data/fight_observation_baseline.json",
+    "/data/evidence/", "/data/live_evidence/",
+    "/data/cache/spells_extra.json",
+    "/data/cache/dofusbook_builds_temporix_invalid",
+)
+
 # What the installer must and must not carry. Measured 2026-11-03 with this tool against the
 # built artifact: the payload was 218.9 MB compressed / 439.4 MB unpacked over 773 files, of
 # which 108.8 MB was models/combat_grid/model.pkl -- JAX weights the embedded interpreter
@@ -123,6 +158,7 @@ def scan_secrets(blob: bytes, base: int, rows) -> dict:
 # recorded transitions, 13.8 MB of entity-pointer training shards, 1.9 MB of dev gate logs and
 # a 10.7 MB nested copy of the interpreter the payload already ships unpacked.
 FORBIDDEN = (
+    *DEV_TIER,
     "models/combat_grid/",        # JAX artifact; skipped by the builder unless the runtime has jax
     "data/combat_grid",           # its synthetic training corpora
     "data/transitions",           # recorded sessions: offline inputs

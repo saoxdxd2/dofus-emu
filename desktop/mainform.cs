@@ -1518,12 +1518,14 @@ namespace DofusFarm.UI
                              : Color.FromArgb(148, 163, 184);
                 try
                 {
-                    if (_netLive != null && !_netLive.IsDisposed && _netLive.IsHandleCreated)
-                        _netLive.BeginInvoke((MethodInvoker)delegate
+                    UiDispatcher.Instance.Post("net-live-pill", delegate
+                    {
+                        if (_netLive != null && !_netLive.IsDisposed)
                         {
                             if (_netLive.Text != text) _netLive.Text = text;
                             if (_netLive.ForeColor != colour) _netLive.ForeColor = colour;
-                        });
+                        }
+                    });
                 }
                 catch { }
                 Interlocked.Exchange(ref _netBusy, 0);
@@ -4756,7 +4758,7 @@ namespace DofusFarm.UI
 
                     Interlocked.Exchange(ref _shutdownComplete, 1);
 
-                    try { BeginInvoke(new Action(Close)); } catch { }
+                    try { UiDispatcher.Instance.Post("form-close", Close); } catch { }
 
                 }
 

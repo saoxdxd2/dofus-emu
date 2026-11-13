@@ -49,6 +49,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+try:
+    from storage.append_store import AppendStore
+except Exception:  # noqa: BLE001
+    AppendStore = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = REPO_ROOT / "models" / "live_enemy_value.json"
 DEFAULT_ROWS = REPO_ROOT / "trajectories" / "live_learning.jsonl"
@@ -475,6 +480,14 @@ class LiveLearner:
                  persist_every: int = 4) -> None:
         self.model_path = Path(model_path)
         self.rows_path = Path(rows_path)
+        self.wired_to_storage: bool = True
+        self.last_seq: int = 0
+        self.store: Optional[Any] = None
+        if AppendStore is not None and (self.rows_path.suffix.lower() in (".db", ".sqlite", ".sqlite3")):
+            try:
+                self.store = AppendStore(self.rows_path, payload_format="msgpack")
+            except Exception:
+                self.store = None
         self.persist_every = max(1, int(persist_every))
         self.model = self._load()
         self._prev: Optional[Dict[str, Any]] = None
@@ -515,12 +528,35 @@ class LiveLearner:
         return credit
 
     def _append(self, credit: TurnCredit) -> None:
+        if self.store is not None:
+            try:
+                seq = self.store.append(credit.as_row(), kind="turn_credit")
+                if seq > self.last_seq:
+                    self.last_seq = seq
+            except Exception:
+                pass
+        elif AppendStore is not None and self.rows_path.with_suffix(".db").is_file():
+            try:
+                with AppendStore(self.rows_path.with_suffix(".db"), payload_format="msgpack") as s:
+                    seq = s.append(credit.as_row(), kind="turn_credit")
+                    if seq > self.last_seq:
+                        self.last_seq = seq
+            except Exception:
+                pass
         try:
             self.rows_path.parent.mkdir(parents=True, exist_ok=True)
             with self.rows_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(credit.as_row(), ensure_ascii=False) + "\n")
         except OSError:
             pass
+
+    def close(self) -> None:
+        if self.store is not None:
+            try:
+                self.store.close()
+            except Exception:
+                pass
+            self.store = None
 
     def save(self) -> None:
         try:
@@ -969,15 +1005,33 @@ class ShadowAuditor:
                  calibration_path: Path = DEFAULT_DAMAGE_CALIBRATION) -> None:
         self.decisions_path = Path(decisions_path)
         self.calibration_path = Path(calibration_path)
+        self.wired_to_storage: bool = True
+        self.last_seq: int = 0
 
-    def read(self) -> List[Dict[str, Any]]:
+    def read(self, incremental: bool = False) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
+        db_path = self.decisions_path if self.decisions_path.suffix.lower() in (".db", ".sqlite", ".sqlite3") else self.decisions_path.with_suffix(".db")
+        if AppendStore is not None and db_path.is_file():
+            start_seq = (self.last_seq + 1) if incremental else None
+            try:
+                with AppendStore(db_path) as store:
+                    for seq, _ts, _kind, rec in store.iter_records(start_seq=start_seq):
+                        if seq > self.last_seq:
+                            self.last_seq = seq
+                        if isinstance(rec, dict):
+                            rows.append(rec)
+                return rows
+            except Exception:
+                pass
+
         try:
             handle = self.decisions_path.open(encoding="utf-8", errors="replace")
         except OSError:
             return rows
         with handle:
-            for line in handle:
+            for idx, line in enumerate(handle, 1):
+                if incremental and idx <= self.last_seq:
+                    continue
                 line = line.strip()
                 if not line:
                     continue
@@ -987,7 +1041,12 @@ class ShadowAuditor:
                     continue
                 if isinstance(row, dict):
                     rows.append(row)
+                    if idx > self.last_seq:
+                        self.last_seq = idx
         return rows
+
+    def read_incremental(self) -> List[Dict[str, Any]]:
+        return self.read(incremental=True)
 
     def audit(self, write: bool = True) -> Dict[str, Any]:
         rows = self.read()

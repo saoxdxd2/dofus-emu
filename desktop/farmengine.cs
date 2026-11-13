@@ -133,7 +133,13 @@ namespace DofusFarm.Engine {
         private static readonly object _proxyLock = new object();
         private readonly object _launchGenLock = new object();
         private readonly ConcurrentDictionary<int, int> _launchGen = new ConcurrentDictionary<int, int>();
-        private static readonly object _wsSendLock = new object();
+        // Per-socket send locks so one stalled slot's SendAsync(5s) cannot block
+        // every other slot's CDP sends behind it. Keyed by ClientWebSocket instance.
+        private static readonly ConcurrentDictionary<ClientWebSocket, object> _wsSendLocks =
+            new ConcurrentDictionary<ClientWebSocket, object>();
+        // A single CDP frame larger than this is treated as a runaway payload and the
+        // receive buffer is reset back to 8 KB so one large frame cannot pin RAM.
+        private const int MaxCdpFrameBytes = 1 << 20; // 1 MB
 
         private static readonly Regex RxQemuPort = new Regex(@"-port\s+(\d+)", RegexOptions.Compiled);
         private static readonly Regex RxDisguiseToken = new Regex(
@@ -2588,6 +2594,13 @@ namespace DofusFarm.Engine {
                                         if (res.MessageType == WebSocketMessageType.Close) break;
                                         ms.Write(seg.Array, 0, res.Count);
                                         if (res.EndOfMessage) {
+                                            if (ms.Length > MaxCdpFrameBytes) {
+                                                // Oversized frame: drop it and reset the buffer back to 8 KB
+                                                // so a runaway payload cannot pin RAM indefinitely.
+                                                ms.SetLength(0);
+                                                ms.Capacity = Math.Min(ms.Capacity, 8192);
+                                                continue;
+                                            }
                                             string frameStr = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
                                             ms.SetLength(0);
                                             if (frameStr.Contains("Page.loadEventFired") || (frameStr.Contains("Page.frameNavigated") && !frameStr.Contains("\"parentId\"")))
@@ -2605,7 +2618,8 @@ namespace DofusFarm.Engine {
         private static void SendWsJson(ClientWebSocket ws, string json) {
             if (ws == null || ws.State != WebSocketState.Open) return;
             try {
-                lock (_wsSendLock) {
+                object slotLock = _wsSendLocks.GetOrAdd(ws, _ => new object());
+                lock (slotLock) {
                     if (ws.State != WebSocketState.Open) return;
                     byte[] bytes = Encoding.UTF8.GetBytes(json);
                     ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None).Wait(5000);

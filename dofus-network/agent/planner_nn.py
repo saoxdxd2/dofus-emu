@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,7 +32,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "models" / "tool_policy.onnx"))
 
 
-def apply_tool_bias(scores: list, tools: list, bias: Dict[str, float]) -> list:
+def apply_tool_bias(scores: list, tools: list, bias: Dict[str, float],
+                    live_penalty: Optional[Dict[str, float]] = None) -> list:
     """Subtract the fitted per-tool cost from the policy's logits.
 
     ``tools/fit_tool_bias.py`` fits its vector on the *exported graph's* logits,
@@ -42,18 +44,89 @@ def apply_tool_bias(scores: list, tools: list, bias: Dict[str, float]) -> list:
     strongly, and any consumer that rescales logits before calling this has
     changed the units out from under the fit.
 
-    Kept as a function rather than a loop inside `_choose_tool` so a test can
+    ``live_penalty`` is an online, per-tool sliding-window penalty (produced by
+    ``ToolBiasTracker``) that is added on top of the fitted bias. It nudges the
+    bias dynamically when a tool's live latency or failure rate spikes on the
+    current host, so the planner steers away from tools that are misbehaving
+    right now without waiting for a retrain.
+
+    Kept as a function rather than a loop inside ``_choose_tool`` so a test can
     check the arithmetic without a model session.
     """
     adjusted = list(scores)
-    if not bias:
+    if not bias and not live_penalty:
         return adjusted
     index = {name: position for position, name in enumerate(tools)}
     for name, cost in bias.items():
         position = index.get(name)
         if position is not None:
             adjusted[position] = float(adjusted[position]) - float(cost)
+    if live_penalty:
+        for name, penalty in live_penalty.items():
+            position = index.get(name)
+            if position is not None and penalty:
+                adjusted[position] = float(adjusted[position]) - float(penalty)
     return adjusted
+
+
+class ToolBiasTracker:
+    """Online sliding-window per-tool latency/failure tracker.
+
+    Records each tool call's outcome (latency seconds, whether it failed) and
+    produces a per-tool penalty dict that ``apply_tool_bias`` subtracts from
+    logits. A tool whose recent latency or failure rate spikes is penalised,
+    so the planner steers away from it until it recovers.
+
+    The window is time-based: entries older than ``window_seconds`` are dropped,
+    so the penalty adapts to the current host's conditions rather than being
+    stuck on a bad period from long ago.
+    """
+
+    def __init__(self, window_seconds: float = 300.0,
+                 latency_penalty_per_sec: float = 0.5,
+                 failure_penalty: float = 1.0,
+                 max_penalty: float = 3.0) -> None:
+        self.window_seconds = window_seconds
+        self.latency_penalty_per_sec = latency_penalty_per_sec
+        self.failure_penalty = failure_penalty
+        self.max_penalty = max_penalty
+        # tool_name -> list of (timestamp, latency_s, failed)
+        self._events: Dict[str, list] = {}
+
+    def record(self, tool: str, latency_s: float, failed: bool) -> None:
+        now = time.time()
+        events = self._events.setdefault(tool, [])
+        events.append((now, float(latency_s), bool(failed)))
+        cutoff = now - self.window_seconds
+        self._events[tool] = [e for e in events if e[0] >= cutoff]
+
+    def live_penalty(self, tools: Optional[List[str]] = None) -> Dict[str, float]:
+        """Return {tool: penalty} for the given tools (or all tracked tools)."""
+        now = time.time()
+        cutoff = now - self.window_seconds
+        penalties: Dict[str, float] = {}
+        targets = tools if tools is not None else list(self._events.keys())
+        for name in targets:
+            events = self._events.get(name, [])
+            if not events:
+                continue
+            recent = [e for e in events if e[0] >= cutoff]
+            if not recent:
+                continue
+            n = len(recent)
+            avg_latency = sum(e[1] for e in recent) / n
+            fail_rate = sum(1 for e in recent if e[2]) / n
+            penalty = (avg_latency * self.latency_penalty_per_sec
+                       + fail_rate * self.failure_penalty)
+            if penalty > 0:
+                penalties[name] = min(penalty, self.max_penalty)
+        return penalties
+
+    def reset(self, tool: Optional[str] = None) -> None:
+        if tool is None:
+            self._events.clear()
+        else:
+            self._events.pop(tool, None)
 
 
 class NNPlanner(QuestPlanner):
@@ -107,6 +180,10 @@ class NNPlanner(QuestPlanner):
         self.tool_penalty = dict(tool_penalty or {})
         self._penalty_given = bool(tool_penalty)
         self.tool_bias_note = "no fitted tool bias"
+        # Online sliding-window per-tool latency/failure tracker for adaptive
+        # tool bias. The planner records each tool call's outcome here, and
+        # apply_tool_bias subtracts the live penalty on top of the fitted bias.
+        self.bias_tracker = ToolBiasTracker()
         self.stack_mode = stack_mode if stack_mode in ("off", "shadow", "act") else "shadow"
         self.stack_path = Path(stack_path) if stack_path else None
         self.stack = None
@@ -371,7 +448,8 @@ class NNPlanner(QuestPlanner):
                     self.last_value = 1.0 / (1.0 + math.exp(-raw))
                 except (TypeError, ValueError, OverflowError):
                     self.last_value = None
-            scores = apply_tool_bias(logits, self.tools, self.tool_penalty)
+            scores = apply_tool_bias(logits, self.tools, self.tool_penalty,
+                                     self.bias_tracker.live_penalty(self.tools))
             policy_tool = self.tools[int(max(range(len(scores)),
                                              key=lambda i: scores[i]))]
             stacked = self._stack_choice(x[0], logits)
@@ -414,6 +492,14 @@ class NNPlanner(QuestPlanner):
     def _args_for(self, tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
                   obs: Dict[str, Any]) -> Dict[str, Any]:
         return args_for_tool(tool, quest, obj, obs)
+
+    def note_result(self, tool: str, latency_s: float, failed: bool) -> None:
+        """Record a tool call's outcome for the adaptive bias tracker.
+
+        Call this after executing a chosen tool so the sliding-window penalty
+        reflects live latency and failure rate on the current host.
+        """
+        self.bias_tracker.record(tool, latency_s, failed)
 
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:

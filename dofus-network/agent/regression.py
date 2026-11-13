@@ -5131,7 +5131,7 @@ def test_oauth_system_browser() -> None:
     # the host choosing a different container and a way to hand the callback back.
     form = code_only((ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
         encoding="utf-8", errors="replace"))
-    prog = code_only((ROOT / "desktop" / "Program.cs").read_text(
+    prog = code_only((ROOT / "desktop" / "program.cs").read_text(
         encoding="utf-8", errors="replace"))
     main = code_only((ROOT / "desktop" / "mainform.cs").read_text(
         encoding="utf-8", errors="replace"))
@@ -9201,6 +9201,73 @@ def test_duel_harness_statistics() -> None:
     check("and a bootstrap interval is reported around the mean it is about",
           won["win_rate_bootstrap_ci95"][0] <= won["network_win_rate"]
           <= won["win_rate_bootstrap_ci95"][1], won["win_rate_bootstrap_ci95"])
+
+
+def test_dev_tier_staging_parity() -> None:
+    """The builder and the payload gate must refuse exactly the same dev-tier strings.
+
+    They are two implementations of one decision, in two languages, and they have already
+    disagreed twice: `payload_audit.py` refuses any name *containing* ".bak" while
+    `SkipDevPayload` once only refused names *ending* with it, and the runtime/ scripts were
+    being pruned by a comment that the dofus-network/ loop did not consult. A probe added to
+    one side alone is a silent hole -- the builder ships the bytes, or the gate rejects an
+    artifact the builder was told to produce. This reads both lists from source and compares
+    the sets, so a one-sided edit fails here instead of in a release.
+
+    Cross-checked against the 2026-11-13 artifact: the tier is 81 entries / 4,859,672 B
+    in-zip, and its largest three (the encounter_wsp benchmark pkls) are 2,399,962 B.
+    """
+    section("Installer: builder and gate refuse the same dev tier")
+    import ast
+    import importlib.util
+
+    audit_path = ROOT / "tools" / "payload_audit.py"
+    source = audit_path.read_text(encoding="utf-8", errors="replace")
+    dev = None
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "DEV_TIER" for t in node.targets):
+            dev = ast.literal_eval(node.value)
+            break
+    check("the gate defines one DEV_TIER tuple of exact path probes",
+          isinstance(dev, tuple) and len(dev) >= 20, None if dev is None else len(dev))
+    probes = set(dev or ())
+    check("every probe is a lowercase slash-path fragment, not a filename guess",
+          all("/" in p or p.startswith("models/") for p in probes),
+          sorted(p for p in probes if "/" not in p and not p.startswith("models/")))
+
+    spec = importlib.util.spec_from_file_location("payload_audit_parity", audit_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check("FORBIDDEN actually enforces DEV_TIER", probes <= set(mod.FORBIDDEN),
+          sorted(probes - set(mod.FORBIDDEN)))
+
+    build = (ROOT / "builder" / "build.cs").read_text(encoding="utf-8", errors="replace")
+    marker = "The offline/dev tier, mirrored by"
+    at = build.find(marker)
+    block = build[at:build.find(";", at)] if at >= 0 else ""
+    staged = set(re.findall(r'p\.IndexOf\("([^"]+)"', block))
+    check("SkipDevPayload has a dev-tier block naming at least 20 probes",
+          at >= 0 and len(staged) >= 20, len(staged))
+    check("the builder and the gate refuse the identical set of probes",
+          staged == probes,
+          "gate-only=%s builder-only=%s" % (sorted(probes - staged), sorted(staged - probes)))
+    # `gate()` counts one hit per probe, so a probe contained in another would count one
+    # file twice and make the verdict's forbidden tally larger than the bytes at fault.
+    redundant = sorted((a, b) for a in probes for b in probes if a != b and a in b)
+    check("no probe is a substring of another, so forbidden counts stay honest",
+          not redundant, redundant)
+    # The runtime readers must survive: excluding them would silently break an installed
+    # copy while still passing both lists. Their readers are named in DEV_TIER's comment.
+    # A bare directory probe would exclude the whole tree. An exact filename inside a
+    # REQUIRED directory is fine: REQUIRED matches a directory prefix, not every leaf, so
+    # refusing data/cache/spells_extra.json does not lose data/cache/items_full.json.
+    keeper_dirs = ("data/kb/", "data/map_los/", "data/cache/", "data/knowledge/")
+    keeper_files = ("models/board_pca_v1.json", "models/encounter_selfplay.pkl")
+    bad = sorted(p for p in probes
+                 if (p.endswith("/") and any(k in p for k in keeper_dirs))
+                 or any(f in p for f in keeper_files))
+    check("no probe excludes a directory or file with a real runtime reader", not bad, bad)
 
 
 def test_installed_payload_and_dependencies() -> None:

@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from combat.live_learn import (FEATURE_NAMES, MIN_ROWS, WIDTH, LiveLearner,
-                               OnlineValue, board_key, credit_turn,
+                               OnlineValue, ShadowAuditor, board_key, credit_turn,
                                enemy_signature, features_of)  # noqa: E402
 
 ME = 4404438
@@ -224,6 +224,60 @@ class PersistenceTests(unittest.TestCase):
                 learner.observe(_board(hp=hp, round_no=i))
             self.assertTrue(learner.model.ready)
             self.assertIsNotNone(learner.price(_board()))
+
+
+class StorageAndIncrementalAuditorTests(unittest.TestCase):
+    def test_live_learner_wired_to_storage_and_appends_to_db(self):
+        with tempfile.TemporaryDirectory(prefix="live-learn-store-") as tmp:
+            model_path = Path(tmp) / "m.json"
+            rows_path = Path(tmp) / "rows.db"
+            learner = LiveLearner(model_path=model_path, rows_path=rows_path)
+            self.assertTrue(learner.wired_to_storage)
+            self.assertIsNotNone(learner.store)
+            self.assertTrue(rows_path.exists())
+
+            learner.observe(_board(hp=140))
+            learner.observe(_board(hp=96, round_no=2))
+            learner.observe(_board(hp=60, round_no=3))
+
+            self.assertEqual(learner.store.count(), 2)
+            first_seq, last_seq = learner.store.bounds()
+            self.assertEqual(first_seq, 1)
+            self.assertEqual(last_seq, 2)
+            learner.store.close()
+
+    def test_shadow_auditor_incremental_reads_from_append_store(self):
+        from storage.append_store import AppendStore
+
+        with tempfile.TemporaryDirectory(prefix="auditor-store-") as tmp:
+            db_path = Path(tmp) / "decisions.db"
+            with AppendStore(db_path) as store:
+                store.append({"id": "d1", "action": {"type": "cast", "spell_id": 101}}, kind="decision")
+                store.append({"id": "d2", "action": {"type": "move", "cell": 120}}, kind="decision")
+
+            auditor = ShadowAuditor(decisions_path=db_path)
+            self.assertTrue(auditor.wired_to_storage)
+            self.assertEqual(auditor.last_seq, 0)
+
+            # First incremental read fetches all existing rows
+            first_batch = auditor.read_incremental()
+            self.assertEqual(len(first_batch), 2)
+            self.assertEqual(auditor.last_seq, 2)
+
+            # Immediate second read has no new items (WHERE seq > 2)
+            second_batch = auditor.read_incremental()
+            self.assertEqual(len(second_batch), 0)
+            self.assertEqual(auditor.last_seq, 2)
+
+            # Append third record to store
+            with AppendStore(db_path) as store:
+                store.append({"id": "d3", "action": {"type": "cast", "spell_id": 102}}, kind="decision")
+
+            # Third incremental read returns exactly the single new record
+            third_batch = auditor.read_incremental()
+            self.assertEqual(len(third_batch), 1)
+            self.assertEqual(third_batch[0]["id"], "d3")
+            self.assertEqual(auditor.last_seq, 3)
 
 
 if __name__ == "__main__":

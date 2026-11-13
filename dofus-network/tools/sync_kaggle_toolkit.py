@@ -30,7 +30,22 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOLKIT = ROOT / "kaggle" / "toolkit"
 MANIFEST = TOOLKIT / "TOOLKIT_MANIFEST.json"
 
-SYNC_DIRS = ("agent", "sim", "ai", "knowledge", "combat", "advisor", "tools")
+# `generated/` joined the tree on 2026-11-13 (desktop/generated/contracts.cs and its
+# Python twin). Both the source and the mirrored agent/bridge.py now do
+# `from generated.contracts import validate_bridge_health`, but this list was not
+# extended, so the toolkit mirror had no `generated` package and the gate's
+# "toolkit imports independently of the source tree" probe raised
+# ModuleNotFoundError: No module named 'generated'. The mirror must carry every
+# package its shipped modules import, not just the ones that existed when the
+# matrix was written.
+# `planning/` is imported by agent/autopilot.py (`from planning.machine import
+# CycleDetector`), so the mirror needs it too. Measured 2026-11-13: with `generated`
+# present but `planning` absent, the independent-import probe still failed on
+# `ModuleNotFoundError: No module named 'planning'` for autopilot, brain_daemon,
+# run_brain and run_autopilot. `net.orchestrator` is optional there -- run_brain logs
+# "running without a session token" and continues -- so `net/` stays out.
+SYNC_DIRS = ("agent", "sim", "ai", "knowledge", "combat", "advisor", "tools",
+             "generated", "planning")
 SYNC_FILES = (
     "_lazy_exports.py",
     "run_autopilot.py",

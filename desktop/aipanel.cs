@@ -2402,14 +2402,18 @@ namespace DofusFarm.UI
             if (_lblServices == null || _lblServices.IsDisposed) return;
             if (InvokeRequired)
             {
-                try { BeginInvoke((MethodInvoker)delegate { UpdateServiceUi(); }); }
+                try { UiDispatcher.Instance.Post("aipanel-services", UpdateServiceUi); }
                 catch { }
                 return;
             }
             bool brain = _brainService.Connected;
             bool sentinel = _sentinelService.Connected;
-            _lblServices.Text = _brainService.Describe() + "  \u00b7  " + _sentinelService.Describe();
-            _lblServices.ForeColor = (brain && sentinel) ? Color.FromArgb(100, 116, 139)
+            long dropped = UiDispatcher.Instance.Dropped;
+            long pending = UiDispatcher.Instance.Pending;
+            string dropSuffix = dropped > 0 ? string.Format("  \u00b7  UI drops: {0} (queued {1})", dropped, pending) : "";
+            _lblServices.Text = _brainService.Describe() + "  \u00b7  " + _sentinelService.Describe() + dropSuffix;
+            _lblServices.ForeColor = (dropped > 0) ? Color.FromArgb(248, 113, 113)
+                                   : (brain && sentinel) ? Color.FromArgb(100, 116, 139)
                                    : (brain || sentinel) ? Color.FromArgb(234, 179, 8)
                                                          : Color.FromArgb(248, 113, 113);
         }

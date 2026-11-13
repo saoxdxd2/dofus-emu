@@ -876,6 +876,66 @@ namespace DofusStandaloneSetup
 
 
 
+
+        // SHA-256 build manifest: maps relative install path -> expected hex digest.
+        private Dictionary<string, string> _buildManifest;
+
+        private void LoadBuildManifest()
+        {
+            _buildManifest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string cand in new[]
+            {
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "build", "manifest.sha256"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "manifest.sha256"),
+                Path.Combine(StageDir, "build", "manifest.sha256"),
+            })
+            {
+                if (!string.IsNullOrEmpty(cand) && File.Exists(cand))
+                {
+                    try
+                    {
+                        foreach (var line in File.ReadAllLines(cand))
+                        {
+                            var t = line.Trim();
+                            if (t.Length == 0 || t.StartsWith("#")) continue;
+                            var parts = t.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length == 2)
+                                _buildManifest[parts[1]] = parts[0];
+                        }
+                        return;
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        private string Sha256OfFile(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var stm = File.OpenRead(path))
+                return BitConverter.ToString(sha.ComputeHash(stm)).Replace("-", "").ToLowerInvariant();
+        }
+
+        private void VerifyFileHash(string relPath, string fullPath)
+        {
+            if (_buildManifest == null || !_buildManifest.TryGetValue(relPath, out var expected))
+                return;
+            var actual = Sha256OfFile(fullPath);
+            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "Hash mismatch for staged file '" + relPath + "': expected " + expected +
+                    ", got " + actual + ". Aborting install.");
+        }
+
+        private void RollbackStaging(string stagingRoot)
+        {
+            try
+            {
+                if (Directory.Exists(stagingRoot))
+                    FarmEngine.ForceDeleteDirectory(stagingRoot);
+            }
+            catch { }
+        }
         public void RunInstall(Action onComplete, Action<Exception> onError)
 
         {
@@ -889,6 +949,7 @@ namespace DofusStandaloneSetup
                 {
 
                     Report(2, "Preparing installation directory...");
+                    LoadBuildManifest();
 
                     KillLingeringProcesses();
 
@@ -898,7 +959,12 @@ namespace DofusStandaloneSetup
 
 
 
-                    string targetScripts = Path.Combine(TargetDir, "scripts");
+                    string stagingRoot = Path.Combine(StageDir, ".staging");
+                    if (Directory.Exists(stagingRoot))
+                        FarmEngine.ForceDeleteDirectory(stagingRoot);
+                    Directory.CreateDirectory(stagingRoot);
+
+                    string targetScripts = Path.Combine(stagingRoot, "scripts");
 
                     if (!Directory.Exists(targetScripts)) Directory.CreateDirectory(targetScripts);
 
@@ -916,7 +982,39 @@ namespace DofusStandaloneSetup
 
                     Report(4, "Deploying application files & system image...");
 
-                    StreamUnpackPayload(TargetDir, targetScripts, targetTemplateAvd);
+                    StreamUnpackPayload(stagingRoot, targetScripts, targetTemplateAvd);
+                    // Verify every staged file against the build manifest.
+                    Report(50, "Verifying staged payload hashes...");
+                    foreach (var file in Directory.GetFiles(stagingRoot, "*.*", SearchOption.AllDirectories))
+                    {
+                        var rel = Path.GetRelativePath(stagingRoot, file);
+                        VerifyFileHash(rel, file);
+                    }
+
+                    // Atomic swap: replace TargetDir with the verified staging root.
+                    string targetBackup = null;
+                    if (Directory.Exists(TargetDir))
+                    {
+                        targetBackup = TargetDir + ".rollback." + Guid.NewGuid().ToString("N").Substring(0, 8);
+                        Directory.Move(TargetDir, targetBackup);
+                    }
+                    try
+                    {
+                        Directory.Move(stagingRoot, TargetDir);
+                    }
+                    catch
+                    {
+                        if (targetBackup != null && Directory.Exists(targetBackup))
+                        {
+                            try { Directory.Move(targetBackup, TargetDir); } catch { }
+                        }
+                        throw;
+                    }
+                    if (targetBackup != null && Directory.Exists(targetBackup))
+                    {
+                        try { FarmEngine.ForceDeleteDirectory(targetBackup); } catch { }
+                    }
+
 
 
 
@@ -2773,4 +2871,6 @@ namespace DofusStandaloneSetup
     }
 
 }
+
+
 

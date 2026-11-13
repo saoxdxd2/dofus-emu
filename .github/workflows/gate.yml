@@ -63,7 +63,16 @@ jobs:
         run: python tools/check_case.py
 
       - name: Kaggle toolkit drift check
-        run: python dofus-network/tools/sync_kaggle_toolkit.py --check
+        run: test ! -d dofus-network/kaggle/toolkit || python dofus-network/tools/sync_kaggle_toolkit.py --check
+
+      - name: Verify schema codegen freshness
+        run: |
+          python tools/codegen_schemas.py --check
+          git diff --exit-code desktop/generated/contracts.cs dofus-network/generated/contracts.py scripts/contracts_gen.go scripts/contracts.generated.js
+
+      - name: Reject scratch error logs (*_err.txt)
+        run: |
+          python -c "import pathlib, sys; errs = [str(p) for p in pathlib.Path('.').rglob('*_err.txt') if not any(part.startswith('.') for part in p.parts)]; sys.exit(1 if errs else 0)"
 
       - name: Gate (test suites only)
         run: |
@@ -185,12 +194,13 @@ jobs:
           go-version: "1.22"
           cache-dependency-path: scripts/go.sum
 
-      - name: Relay equivalence tests
+      - name: Relay and netproxy tests
         working-directory: scripts
         run: |
           set -e
-          go vet dofus-net-proxy.go || true
-          go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
+          go vet dofus-net-proxy.go contracts_gen.go || true
+          go test dofus-net-proxy.go contracts_gen.go dofus_net_proxy_equiv_test.go
+          go test -v ./netproxy/...
 
   host:
     # The C# host is what the operator actually runs, and CI has never compiled it: the

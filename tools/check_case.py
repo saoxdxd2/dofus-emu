@@ -35,7 +35,6 @@ SOURCES = (
     "builder/build.cs",
     "compile.bat",
     "dofus-network/agent/regression.py",
-    "dofus-network/kaggle/toolkit/agent/regression.py",
 )
 
 # `Path.Combine(desktopDir, "MainForm.cs")` -- the shape builder/build.cs uses
