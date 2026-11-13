@@ -27,6 +27,7 @@ from agent.features import (DELIVER_TYPES, FIGHT_TYPES, KILL_TYPES,  # noqa: F40
                             MAP_TYPES, OPEN_KILL_TYPES, TALK_TYPES,
                             _params, objective_type, required_map,
                             travel_hops)
+from sim.calibration import SimToRealCalibrator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
@@ -96,7 +97,9 @@ class World:
                  obs_lag: float = 0.20, obs_drop: float = 0.10,
                  travel_cost: bool = False, start_kamas: int = 5000,
                  random_start_map: bool = False,
-                 start_map: Optional[int] = None) -> None:
+                 start_map: Optional[int] = None,
+                 calibrated: bool = False,
+                 calibrator: Optional[SimToRealCalibrator] = None) -> None:
         self.rng = random.Random(seed)
         raw = _load("quests_full.json")
         if kb_limit:
@@ -159,10 +162,20 @@ class World:
         # and the score stops meaning anything. These three knobs are the parts of
         # the real game that make it hard, and they are off by default so existing
         # numbers stay comparable.
-        self.noise = noise
-        self.action_fail = action_fail
-        self.obs_lag = obs_lag
-        self.obs_drop = obs_drop
+        self.calibrated = calibrated
+        self.calibrator = calibrator or (SimToRealCalibrator.get_instance() if calibrated else None)
+        if self.calibrated and self.calibrator:
+            self.action_fail = self.calibrator.dist.failure_rate
+            self.obs_lag = self.calibrator.dist.obs_lag_rate
+            self.obs_drop = self.calibrator.dist.obs_drop_rate
+            self.noise = True
+        else:
+            self.noise = noise
+            self.action_fail = action_fail
+            self.obs_lag = obs_lag
+            self.obs_drop = obs_drop
+
+        self.last_latency_ms: float = 0.0
         self._previous_obs: Optional[Dict[str, Any]] = None
         # Set by a read action: the next observation is served from the client, not
         # from the stale cache. This is the whole value of reading.
@@ -199,6 +212,9 @@ class World:
         twin.objectives_completed = self.objectives_completed
         twin.quests_completed = self.quests_completed
         twin.history = list(self.history[-20:])
+        twin.calibrated = self.calibrated
+        twin.calibrator = self.calibrator
+        twin.last_latency_ms = self.last_latency_ms
         twin.noise = self.noise
         twin.action_fail = self.action_fail
         twin.obs_lag = self.obs_lag
@@ -324,6 +340,7 @@ class World:
             "step_objectives": step_objs,
             "objectives_completed": self.objectives_completed,
             "quests_completed": self.quests_completed,
+            "server_latency_ms": self.last_latency_ms,
         }
 
     # -- quest logic -------------------------------------------------------
@@ -409,7 +426,15 @@ class World:
         if handler is None:
             return False, "no simulator for tool %r" % tool
 
-        if self.noise and tool in ("farm.start", "quest.advance") \
+        if self.calibrated and self.calibrator:
+            self.last_latency_ms = self.calibrator.sample_latency(self.rng)
+            failed, reason = self.calibrator.sample_failure(self.rng, tool)
+            if failed:
+                self.history.append({"tool": tool, "args": args, "ok": False,
+                                     "note": reason, "map": self.map_id,
+                                     "latency_ms": self.last_latency_ms})
+                return False, reason
+        elif self.noise and tool in ("farm.start", "quest.advance") \
                 and self.rng.random() < self.action_fail:
             # The real reason is invisible: a resisted skill, a mob that moved, a
             # dialogue that did not open. The agent must retry or verify, not assume.
@@ -419,7 +444,7 @@ class World:
 
         ok, note = handler(args)
         self.history.append({"tool": tool, "args": args, "ok": ok, "note": note,
-                             "map": self.map_id})
+                             "map": self.map_id, "latency_ms": self.last_latency_ms})
         return ok, note
 
     def _tool_nav_goto(self, args: Dict[str, Any]) -> Tuple[bool, str]:

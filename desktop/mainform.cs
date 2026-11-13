@@ -342,11 +342,13 @@ namespace DofusFarm.UI
 
             if (IsDisposed || !IsHandleCreated) return;
 
-            try { if (async) BeginInvoke(action); else Invoke(action); }
+            // One funnel for the whole host. `async` keeps BeginInvoke's deferred
+            // semantics (Post always queues), and both paths are bounded and drained
+            // at ~30 Hz by UiDispatcher instead of one message-pump entry per call.
 
-            catch (ObjectDisposedException) { }
+            if (async) UiDispatcher.Instance.Post(action);
 
-            catch (InvalidOperationException) { }
+            else UiDispatcher.Instance.Send(action);
 
         }
 
@@ -367,6 +369,9 @@ namespace DofusFarm.UI
         {
 
             InitializeComponent();
+
+            // Unhandled async/event exceptions land in the same log as everything else.
+            UiDispatcher.ErrorSink = Log;
 
             StartLogWriter();
 
@@ -985,33 +990,57 @@ namespace DofusFarm.UI
 
             }
 
+            // Async all the way. The old chain read `t.Result` inside ContinueWith,
+            // which blocks whatever thread the continuation lands on -- and the probe
+            // is a network call, so a slow store made startup wait on it. The guard is
+            // the centralized boundary: a failed probe reports and leaves the badge on
+            // its fallback instead of faulting an unobserved task.
 
+            UiDispatcher.Instance.Guard("RefreshDofusVersion",
 
-            DynamicVersionResolver.ResolveVersionAsync(null, forceRefresh, delegate(string msg) { Log(msg); }).ContinueWith(delegate(Task<DofusVersionInfo> t)
+                delegate { return RefreshDofusVersionAsync(forceRefresh); });
+
+        }
+
+        private async Task RefreshDofusVersionAsync(bool forceRefresh)
+
+        {
+
+            DofusVersionInfo version = null;
+
+            try
 
             {
 
-                if (t.IsCompleted && !t.IsFaulted && t.Result != null)
+                version = await DynamicVersionResolver.ResolveVersionAsync(
+
+                    null, forceRefresh, delegate(string message) { Log(message); }).ConfigureAwait(false);
+
+            }
+
+            catch (Exception ex)
+
+            {
+
+                Log("[VersionResolver] probe failed: " + ex.Message);
+
+            }
+
+            UiDispatcher.Instance.Post("version-badge", delegate
+
+            {
+
+                if (_lblVersionBadge == null || IsDisposed) return;
+
+                if (version != null)
 
                 {
 
-                    SafeBeginInvoke(delegate
+                    _lblVersionBadge.Text = string.Format("⚡ v{0} ({1})", version.AppVersion,
 
-                    {
+                        version.Source == "GooglePlayStore" ? "Live" : "Cached");
 
-                        var v = t.Result;
-
-                        if (_lblVersionBadge != null && !IsDisposed)
-
-                        {
-
-                            _lblVersionBadge.Text = string.Format("⚡ v{0} ({1})", v.AppVersion, v.Source == "GooglePlayStore" ? "Live" : "Cached");
-
-                            _lblVersionBadge.ForeColor = ColGreen;
-
-                        }
-
-                    });
+                    _lblVersionBadge.ForeColor = ColGreen;
 
                 }
 
@@ -1019,29 +1048,15 @@ namespace DofusFarm.UI
 
                 {
 
-                    SafeBeginInvoke(delegate
+                    _lblVersionBadge.Text = "⚡ v3.14.2 (Default)";
 
-                    {
-
-                        if (_lblVersionBadge != null && !IsDisposed)
-
-                        {
-
-                            _lblVersionBadge.Text = "⚡ v3.14.2 (Default)";
-
-                            _lblVersionBadge.ForeColor = ColRedText;
-
-                        }
-
-                    });
+                    _lblVersionBadge.ForeColor = ColRedText;
 
                 }
 
             });
 
         }
-
-
 
         private string GetInstanceIdFromSlot(int slotIndex)
 
@@ -2378,6 +2393,22 @@ namespace DofusFarm.UI
         {
 
             if (string.IsNullOrEmpty(msg)) return;
+
+            // The dispatcher delivers a whole frame's lines as one newline-joined
+            // batch. Split it so the file writer keeps one record per line and the
+            // status label shows the newest message, not a wall of text.
+
+            if (msg.IndexOf('\n') >= 0)
+
+            {
+
+                foreach (string part in msg.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries))
+
+                    Log(part);
+
+                return;
+
+            }
 
             // Disk work lives on the log writer thread. Callers are mostly the
 
@@ -4376,51 +4407,6 @@ namespace DofusFarm.UI
                 NetworkSettings net = NetworkSettings.For(_engine.AppBaseDir);
                 int slot = Math.Max(0, (inst.Port - NetworkSettings.AdbBasePort) / 2), localProxyPort = net.BasePort + slot;
                 DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
-                // The same device every launch, not a new one.
-                //
-                // Two fresh GUIDs per start meant this account arrived from a different phone
-                // each session, which is what a shared-account ring looks like from the server's
-                // side and a legitimate reason to close the session. Persisted per instance.
-                string serialPrefix = (profile != null && !string.IsNullOrEmpty(profile.SerialPrefix)) ? profile.SerialPrefix : "R58M";
-                string serialNo, androidId;
-                FarmEngine.LoadInstanceIdentity(inst.Name, serialPrefix, out serialNo, out androidId);
-
-                // network.ini decides the egress; a per-instance proxy still wins.
-                FarmEngine.UpstreamChoice choice = FarmEngine.ResolveUpstream(inst.Proxy, slot, Log);
-                if (!choice.Ok)
-                {
-                    Log(string.Format("WebView2 {0}: not started - {1}. Fix it in Settings > Network.", inst.Name, choice.Reason));
-                    return false;
-                }
-                string upstream = choice.Url;
-                Log(string.Format("WebView2 {0}: egress {1} ({2})", inst.Name,
-                    choice.Direct ? "DIRECT" : upstream, choice.Reason));
-                // Start the clock: how long this session lasts is the only real evidence about
-                // whether this egress can carry a game.
-                try { ProxySupervisor.Instance.NoteSessionStart(choice.Direct ? "DIRECT" : upstream); } catch { }
-
-                bool wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
-
-                if (!wired && !choice.Direct)
-                {
-                    Log(string.Format("WebView2 {0}: relay did not start on port {1}; refusing to launch with a direct " +
-                                      "connection (fail closed).", inst.Name, localProxyPort));
-                    return false;
-                }
-
-                if (wired)
-
-                {
-
-                    opts.ProxyPort = localProxyPort;
-
-                    try { opts.CacheDir = System.IO.Path.Combine(_engine.AppBaseDir, "asset_cache"); } catch { }
-
-                    Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
-
-                        inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT (proxies.txt empty)" : upstream));
-
-                }
 
                 // Manual-login mode: do not hand the instance an account from
                 // accounts.txt. Otherwise a successful Google/OAuth login is
@@ -4454,6 +4440,108 @@ namespace DofusFarm.UI
 
                 System.Collections.Generic.KeyValuePair<string, string>? acc = null;
                 if (!manualLogin && !freshIdentity) acc = FarmEngine.GetAccountForSlot(slot);
+
+                // Account-scoped launches get their own deterministic profile,
+                // device identity and sticky egress. Everything below uses the
+                // capsule, so the slot name no longer decides which browser
+                // storage this login inherits.
+                AccountCapsule capsule = null;
+                if (acc.HasValue)
+                {
+                    string isoFailure;
+                    capsule = AccountIsolation.Resolve(acc.Value.Key, inst.Name, profile, inst.Proxy, out isoFailure);
+                    if (capsule == null)
+                    {
+                        Log(string.Format("WebView2 {0}: not started - account isolation refused: {1}", inst.Name, isoFailure));
+                        return false;
+                    }
+                    if (!AccountIsolation.Preflight(capsule, out isoFailure))
+                    {
+                        Log(string.Format("WebView2 {0}: not started - account preflight failed: {1}", inst.Name, isoFailure));
+                        return false;
+                    }
+                    if (capsule.Profile != null) profile = capsule.Profile;
+                }
+
+                // The same device every launch, not a new one. Account capsules
+                // derive it from the login; guest/reset launches keep the
+                // instance-persisted pair.
+                string serialNo, androidId;
+                if (capsule != null)
+                {
+                    serialNo = capsule.DeviceSerial;
+                    androidId = capsule.DeviceUuid;
+                }
+                else
+                {
+                    string serialPrefix = (profile != null && !string.IsNullOrEmpty(profile.SerialPrefix)) ? profile.SerialPrefix : "R58M";
+                    FarmEngine.LoadInstanceIdentity(inst.Name, serialPrefix, out serialNo, out androidId);
+                }
+
+                // A pinned account keeps its egress even when the farm's network
+                // mode resolves somewhere else. A first launch records whatever
+                // network.ini or the per-instance proxy chose.
+                FarmEngine.UpstreamChoice choice;
+                if (capsule != null && !string.IsNullOrEmpty(capsule.StickyProxy))
+                {
+                    choice = FarmEngine.UpstreamChoice.Make(capsule.StickyProxy, true, false, "account affinity");
+                }
+                else
+                {
+                    choice = FarmEngine.ResolveUpstream(inst.Proxy, slot, Log);
+                    if (!choice.Ok)
+                    {
+                        Log(string.Format("WebView2 {0}: not started - {1}. Fix it in Settings > Network.", inst.Name, choice.Reason));
+                        return false;
+                    }
+                    if (capsule != null && !string.IsNullOrEmpty(choice.Url))
+                    {
+                        string bindFailure;
+                        if (!AccountIsolation.BindProxy(capsule, choice.Url, out bindFailure))
+                        {
+                            Log(string.Format("WebView2 {0}: not started - account egress could not be pinned: {1}", inst.Name, bindFailure));
+                            return false;
+                        }
+                    }
+                }
+                string upstream = choice.Url;
+                Log(string.Format("WebView2 {0}: egress {1} ({2})", inst.Name,
+                    choice.Direct ? "DIRECT" : upstream, choice.Reason));
+                // Start the clock: how long this session lasts is the only real evidence about
+                // whether this egress can carry a game.
+                try { ProxySupervisor.Instance.NoteSessionStart(choice.Direct ? "DIRECT" : upstream); } catch { }
+
+                bool wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
+
+                if (!wired && !choice.Direct)
+                {
+                    Log(string.Format("WebView2 {0}: relay did not start on port {1}; refusing to launch with a direct " +
+                                      "connection (fail closed).", inst.Name, localProxyPort));
+                    return false;
+                }
+
+                if (wired)
+
+                {
+
+                    opts.ProxyPort = localProxyPort;
+
+                    try { opts.CacheDir = System.IO.Path.Combine(_engine.AppBaseDir, "asset_cache"); } catch { }
+
+                    Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
+
+                        inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT (proxies.txt empty)" : upstream));
+
+                }
+
+                if (capsule != null)
+                {
+                    opts.UserDataDirectory = capsule.ProfileDir;
+                    opts.Profile = capsule.Profile;
+                    opts.DeviceSerial = capsule.DeviceSerial;
+                    opts.DeviceUuid = capsule.DeviceUuid;
+                }
+
                 if (freshIdentity)
                 {
                     Log(string.Format("WebView2 {0}: this profile was reset - no account assigned from accounts.txt (the slot keeps the guest it registered)",
@@ -4472,7 +4560,8 @@ namespace DofusFarm.UI
                 {
                     opts.AccountLogin = acc.Value.Key;
                     opts.AccountPassword = acc.Value.Value;
-                    Log(string.Format("WebView2 {0}: assigned visitor/account from accounts.txt: {1}", inst.Name, opts.AccountLogin));
+                    Log(string.Format("WebView2 {0}: assigned visitor/account from accounts.txt: {1} (account-scoped profile {2})",
+                        inst.Name, opts.AccountLogin, capsule != null ? capsule.ProfileDir : "instance"));
                 }
                 else
                 {

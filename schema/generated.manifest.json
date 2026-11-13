@@ -1,0 +1,16 @@
+{
+  "generator": "tools/codegen_schemas.py",
+  "inputs": {
+    "bridge_directive.schema.json": "1bc24ee129a7553aa9651fcf116303fd1b8f1993bac0929665e3220535067e2a",
+    "bridge_health.schema.json": "63ca099a0a6b3d5893a4a2016fb51f373dda3e82986e97baff1f1cbc2b63e0ca",
+    "proxy_telemetry.schema.json": "c15bf1acb88452ea3958eb6ea2586bf069258ffb297f298685b94eabbb8a2546",
+    "tool_call.schema.json": "27a591b0f42310a6284cbac67d560470bdef2b038cb8f85a8f8ec80c1810a08e"
+  },
+  "outputs": {
+    "csharp": "f36f9a0052c32dcfd5718a9cdfca68292a0b1340f1fa1a3e14d47bb546cce3eb",
+    "go": "61ba34bd1023625bb10d898eb25a924403193a80730e29d4e031ae0ad7a9946c",
+    "js": "61446ac3014d831c3612e2b46921c3c3b4a4d856fd00b27cb9284d01331417b0",
+    "python": "891d814b1a7fd710c3cc28c7200319393d2fe47bf368874eb0c7c982de990aef"
+  },
+  "version": 1
+}

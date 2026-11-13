@@ -32,6 +32,13 @@ DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "
 
 
 class NNPlanner(QuestPlanner):
+    head: str = "mlp"
+    capability_tools: List[str] = []
+    trained_tools: List[str] = []
+    untrained_penalty: float = 0.0
+    descriptor_input: str = ""
+    _descriptor_matrix: Any = None
+
     def __init__(self, model_path: Optional[Path] = None,
                  tool_penalty: Optional[Dict[str, float]] = None,
                  stack_mode: str = "shadow",
@@ -44,6 +51,15 @@ class NNPlanner(QuestPlanner):
         self.expected_features = 0
         self.arch = "mlp"
         self.history_steps = 0
+        # Dynamic capability head: the sidecar names the descriptor-scored
+        # contract. ``tools`` then covers the whole live registry, not the 21
+        # learned labels, and the graph takes a second ``descriptors`` input.
+        self.head = "mlp"
+        self.capability_tools: List[str] = []
+        self.trained_tools: List[str] = []
+        self.untrained_penalty = 0.0
+        self.descriptor_input = ""
+        self._descriptor_matrix: Any = None
         # Whether each history token also carries that step's observation summary.
         # Read from the sidecar, never inferred: a 33-wide token and a 28-wide one
         # both fit a float32 row, so a wrong guess would score silently.
@@ -101,18 +117,50 @@ class NNPlanner(QuestPlanner):
                 # to change the input contract: the 42-wide head and a 266-wide
                 # sequence policy must not be distinguishable by guesswork.
                 self.arch = str(payload.get("arch") or "mlp")
+                self.head = str(payload.get("head") or "mlp")
+                self.trained_tools = list(payload.get("trained_tools") or self.tools)
+                self.untrained_penalty = float(payload.get("untrained_penalty") or 0.0)
+                if self.head == "capability":
+                    self.capability_tools = list(
+                        payload.get("capability_tools") or self.tools)
+                    self.tools = list(self.capability_tools)
+                    inputs = self.session.get_inputs()
+                    if len(inputs) < 2:
+                        raise ValueError("capability sidecar but graph has one input")
+                    self.descriptor_input = inputs[1].name
+                    if not self.trained_tools:
+                        self.trained_tools = list(payload.get("tools") or [])
                 self.history_steps = int((payload.get("history") or {}).get("steps") or 0)
                 from agent.features import HISTORY_TOKEN_OBS
                 self.history_obs = (
                     int((payload.get("history") or {}).get("token") or 0)
                     == HISTORY_TOKEN_OBS)
-            self.note = "tool policy %s (%d tools%s)" % (
+            self.note = "tool policy %s (%d tools%s%s)" % (
                 path.name, len(self.tools),
-                ", +history" if self.history_steps else "")
+                ", +history" if self.history_steps else "",
+                ", capability head" if self.head == "capability" else "")
         except Exception as exc:  # noqa: BLE001
             self.note = "model unusable (%s); deterministic fallback" % exc
 
     # -- stacked choice ----------------------------------------------------
+
+    def _descriptors(self) -> Any:
+        """Descriptor matrix for the live tool order, rebuilt from the registry.
+
+        A capability appended after training has no row in the checkpoint, but
+        it has an entry in ``data/capabilities.json``; encoding it here is what
+        makes the head grow without a retrain. The matrix is cached because it
+        only changes when the registry does.
+        """
+        if self._descriptor_matrix is not None:
+            return self._descriptor_matrix
+        import numpy as np
+        from ai.capability_head import descriptor_table, load_capability_records
+
+        records = load_capability_records()
+        _, matrix = descriptor_table(self.tools, records)
+        self._descriptor_matrix = np.asarray(matrix, dtype=np.float32)
+        return self._descriptor_matrix
 
     def _ensure_stack(self) -> None:
         if self._stack_loaded or self.stack_mode == "off":
@@ -217,8 +265,32 @@ class NNPlanner(QuestPlanner):
             if x.shape[1] != self.expected_features:
                 raise ValueError("model wants %d features, featuriser gives %d"
                                  % (self.expected_features, x.shape[1]))
-            outputs = self.session.run(None, {self.input_name: x})
+            feeds = {self.input_name: x}
+            if self.head == "capability":
+                feeds[self.descriptor_input] = self._descriptors()
+            outputs = self.session.run(None, feeds)
             logits = outputs[0][0]
+            if len(logits) != len(self.tools):
+                raise ValueError("model scored %d tools, sidecar names %d"
+                                 % (len(logits), len(self.tools)))
+            # A capability the corpus never labelled has a descriptor and a
+            # score but no calibration. Penalise it by a fixed scalar instead
+            # of masking it: it can still win when the state matches it
+            # strongly, which is the point of a growable head.
+            if self.head == "capability" and self.untrained_penalty:
+                trained = set(self.trained_tools)
+                logits = logits.copy()
+                for index, name in enumerate(self.tools):
+                    if name not in trained:
+                        logits[index] -= self.untrained_penalty
+            # Legality is applied to the logits, before any softmax or argmax.
+            # Doing it afterwards lets an illegal tool keep probability mass and
+            # corrupts both the choice and the confidence the gate reads.
+            try:
+                from ai.guard_policy import legality_mask
+                logits = legality_mask(logits, self.tools, obs)
+            except Exception:  # noqa: BLE001 - legality must never break planning
+                pass
             # The dedicated model also predicts whether this step advances the
             # objective. It is not used to decide here -- it is recorded, because a
             # value that is logged can be calibrated against outcomes later, and a

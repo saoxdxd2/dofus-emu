@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "proxy_telemetry",
+  "title": "dofus-net-proxy GET /__telemetry response",
+  "description": "Written by the Go relay's handleAdmin. `rtt_ms` is the last successful dial, `rtt_avg_ms` the mean of the rolling 32-dial window.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "port", "model", "rtt_ms", "rtt_avg_ms", "sent_bytes", "recv_bytes", "conns_total", "conns_failed", "conns_active", "timestamp"],
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "degraded", "error"] },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "model": { "type": "string" },
+    "rtt_ms": { "type": "number", "minimum": 0 },
+    "rtt_avg_ms": { "type": "number", "minimum": 0 },
+    "sent_bytes": { "type": "integer", "minimum": 0 },
+    "recv_bytes": { "type": "integer", "minimum": 0 },
+    "conns_total": { "type": "integer", "minimum": 0 },
+    "conns_failed": { "type": "integer", "minimum": 0 },
+    "conns_active": { "type": "integer", "minimum": 0 },
+    "timestamp": { "type": "integer", "minimum": 0 }
+  }
+}

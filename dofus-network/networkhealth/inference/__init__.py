@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .cnn_int8 import MicroCNN, N_OUTPUTS, OUTPUT_PER_HORIZON, benchmark_crop, export_onnx
+from .forecaster import EWMALoss, ForecastSnapshot, KalmanRTT, NetworkForecaster
 from .runtime import (
     ForecastResult,
     MultiInstanceNetworkHealth,
@@ -44,6 +46,15 @@ def resolve_checkpoint(artifacts_dir=None):
 
 
 __all__ = [
+    "MicroCNN",
+    "N_OUTPUTS",
+    "OUTPUT_PER_HORIZON",
+    "benchmark_crop",
+    "export_onnx",
+    "EWMALoss",
+    "ForecastSnapshot",
+    "KalmanRTT",
+    "NetworkForecaster",
     "ForecastResult",
     "MultiInstanceNetworkHealth",
     "NetworkHealthInference",

@@ -124,11 +124,11 @@ func TestLoginFetchDoesNotPreserveThePin(t *testing.T) {
 	if game == nil {
 		t.Fatal("the real game socket was not registered")
 	}
-	game.touch()
+	game.Touch()
 	if live := p.liveGameSessions(time.Minute); live != 0 {
 		t.Fatalf("a client-only write counted as %d live session(s), want 0", live)
 	}
-	game.touchReceived()
+	game.TouchReceived()
 	if live := p.liveGameSessions(time.Minute); live != 1 {
 		t.Fatalf("real game socket counted as %d sessions, want 1", live)
 	}

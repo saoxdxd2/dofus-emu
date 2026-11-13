@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "bridge_health",
+  "title": "AgentDirectiveBridge GET /agent/health response",
+  "description": "Written by AgentDirectiveBridge.HealthJson and read by the Python agent before the first directive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "service", "port", "instances", "time"],
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "degraded", "error"] },
+    "service": { "type": "string", "minLength": 1 },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "instances": { "type": "integer", "minimum": 0 },
+    "time": { "type": "integer", "minimum": 0 }
+  }
+}

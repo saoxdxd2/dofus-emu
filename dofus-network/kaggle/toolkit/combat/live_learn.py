@@ -52,6 +52,22 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = REPO_ROOT / "models" / "live_enemy_value.json"
 DEFAULT_ROWS = REPO_ROOT / "trajectories" / "live_learning.jsonl"
+# The live decision log is written by the desktop process at the workspace
+# root, while the combat package lives under `dofus-network/`. Accept both
+# layouts instead of silently reading an empty directory.
+_WS_ROOT = REPO_ROOT.parent
+DEFAULT_DECISIONS = (
+    _WS_ROOT / "trajectories" / "live_policy_decisions.jsonl"
+    if (_WS_ROOT / "trajectories" / "live_policy_decisions.jsonl").exists()
+    else REPO_ROOT / "trajectories" / "live_policy_decisions.jsonl"
+)
+DEFAULT_DAMAGE_CALIBRATION = REPO_ROOT / "models" / "fight_damage_calibration.json"
+
+# Shadow differential calibration: a residual bucket needs at least this many
+# paired actions before its scale is allowed to move. Below it the bucket stays
+# at 1.0 and the report says `collecting`, which is the honest answer.
+MIN_BUCKET_ROWS = 3
+CALIBRATION_VERSION = 1
 
 # Below this many credited turns the model is reported as `collecting` and answers
 # nothing. The number is small on purpose: a fight is 4-8 rounds, so waiting for
@@ -529,13 +545,496 @@ class LiveLearner:
         return body
 
 
+# -- shadow differential auditor --------------------------------------------
+#
+# `battle_solver` prices a turn before it happens. The server then publishes the
+# next board, and the difference between the price and the board is a residual
+# the solver never sees. This section pairs the two, buckets the residual by
+# spell and effect id, and writes a calibration the estimator can consume.
+#
+# The pairing rule is deliberately strict: a cast is only credited when the
+# next row is a *later* action in the same fight and the target's hp actually
+# moved. A repeated poll and a different fight both credit nothing, so the
+# residual is an action effect rather than a clock artefact.
+
+
+def _decision(row: Dict[str, Any]) -> Dict[str, Any]:
+    value = row.get("decision") if isinstance(row, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _observation(row: Dict[str, Any]) -> Dict[str, Any]:
+    decision = _decision(row)
+    value = decision.get("observation") or row.get("observation")
+    return value if isinstance(value, dict) else {}
+
+
+def _action(row: Dict[str, Any]) -> Dict[str, Any]:
+    value = _decision(row).get("action")
+    return value if isinstance(value, dict) else {}
+
+
+def _fighters_in(observation: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    """`self` is one fighter, `allies`/`enemies` are lists. Accept both."""
+    value = observation.get(key)
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _spell_damage_effects(observation: Dict[str, Any],
+                          spell_id: Any) -> List[Dict[str, Any]]:
+    """Damage effects of one spell, from the observation's own spellbook."""
+    try:
+        wanted = int(spell_id)
+    except (TypeError, ValueError):
+        return []
+    for key in ("self", "allies", "enemies"):
+        for fighter in _fighters_in(observation, key):
+            for spell in fighter.get("spells") or []:
+                if not isinstance(spell, dict):
+                    continue
+                try:
+                    if int(spell.get("id")) != wanted:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                effects = [effect for effect in (spell.get("effects") or [])
+                           if isinstance(effect, dict)
+                           and str(effect.get("kind")) == "damage"]
+                return effects
+    return []
+
+
+def _target_hp(observation: Dict[str, Any], target_id: Any) -> Optional[float]:
+    """Current hp of one fighter, or None when the board does not name it.
+
+    A fighter that was alive and is gone from the next board is dead: its hp is
+    0, not "unknown". Treating the disappearance as unknown would drop every
+    killing blow from the residual set -- the rows where the solver is most
+    wrong.
+    """
+    if target_id is None:
+        return None
+    wanted = str(target_id)
+    for key in ("self", "allies", "enemies"):
+        for fighter in _fighters_in(observation, key):
+            if str(fighter.get("id")) != wanted:
+                continue
+            if fighter.get("alive") is False:
+                return 0.0
+            return _num(fighter.get("hp"))
+    return None
+
+
+def _target_alive(observation: Dict[str, Any], target_id: Any) -> bool:
+    wanted = str(target_id)
+    for key in ("self", "allies", "enemies"):
+        for fighter in _fighters_in(observation, key):
+            if str(fighter.get("id")) == wanted:
+                return fighter.get("alive") is not False
+    return False
+
+
+def prediction_for_action(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The solver's damage price for the action on this row.
+
+    Three sources, in descending authority: the observation's per-target
+    derived damage, the decision's own slot price, and the spell effect range.
+    Each is labelled so a residual can be traced back to what produced it.
+    """
+    action = _action(row)
+    if str(action.get("type")) != "cast":
+        return None
+    spell_id = action.get("spellId")
+    target_id = action.get("targetId")
+    observation = _observation(row)
+    effects = _spell_damage_effects(observation, spell_id)
+    effect_ids = [int(effect.get("effect_id")) for effect in effects
+                  if effect.get("effect_id") is not None]
+
+    derived = observation.get("derived") or {}
+    mine = (derived.get("self") or {}).get(str(spell_id)) if isinstance(derived, dict) else None
+    if isinstance(mine, dict):
+        targets = mine.get("targets") or {}
+        entry = targets.get(str(target_id)) if isinstance(targets, dict) else None
+        if isinstance(entry, dict):
+            damage = entry.get("damage") or {}
+            if isinstance(damage, dict) and isinstance(damage.get("expected"), (int, float)):
+                return {"predicted": float(damage["expected"]), "spell_id": spell_id,
+                        "effect_ids": effect_ids, "target_id": target_id,
+                        "source": "derived"}
+
+    for slot in _decision(row).get("slots") or []:
+        if not isinstance(slot, dict):
+            continue
+        try:
+            if int(slot.get("spell_id")) != int(spell_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        if isinstance(slot.get("damage"), (int, float)):
+            return {"predicted": float(slot["damage"]), "spell_id": spell_id,
+                    "effect_ids": effect_ids, "target_id": target_id,
+                    "source": "slot"}
+
+    if effects:
+        low = sum(_num(effect.get("min")) for effect in effects)
+        high = sum(_num(effect.get("max")) for effect in effects)
+        return {"predicted": (low + high) / 2.0, "spell_id": spell_id,
+                "effect_ids": effect_ids, "target_id": target_id,
+                "source": "effects"}
+    return None
+
+
+def actual_for_action(row: Dict[str, Any],
+                      following: Dict[str, Any]) -> Optional[float]:
+    """Target hp delta between this action and the next observed action."""
+    before = _observation(row)
+    after = _observation(following)
+    if not before or not after:
+        return None
+    fight_before = (before.get("fight") or {}).get("fight_id", row.get("fight_id"))
+    fight_after = (after.get("fight") or {}).get("fight_id", following.get("fight_id"))
+    if str(fight_before) != str(fight_after):
+        return None
+    try:
+        if float(following.get("time")) <= float(row.get("time")):
+            return None
+    except (TypeError, ValueError):
+        pass
+    target_id = _action(row).get("targetId")
+    hp_before = _target_hp(before, target_id)
+    if hp_before is None or hp_before <= 0:
+        return None
+    hp_after = _target_hp(after, target_id)
+    if hp_after is None:
+        # Gone from the board: a dead target, not an unknown one.
+        hp_after = 0.0 if _target_alive(before, target_id) else None
+    if hp_after is None:
+        return None
+    damage = hp_before - hp_after
+    return damage if damage >= 0.0 else None
+
+
+def _board_hp_state(observation: Dict[str, Any]) -> Dict[str, float]:
+    """Every named fighter's hp, keyed by id. Used to detect a board update."""
+    state: Dict[str, float] = {}
+    for key in ("self", "allies", "enemies"):
+        for fighter in _fighters_in(observation, key):
+            if fighter.get("id") is None:
+                continue
+            state[str(fighter.get("id"))] = (
+                0.0 if fighter.get("alive") is False else _num(fighter.get("hp")))
+    return state
+
+
+def shadow_residuals(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Pair casts with the board update that actually reflects them.
+
+    A decision row carries the board *before* its action. Several casts can be
+    issued before the server publishes a new board, so pairing each cast with
+    the very next row attributes a delayed update to the first cast and a miss
+    to the last. Instead, accumulate casts until any fighter's hp changes (or
+    the round turns over), then split that update across the pending casts in
+    proportion to their prices. A cast whose target never moves is credited 0,
+    which is a real miss rather than a missing label.
+    """
+    ordered = sorted(rows, key=lambda row: _num(row.get("time")))
+    out: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
+    baseline: Optional[Dict[str, float]] = None
+
+    def flush(current: Dict[str, float], reason: str) -> None:
+        nonlocal pending, baseline
+        if not pending or baseline is None:
+            pending = []
+            baseline = None
+            return
+        by_target: Dict[str, List[Dict[str, Any]]] = {}
+        for item in pending:
+            by_target.setdefault(str(item["target_id"]), []).append(item)
+        for target_id, items in by_target.items():
+            before = baseline.get(target_id)
+            after = current.get(target_id)
+            if before is None:
+                continue
+            if after is None:
+                after = 0.0
+            total_actual = max(0.0, before - after)
+            total_predicted = sum(item["predicted"] for item in items)
+            for item in items:
+                share = (item["predicted"] / total_predicted
+                         if total_predicted > 1e-9 else 1.0 / len(items))
+                actual = total_actual * share
+                out.append({**item,
+                            "actual": round(actual, 4),
+                            "residual": round(actual - item["predicted"], 4),
+                            "pairing": reason})
+        pending = []
+        baseline = None
+
+    for index, row in enumerate(ordered):
+        observation = _observation(row)
+        if not observation:
+            continue
+        state = _board_hp_state(observation)
+        if baseline is None:
+            baseline = state
+        elif state != baseline:
+            flush(state, "hp_update")
+            baseline = state
+        elif pending and str(row.get("round")) != str(pending[0].get("round")):
+            flush(state, "round_change")
+            baseline = state
+
+        price = prediction_for_action(row)
+        if price is None:
+            continue
+        pending.append({
+            "time": _num(row.get("time")),
+            "fight_id": row.get("fight_id"),
+            "round": row.get("round"),
+            "spell_id": price["spell_id"],
+            "effect_ids": list(price["effect_ids"]),
+            "target_id": price["target_id"],
+            "source": price["source"],
+            "predicted": round(float(price["predicted"]), 4),
+        })
+
+    # A cast at the very end of the log has no following board: leave it
+    # unpaired rather than inventing a zero.
+    return out
+
+
+def _new_bucket() -> Dict[str, float]:
+    return {"rows": 0.0, "predicted": 0.0, "actual": 0.0, "residual": 0.0,
+            "residual_sq": 0.0, "abs_residual": 0.0,
+            "ewma_residual": 0.0, "ewma_ratio": 1.0}
+
+
+def _bucket_add(bucket: Dict[str, float], predicted: float, actual: float,
+                residual: float, alpha: float = 0.25) -> None:
+    bucket["rows"] += 1.0
+    bucket["predicted"] += predicted
+    bucket["actual"] += actual
+    bucket["residual"] += residual
+    bucket["residual_sq"] += residual * residual
+    bucket["abs_residual"] += abs(residual)
+    bucket["ewma_residual"] = (1.0 - alpha) * bucket["ewma_residual"] + alpha * residual
+    ratio = (actual / predicted) if predicted > 1e-9 else 1.0
+    bucket["ewma_ratio"] = (1.0 - alpha) * bucket["ewma_ratio"] + alpha * ratio
+
+
+def _finalise_bucket(bucket: Dict[str, float], prior: float = 4.0,
+                     min_rows: int = MIN_BUCKET_ROWS) -> Dict[str, Any]:
+    rows = int(bucket["rows"])
+    if rows <= 0:
+        return {"rows": 0, "status": "empty", "scale": 1.0, "bias": 0.0,
+                "confidence": 0.0}
+    predicted = float(bucket["predicted"])
+    actual = float(bucket["actual"])
+    raw_scale = (actual / predicted) if predicted > 1e-9 else 1.0
+    raw_scale = min(4.0, max(0.25, raw_scale))
+    confidence = rows / (rows + max(0.0, prior))
+    scale = 1.0 + confidence * (raw_scale - 1.0)
+    bias = confidence * (float(bucket["residual"]) / rows)
+    mae = float(bucket["abs_residual"]) / rows
+    rmse = math.sqrt(float(bucket["residual_sq"]) / rows)
+    return {
+        "rows": rows,
+        "status": "ready" if rows >= min_rows else "collecting",
+        "predicted": round(predicted, 3),
+        "actual": round(actual, 3),
+        "scale": round(scale, 6),
+        "raw_scale": round(raw_scale, 6),
+        "bias": round(bias, 6),
+        "confidence": round(confidence, 6),
+        "ewma_residual": round(float(bucket["ewma_residual"]), 6),
+        "ewma_ratio": round(float(bucket["ewma_ratio"]), 6),
+        "mae": round(mae, 4),
+        "rmse": round(rmse, 4),
+    }
+
+
+def calibrate_residuals(residuals: Sequence[Dict[str, Any]],
+                        min_rows: int = MIN_BUCKET_ROWS) -> Dict[str, Any]:
+    """Bucket residuals by spell and effect id and shrink each toward 1.0."""
+    spells: Dict[str, Dict[str, float]] = {}
+    effects: Dict[str, Dict[str, float]] = {}
+    overall = _new_bucket()
+    for row in residuals:
+        predicted = float(row["predicted"])
+        actual = float(row["actual"])
+        residual = float(row["residual"])
+        _bucket_add(overall, predicted, actual, residual)
+        spell_key = str(row.get("spell_id"))
+        _bucket_add(spells.setdefault(spell_key, _new_bucket()),
+                    predicted, actual, residual)
+        effect_ids = [str(value) for value in row.get("effect_ids") or []]
+        if effect_ids:
+            share = 1.0 / len(effect_ids)
+            for effect_id in effect_ids:
+                _bucket_add(effects.setdefault(effect_id, _new_bucket()),
+                            predicted * share, actual * share, residual * share)
+
+    payload = {
+        "version": CALIBRATION_VERSION,
+        "kind": "fight-damage-shadow",
+        "generated_at": time.time(),
+        "source": "trajectories/live_policy_decisions.jsonl",
+        "min_rows": int(min_rows),
+        "rows": len(residuals),
+        "overall": _finalise_bucket(overall, min_rows=min_rows),
+        "spells": {key: _finalise_bucket(value, min_rows=min_rows)
+                   for key, value in sorted(spells.items())},
+        "effects": {key: _finalise_bucket(value, min_rows=min_rows)
+                    for key, value in sorted(effects.items())},
+    }
+    if residuals:
+        predicted = [float(row["predicted"]) for row in residuals]
+        actual = [float(row["actual"]) for row in residuals]
+        mean_actual = sum(actual) / len(actual)
+        baseline = sum((value - mean_actual) ** 2 for value in actual)
+        model = sum((a - p) ** 2 for a, p in zip(actual, predicted))
+        payload["metrics"] = {
+            "mae": round(sum(abs(a - p) for a, p in zip(actual, predicted)) / len(actual), 4),
+            "rmse": round(math.sqrt(model / len(actual)), 4),
+            "baseline_rmse": round(math.sqrt(baseline / len(actual)), 4),
+            "improvement": (round((math.sqrt(baseline) - math.sqrt(model))
+                                  / math.sqrt(baseline), 4)
+                            if baseline > 0 else None),
+        }
+    return payload
+
+
+def load_damage_calibration(path: Path = DEFAULT_DAMAGE_CALIBRATION
+                            ) -> Optional[Dict[str, Any]]:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != CALIBRATION_VERSION:
+        return None
+    return payload
+
+
+def apply_damage_calibration(predicted: float,
+                             spell_id: Any = None,
+                             effect_ids: Optional[Sequence[Any]] = None,
+                             calibration: Optional[Dict[str, Any]] = None) -> float:
+    """Correct one damage price with the buckets that apply to it.
+
+    Spell and effect corrections are combined, not multiplied: each is a
+    residual estimate for the same quantity, and multiplying two shrunk ratios
+    would double-count the overlap. The spell bucket carries the larger weight
+    because it is the one the solver actually prices.
+    """
+    if not isinstance(calibration, dict):
+        return max(0.0, float(predicted))
+    pieces: List[Tuple[float, float, float]] = []  # (weight, scale, bias)
+    spell = (calibration.get("spells") or {}).get(str(spell_id))
+    if isinstance(spell, dict) and spell.get("status") == "ready":
+        pieces.append((0.6, float(spell.get("scale") or 1.0),
+                       float(spell.get("bias") or 0.0)))
+    effect_scales: List[float] = []
+    effect_biases: List[float] = []
+    for effect_id in effect_ids or []:
+        bucket = (calibration.get("effects") or {}).get(str(effect_id))
+        if isinstance(bucket, dict) and bucket.get("status") == "ready":
+            effect_scales.append(float(bucket.get("scale") or 1.0))
+            effect_biases.append(float(bucket.get("bias") or 0.0))
+    if effect_scales:
+        pieces.append((0.4, sum(effect_scales) / len(effect_scales),
+                       sum(effect_biases) / len(effect_biases)))
+    if not pieces:
+        overall = calibration.get("overall")
+        if isinstance(overall, dict) and overall.get("status") == "ready":
+            pieces.append((1.0, float(overall.get("scale") or 1.0),
+                           float(overall.get("bias") or 0.0)))
+    if not pieces:
+        return max(0.0, float(predicted))
+    total_weight = sum(weight for weight, _, _ in pieces)
+    scale = sum(weight * value for weight, value, _ in pieces) / total_weight
+    bias = sum(weight * value for weight, _, value in pieces) / total_weight
+    return max(0.0, float(predicted) * scale + bias)
+
+
+class ShadowAuditor:
+    """Reads live decisions, pairs casts, and persists the calibration."""
+
+    def __init__(self, decisions_path: Path = DEFAULT_DECISIONS,
+                 calibration_path: Path = DEFAULT_DAMAGE_CALIBRATION) -> None:
+        self.decisions_path = Path(decisions_path)
+        self.calibration_path = Path(calibration_path)
+
+    def read(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        try:
+            handle = self.decisions_path.open(encoding="utf-8", errors="replace")
+        except OSError:
+            return rows
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+        return rows
+
+    def audit(self, write: bool = True) -> Dict[str, Any]:
+        rows = self.read()
+        residuals = shadow_residuals(rows)
+        calibration = calibrate_residuals(residuals)
+        report = {
+            "decisions": len(rows),
+            "paired_casts": len(residuals),
+            "unpaired_casts": sum(1 for row in rows
+                                  if str(_action(row).get("type")) == "cast")
+                              - len(residuals),
+            "calibration": calibration,
+        }
+        if write:
+            try:
+                self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
+                self.calibration_path.write_text(
+                    json.dumps(calibration, indent=1, sort_keys=True),
+                    encoding="utf-8")
+                report["written"] = str(self.calibration_path)
+            except OSError as exc:
+                report["write_error"] = str(exc)
+        return report
+
+    def correct(self, predicted: float, spell_id: Any = None,
+                effect_ids: Optional[Sequence[Any]] = None) -> float:
+        return apply_damage_calibration(
+            predicted, spell_id, effect_ids,
+            load_damage_calibration(self.calibration_path))
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Live enemy-turn learner")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
     parser.add_argument("--rows", default=str(DEFAULT_ROWS))
+    parser.add_argument("--decisions", default=str(DEFAULT_DECISIONS))
+    parser.add_argument("--damage-calibration", default=str(DEFAULT_DAMAGE_CALIBRATION))
+    parser.add_argument("--audit-decisions", action="store_true",
+                        help="pair live casts with server deltas and write the calibration")
     parser.add_argument("--report", action="store_true", help="print what is learned")
     parser.add_argument("--reset", action="store_true", help="delete the stored model")
     args = parser.parse_args(argv)
+
+    if args.audit_decisions:
+        auditor = ShadowAuditor(Path(args.decisions), Path(args.damage_calibration))
+        print(json.dumps(auditor.audit(write=True), indent=1))
+        return 0
 
     if args.reset:
         path = Path(args.model)

@@ -992,12 +992,12 @@ namespace DofusFarm.Engine {
                 };
                 _tunnelProcess = Process.Start(psi);
                 for (int i = 0; i < 30; i++) {
-                    Thread.Sleep(200);
                     if (IsLocalPortOpen(s.SocksPort, 200)) {
                         if (logger != null)
                             logger(string.Format("[NET] WireGuard tunnel ACTIVE on 127.0.0.1:{0} (system network untouched).", s.SocksPort));
                         return true;
                     }
+                    Thread.Sleep(100);
                 }
                 if (logger != null) logger("[NET] wireproxy started but never bound its SOCKS port - check bin\\warp\\wireproxy.conf.");
             } catch (Exception ex) {
@@ -1036,11 +1036,11 @@ namespace DofusFarm.Engine {
             RunWarpCli(cli, "mode proxy", logger);
             RunWarpCli(cli, "connect", logger);
             for (int i = 0; i < 40; i++) {
-                Thread.Sleep(500);
                 if (IsLocalPortOpen(s.SocksPort, 200)) {
                     if (logger != null) logger(string.Format("[NET] system WARP is up on 127.0.0.1:{0}.", s.SocksPort));
                     return true;
                 }
+                Thread.Sleep(200);
             }
             if (logger != null) logger("[NET] system WARP did not come up within 20 s.");
             return false;
@@ -1189,14 +1189,25 @@ namespace DofusFarm.Engine {
 
         private static readonly ConcurrentDictionary<string, string> _activeAccountClaims = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>The instance already live on this login, or null when it is free.</summary>
+        public static string AccountActiveElsewhere(string login, string selfInstanceId) {
+            try {
+                if (string.IsNullOrEmpty(login)) return null;
+                string norm = login.Trim();
+                foreach (var kv in _activeAccountClaims)
+                    if (!string.Equals(kv.Key, selfInstanceId, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(kv.Value, norm, StringComparison.OrdinalIgnoreCase))
+                        return kv.Key;
+            } catch { }
+            return null;
+        }
+
         public static string ClaimAccount(string instanceId, string login) {
             try {
                 if (string.IsNullOrEmpty(instanceId) || string.IsNullOrEmpty(login)) return null;
-                string norm = login.Trim();
-                foreach (var kv in _activeAccountClaims)
-                    if (!string.Equals(kv.Key, instanceId, StringComparison.OrdinalIgnoreCase) && string.Equals(kv.Value, norm, StringComparison.OrdinalIgnoreCase))
-                        return kv.Key;
-                _activeAccountClaims[instanceId] = norm;
+                string conflict = AccountActiveElsewhere(login, instanceId);
+                if (conflict != null) return conflict;
+                _activeAccountClaims[instanceId] = login.Trim();
             } catch { }
             return null;
         }
@@ -1379,10 +1390,18 @@ namespace DofusFarm.Engine {
                         foreach (var p in Process.GetProcessesByName("dofus-net-proxy"))
                             using (p) {
                                 if (!tracked.Contains(p.Id) && (blocking.Count == 0 || blocking.Contains(p.Id)))
-                                    try { if (!p.HasExited) p.Kill(); } catch { }
+                                    try {
+                                        if (!p.HasExited) {
+                                            p.Kill();
+                                            p.WaitForExit(200);
+                                        }
+                                    } catch (Exception ex) {
+                                        Log(string.Format("[WARN] Kill old proxy {0}: {1}", p.Id, ex.Message));
+                                    }
                             }
-                        Thread.Sleep(200);
-                    } catch { }
+                    } catch (Exception ex) {
+                        Log(string.Format("[WARN] Cleanup old proxy processes failed: {0}", ex.Message));
+                    }
                 }
                 StopProxyInternal(port);
                 if (File.Exists(ProxyExePath)) {
@@ -2724,7 +2743,8 @@ namespace DofusFarm.Engine {
             Log(string.Format("Cloning '{0}' -> '{1}' (Preserving 3GB game cache: {2})...", sourceName, targetName, cloneState));
             int targetIdx = ParseSlotIdx(targetName), targetPort = NetworkSettings.AdbBasePort + 2 * (targetIdx - 1);
             StopInstance("emulator-" + targetPort, targetName);
-            Thread.Sleep(500);
+            string targetSerial = "emulator-" + targetPort;
+            for (int w = 0; w < 10 && GetLiveSerials().Contains(targetSerial); w++) Thread.Sleep(50);
             HashSet<string> live = GetLiveSerials();
             Match mSrc = RxTrailingDigits.Match(sourceName ?? "");
             int srcIdx = 1;
@@ -2736,7 +2756,7 @@ namespace DofusFarm.Engine {
                 Log(string.Format("Flushing and pausing active source '{0}' for atomic disk cloning...", sourceName));
                 AdbShell(srcSerial, "sync");
                 StopInstance(srcSerial, sourceName);
-                Thread.Sleep(1500);
+                for (int w = 0; w < 30 && GetLiveSerials().Contains(srcSerial); w++) Thread.Sleep(50);
             }
             string srcCfg = Path.Combine(srcDir, "config.ini");
             try {
@@ -2867,7 +2887,10 @@ namespace DofusFarm.Engine {
             KillProcessForInstance(name, port);
             int removedPid;
             lock (_pidCacheLock) _cachedPortToPid.TryRemove(port, out removedPid);
-            for (int wait = 0; wait < 6; wait++) { Thread.Sleep(400); if (!GetLiveSerials().Contains(serial)) break; }
+            for (int wait = 0; wait < 12; wait++) {
+                if (!GetLiveSerials().Contains(serial)) break;
+                Thread.Sleep(100);
+            }
             string avdDir = Path.Combine(AvdHome, name + ".avd"), iniFile = Path.Combine(AvdHome, name + ".ini"), strayAvdIni = Path.Combine(AvdHome, name + ".avd.ini");
             CleanLocks(avdDir);
             Exception lastEx = null;
@@ -2880,7 +2903,12 @@ namespace DofusFarm.Engine {
                         Log(string.Format("Deleted instance '{0}' and removed its virtual disk.", name));
                         return true;
                     }
-                } catch (Exception ex) { lastEx = ex; KillProcessForInstance(name, port); Thread.Sleep(600); }
+                } catch (Exception ex) {
+                    lastEx = ex;
+                    Log(string.Format("[WARN] DeleteInstance file lock attempt {0} on {1}: {2}", attempt, name, ex.Message));
+                    KillProcessForInstance(name, port);
+                    Thread.Sleep(200);
+                }
             }
             if (Directory.Exists(avdDir) || File.Exists(iniFile)) {
                 Log(string.Format("Error deleting instance '{0}': {1}", name, lastEx != null ? lastEx.Message : "Failed to remove disk files"));

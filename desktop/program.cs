@@ -464,6 +464,9 @@ namespace DofusFarm
                     };
                 }
                 Application.Run(mainForm);
+                // Hand the last frame to the controls before the handles die: a status
+                // line queued in the final second is otherwise lost with the process.
+                UI.UiDispatcher.Instance.Stop();
             }
             finally
             {

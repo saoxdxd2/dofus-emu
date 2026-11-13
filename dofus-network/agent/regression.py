@@ -294,12 +294,12 @@ def test_tool_vocabulary() -> None:
         check(name + " is in the schema", name in tool_names)
     # The vocabulary has 28 tools; the learned policy has 21 logits, so seven can only ever
     # come from the rule. Measured 2026-11-13 on `models/tool_policy.json` against
-    # `data/capabilities.json`: the difference is exactly the list below, and the runtime says
-    # so out loud on every start (`[autopilot] policy: tool policy tool_policy.onnx (21 tools,
-    # +history)`). CURRENT.md §4 has documented the seven since 2026-10-27 -- what was missing
-    # was a guard, so `test_tool_vocabulary` asserted the vocabulary had 28 tools and never
-    # asserted the policy could emit them, and the two numbers were free to drift apart again.
-    # Recorded as KNOWN_GAPS G123; adding a 29th tool without a retrain now fails here by name.
+    # `data/capabilities.json`: the difference is exactly the list below. This is not news --
+    # CURRENT.md §4, AI_ARCHITECTURE.md, rules.md and two dedicated suites
+    # (test_rule_only_tools_head_width, test_tool_registry_vs_head) all name the seven. Those
+    # two *warn* rather than fail, on purpose, so a 29th tool added without a retrain would
+    # warn too and the gate would stay green. These two checks are the hard version: the set
+    # may not change without somebody deciding to change it. See KNOWN_GAPS G123.
     policy_path = REPO_ROOT / "models" / "tool_policy.json"
     if policy_path.exists():
         policy_tools = json.loads(policy_path.read_text(encoding="utf-8")).get("tools") or []
@@ -2626,7 +2626,30 @@ def test_combat_suites() -> None:
                    # proxy -- and the same fault made `brain_is_up` declare a live brain
                    # dead and respawn it. A false failure here accuses the product of the
                    # harness's own fault, so the rule is a test, not a comment.
-                   "agent.test_bridge"):
+                   "agent.test_bridge",
+                   # Boards nobody wrote down: a seeded generator over the payload the
+                   # client actually sends, checking AP/MP conservation, HP bounds,
+                   # cast limits, determinism and "never raises" across both an
+                   # actionable and a malformed corpus. It carries its own coverage
+                   # guard, because the first version of it only ever saw passes.
+                   "combat.test_battle_solver_fuzz",
+                   # The structure cache the planner reasons through. It existed as
+                   # 184 lines nothing constructed -- the read path was in
+                   # `Planner.plan`, the flush path was nowhere, and the one
+                   # construction site passed neither. This is the only delegated
+                   # non-combat suite in this loop and it is here because the loop is
+                   # the only place the gate delegates to a module runner.
+                   "planning.test_thinking_cache",
+                   # The recalibration of `move_prob`. Three hardcoded cuts in
+                   # `planner_nn` (0.20, 0.20, 0.25) are only meaningful if 0.20
+                   # means one in five, and on the newest era it did not: the base
+                   # rate of "this action moved the world" went from 0.22 to 0.645
+                   # because `nav.goto` started working. The suite pins the three
+                   # properties that make the fit safe -- never worse than identity
+                   # in sample, never a negative slope (which would make the planner
+                   # prefer the candidate it is sure will fail), and bit-identical
+                   # output when no sidecar is present.
+                   "agent.test_calibration"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
         text = (proc.stderr or "") + (proc.stdout or "")
@@ -2640,8 +2663,16 @@ def test_combat_suites() -> None:
             check("%s is skipped for a missing optional wheel (%s)" % (module, absent),
                   True, absent)
             continue
-        check("%s passes" % module, proc.returncode == 0,
-              text.strip()[-300:])
+        # Exit code 0 is not the same as "the suite ran". A module whose tests all
+        # failed to *collect* still exits 0, and for a while every line here would
+        # have accepted a suite of zero tests. `Ran 0 tests` is the signature of a
+        # rename that broke discovery, which is exactly what a delegated suite
+        # cannot report on itself.
+        ran = re.search(r"^Ran (\d+) tests?", text, re.MULTILINE)
+        executed = int(ran.group(1)) if ran else 0
+        check("%s passes" % module, proc.returncode == 0 and executed > 0,
+              text.strip()[-300:] if executed else
+              "no 'Ran N tests' line: the module collected nothing\n" + text.strip()[-300:])
 
 
 def test_env_scatter_and_mask_are_witnessed() -> None:
@@ -2744,12 +2775,82 @@ def _builder_host_sources(build_cs: Path) -> List[str]:
         return []
     names: List[str] = []
     for match in re.finditer(
-            r'Path\.Combine\(\s*desktopDir\s*,\s*"([A-Za-z0-9_.]+\.cs)"\s*\)',
+            r'Path\.Combine\(\s*desktopDir\s*,((?:\s*"[^"]+"\s*,?)+)\s*\)',
             text[start:end]):
-        name = match.group(1)
+        parts = re.findall(r'"([^"]+)"', match.group(1))
+        name = "/".join(parts)
         if name not in names:
             names.append(name)
     return names
+
+
+# Swallowed exceptions in the C# host, measured 2026-11-13 over desktop/*.cs: 446 `catch`
+# blocks whose body is empty once comments are stripped. The distribution is the finding:
+# farmengine.cs 113, WebView2ClientForm.cs 78, mainform.cs 56, installer.cs 34, aipanel.cs 32,
+# uninstaller.cs 27. G120 was exactly this failure one layer up -- a diagnostic write that
+# could raise inside business logic -- and the reason it took a session to find is that the
+# host had no way to say "something was swallowed here".
+#
+# The number is a ratchet, not a target: `<=` means cleaning one up is always allowed and
+# never needs this constant edited, while a 447th fails the gate. Turning 446 empty bodies
+# into structured logging is a deliberate pass, not something to do blind in a hot path.
+EMPTY_CATCHES_MAX = 446
+
+
+def _empty_catch_count(sources: List[Path]) -> Tuple[int, List[Tuple[str, int]]]:
+    """Count `catch { }` blocks that swallow, and report the worst files.
+
+    A block is empty when, after removing comments, nothing remains between the braces --
+    which is what makes an exception unobservable rather than handled.
+    """
+    total = 0
+    per_file: List[Tuple[str, int]] = []
+    for path in sources:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        n = 0
+        for m in re.finditer(r"catch\s*(?:\([^)]*\))?\s*\{", text):
+            i = m.end()
+            depth, j = 1, i
+            while j < len(text) and depth:
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                j += 1
+            body = re.sub(r"//[^\n]*|/\*.*?\*/", "", text[i:j - 1], flags=re.S).strip()
+            if not body:
+                n += 1
+        if n:
+            per_file.append((path.name, n))
+        total += n
+    per_file.sort(key=lambda row: -row[1])
+    return total, per_file
+
+
+def test_csharp_error_swallowing_is_bounded() -> None:
+    """The host must not grow more places that hide a failure.
+
+    An outside review counted 445 empty `catch` blocks across `desktop/`; measured here it is
+    446 across 28 files, and the review's per-file split was exact (farmengine 113,
+    WebView2ClientForm 78, mainform 56, installer 34). Nothing stopped a 447th, and the reason
+    G120 cost a session to diagnose is that a swallowed error leaves no trace anywhere.
+
+    This does not ask for 446 rewrites. It makes the debt a number the gate knows, so the
+    next `catch { }` is a decision rather than an accident.
+    """
+    section("C# error swallowing is counted, not discovered")
+    sources = sorted((REPO_ROOT.parent / "desktop").glob("*.cs"))
+    check("the desktop sources are present to scan", bool(sources), len(sources))
+    if not sources:
+        return
+    total, per_file = _empty_catch_count(sources)
+    check("no new empty catch block was added (measured %d, ceiling %d)"
+          % (total, EMPTY_CATCHES_MAX), total <= EMPTY_CATCHES_MAX,
+          "worst: " + ", ".join("%s %d" % row for row in per_file[:5]))
+    check("the worst offenders are the files the review named",
+          [name for name, _n in per_file[:3]] == ["farmengine.cs", "WebView2ClientForm.cs",
+                                                  "mainform.cs"],
+          per_file[:3])
 
 
 def test_csharp_compile() -> None:
@@ -6375,12 +6476,12 @@ def test_multi_instance_targeting() -> None:
     check("the bridge resolves 'all' against the windows that are open",
           "private List<string> ResolveTargets(string target, int slot)" in b
           and "GetActiveInstanceIds()" in b[b.find("private List<string> ResolveTargets"):
-                                            b.find("private string RunOne")],
+                                            b.find("private async Task<string> RunOneAsync")],
           "all must enumerate the active windows inside ResolveTargets, not elsewhere")
     check("a comma-separated target list is accepted",
           'target.Split(\',\')' in b, "one directive could only ever name one client")
-    fan = b.find("foreach (string one in targets) answers.Add(RunOne(")
-    single = b.find("RunOne(id, body, label, targets[0], true)")
+    fan = b.find("Task.WhenAll(tasks)")
+    single = b.find("RunOneAsync(id, body, label, targets[0], true)")
     check("one addressee keeps the exact response shape it always had",
           0 <= single < fan, "the single-instance path must not change shape")
     check("a fan-out answers for every instance and says so",
@@ -8388,6 +8489,95 @@ def test_live_fight_corpus_is_read_in_process() -> None:
           DEFAULT_BOARDS.name == "fight_boards.jsonl"
           and _LD_ROOT not in DEFAULT_BOARDS.parents,
           str(DEFAULT_BOARDS))
+
+
+def test_thinking_cache_semantics() -> None:
+    """The cache's own rules, in-process and cheap enough for a mutation sweep.
+
+    `planning/thinking_cache.py` shipped as 184 lines nothing constructed: the read
+    path was in `Planner.plan`, the flush path existed nowhere, and the one
+    construction site (`build_schedule_stack`) passed neither, so the planner
+    re-ran a 3,000-node recipe closure on every call. It is wired now, and this is
+    the part of its suite the sweep can afford to run against every mutation --
+    the planner and stack halves live in the delegated module run instead, because
+    two cold plans at 136 ms each would put a minute on every mutation.
+
+    Only the semantics classes here: no knowledge base, no planner, ~10 ms.
+    """
+    section("The structure cache's own rules (version, TTL, eviction, round trip)")
+    import io
+    import unittest
+
+    from planning import test_thinking_cache
+
+    loader = unittest.TestLoader()
+    for label, case in (
+            ("a stale, expired or rebuilt entry is dropped rather than served",
+             test_thinking_cache.CacheSemanticsTests),
+            ("an entry survives its own serialised form",
+             test_thinking_cache.EntryRoundTripTests)):
+        suite = loader.loadTestsFromTestCase(case)
+        found = suite.countTestCases()
+        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+        check(label, found > 0 and result.testsRun == found and result.wasSuccessful(),
+              {"tests": result.testsRun,
+               "failed": [str(t) for t, _ in result.failures + result.errors][:3]})
+    # Named so a rename of the classes is a red check instead of an empty run.
+    check("the cache still refuses a version it was not written under",
+          hasattr(test_thinking_cache.CacheSemanticsTests,
+                  "test_a_rebuilt_knowledge_base_invalidates_every_entry"), "")
+
+
+def test_move_calibration_semantics() -> None:
+    """The three invariants that make recalibrating `move_prob` safe, cheap enough for a sweep.
+
+    `agent/planner_nn.py:207` cuts on `move_prob` at 0.20 and 0.25, and on the newest era the
+    raw number was 0.219 off its own base rate (G127). `agent/calibration.py` fixes that, but a
+    calibrator has three ways to be worse than doing nothing, and each is silent:
+
+    * a fit that loses to the identity in sample -- the first solver did, returning parameters
+      whose log loss was 5.65 against 0.84 for no transform at all;
+    * a **negative slope**, which reverses the ranking and would make the planner prefer the
+      candidate it is most confident will not work;
+    * changing the shipped probability when no sidecar is present, which would make the
+      component non-reversible.
+
+    The full 49-test suite is delegated from `test_combat_suites`; this is the slice the
+    mutation sweep can afford to run against every anchor, in-process and ~30 ms.
+    """
+    section("Move-probability calibration (monotone, never worse than identity, off by default)")
+    import random
+
+    from agent.calibration import fit_platt, log_loss, sigmoid
+
+    rng = random.Random(11)
+    z = [rng.gauss(-5, 20) for _ in range(400)]
+    y = [1 if rng.random() < sigmoid(0.4 * v) else 0 for v in z]
+    cal = fit_platt(z, y)
+    baseline = log_loss([sigmoid(v) for v in z], y)
+    fitted = log_loss([cal.apply_logit(v) for v in z], y)
+    check("a fit is never worse than the identity it replaces", fitted <= baseline + 5e-3,
+          {"identity": round(baseline, 4), "fitted": round(fitted, 4)})
+    check("the slope stays positive, so a ranking cannot be inverted", cal.a > 0.0,
+          round(cal.a, 6))
+
+    # anti-correlated labels: the unconstrained optimum is a negative slope, and honouring it
+    # would be the worst possible outcome for a ranker
+    inverted = fit_platt([-2.0, -1.0, 1.0, 2.0] * 50, [1.0, 1.0, 0.0, 0.0] * 50)
+    check("an anti-correlated fit is flattened rather than reversed",
+          inverted.a > 0.0 and inverted.apply_logit(-2.0) <= inverted.apply_logit(2.0),
+          round(inverted.a, 6))
+
+    check("a monotone map leaves the ordering of two scores intact",
+          cal.apply_logit(-1.0) <= cal.apply_logit(3.0), None)
+
+    from agent import foresight
+    net = foresight.load()
+    if net is not None:
+        plain = net.probability([0.0, 1.0])
+        check("with no calibrator the shipped formula is used unchanged",
+              (net.calibrator is not None) or abs(float(plain[0]) - 0.5) < 1e-6,
+              [float(v) for v in plain])
 
 
 def test_the_battle_solver_reads_what_the_page_writes() -> None:
@@ -19193,8 +19383,10 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_knowledge_index_storage)
     _run_test(test_knowledge_index)
     _run_test(test_combat_suites)
+    _run_test(test_thinking_cache_semantics)
     _run_test(test_env_scatter_and_mask_are_witnessed)
     _run_test(test_go_relay_suites)
+    _run_test(test_csharp_error_swallowing_is_bounded)
     _run_test(test_csharp_compile)
     _run_test(test_cs_secret_redaction)
     _run_test(test_net_pill)

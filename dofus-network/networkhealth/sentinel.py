@@ -34,7 +34,7 @@ if str(_DOFUS_NETWORK) not in sys.path:
     sys.path.insert(0, str(_DOFUS_NETWORK))
 
 from agent.bridge import local_secret
-from networkhealth.inference import MultiInstanceNetworkHealth
+from networkhealth.inference import MultiInstanceNetworkHealth, NetworkForecaster
 from data.game_data_extractor import GameDataRepository, SpellInfo
 from combat.damage_calculator import (
     CharacterStats,
@@ -227,6 +227,8 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
     classifier = MessageClassifier()
     vision = SingletonVisionInspector.get_instance()
     network_engine = MultiInstanceNetworkHealth(CHECKPOINT_PATH) if CHECKPOINT_PATH.exists() else None
+    forecaster = NetworkForecaster()
+    _forecasters: dict = {}
     repo = GameDataRepository.get_instance()
     memory = EpisodicSkillMemory.get_instance()
     world_graph = DofusWorldGraph()
@@ -280,6 +282,50 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _status_payload(self) -> Dict[str, Any]:
+        return {
+            "status": "online",
+            "service": "dofus-sentinel-ai",
+            "singleton_models": {
+                "trm_moe": self.network_engine is not None,
+                "classifier": self.classifier.model_name,
+                "vision": True,
+                "combat_calculator": True,
+                "total_spells": len(self.repo.spells_by_id),
+                "total_monsters": len(self.repo.monsters_by_id),
+            },
+            "port": 8890,
+            "time": time.time(),
+        }
+
+    def _stream_status(self) -> None:
+        """SSE status feed, mirroring `/sentinel/status` once a second.
+
+        The panel's latency and error state for this service are only as good as
+        the read that produced them; a stream carries `server_ms` with each
+        snapshot so the reader can measure the transport instead of inferring it.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            self.wfile.write(b": stream\n\n")
+            self.wfile.flush()
+        except OSError:
+            return
+        while True:
+            payload = self._status_payload()
+            payload["server_ms"] = int(time.time() * 1000)
+            try:
+                self.wfile.write(b"data: " + json.dumps(payload).encode("utf-8") + b"\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
+            time.sleep(1.0)
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -290,19 +336,34 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             return
 
         if path in ("/sentinel/status", "/status", "/health"):
+            self._send_json(200, self._status_payload())
+
+        elif path in ("/sentinel/status/stream", "/status/stream"):
+            self._stream_status()
+
+
+        elif path == "/sentinel/network/forecast":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized"})
+                return
+            instance_id = qs.get("instance_id", ["slot-0"])[0]
+            fc = self._forecasters.get(instance_id)
+            if fc is None:
+                fc = NetworkForecaster()
+                self._forecasters[instance_id] = fc
+            rtt_ms = None
+            if "rtt_ms" in qs:
+                try:
+                    rtt_ms = float(qs["rtt_ms"][0])
+                except ValueError:
+                    rtt_ms = None
+            received = _query_int(qs, "received", 0)
+            sent = max(_query_int(qs, "sent", 1), 1)
+            snap = fc.observe(rtt_ms, received=received, sent=sent)
             self._send_json(200, {
-                "status": "online",
-                "service": "dofus-sentinel-ai",
-                "singleton_models": {
-                    "trm_moe": self.network_engine is not None,
-                    "classifier": self.classifier.model_name,
-                    "vision": True,
-                    "combat_calculator": True,
-                    "total_spells": len(self.repo.spells_by_id),
-                    "total_monsters": len(self.repo.monsters_by_id),
-                },
-                "port": 8890,
-                "time": time.time(),
+                "status": "ok",
+                "instance_id": instance_id,
+                **snap.as_dict(),
             })
 
         elif path == "/sentinel/combat/mob":

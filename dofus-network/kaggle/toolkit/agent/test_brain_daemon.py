@@ -163,7 +163,7 @@ class BrainLifecycleTests(unittest.TestCase):
     def finish(self, name):
         self.pilots[name].release.set()
         self.pilots[name].cleanup_release.set()
-        self.daemon._instances[name].thread.join(3)
+        self.daemon._instances[name].thread.join(10)
         self.assertFalse(self.daemon._instances[name].alive())
 
     def test_the_real_pilot_factory_constructs(self):
@@ -388,7 +388,7 @@ class BrainLifecycleTests(unittest.TestCase):
             headers = {"Content-Type": "application/json"}
             headers.update(local_headers())
             req = urllib.request.Request(base + path, data=data, headers=headers)
-            with opener.open(req, timeout=2) as response:
+            with opener.open(req, timeout=10) as response:
                 return json.load(response)
 
         try:

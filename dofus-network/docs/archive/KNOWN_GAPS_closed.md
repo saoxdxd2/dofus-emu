@@ -1760,3 +1760,49 @@ Guards: `tools/test_char_build.js` (12 checks) inside `agent.regression`.
 
 
 
+
+---
+
+## G125. The structure cache was 184 lines nothing constructed *(fixed 2026-11-13, measured)*
+
+**Symptom.** None. That is the problem: `planning/thinking_cache.py` was complete,
+documented and correct, and the planner re-ran its full AND/OR search on every call.
+
+**Cause, read off the call graph.** Three separate halves existed and no two of them met:
+
+* `Planner.plan` had the whole read path — `key()`, `get()`, `_rebuild()` re-pricing the
+  stored tree against current beliefs, `invalidate()` when the re-priced winner lost, and
+  `put()` on a miss.
+* `Planner.__init__` accepted `cache: Optional["ThinkingCache"] = None`.
+* `build_schedule_stack` — the one place that assembles the stack, and the function whose
+  docstring is a monument to exactly this class of bug — passed `ranker=` and `graph=`
+  and no `cache=`.
+* Nothing anywhere called `ThinkingCache(...)`. Verified by grep over the tree:
+  zero construction sites, and no test named the module.
+
+So `self.cache` was always `None`, every `if self.cache is not None` branch was dead, and
+the cache file was never written because `save()` had no caller either.
+
+**Cost, measured on this host.** Goal 1001 ×3 at level 60 with an empty purse (so the plan
+carries a kamas-earning subtree), `data/kb` as shipped:
+
+| call | time | `cache_hit` |
+|---|---|---|
+| cold | 136.6 ms | False |
+| second | 2.1 ms | True |
+| third | 0.4 ms | True |
+
+**Fix.** `build_schedule_stack(..., cache="default")` now constructs a `ThinkingCache`
+(pass `None` for an uncached planner, a `Path` to relocate the file), hands it to both the
+`Planner` and the `ScheduleManager`, and the manager flushes it at its two existing persist
+points. `DOFUS_THINKING_CACHE=0` turns it off. The cache is still allowed to be wrong:
+a hit is only served when re-pricing reproduces the stored winner, which is what
+`test_a_re_priced_conclusion_that_lost_is_replaced_by_a_real_search` pins.
+
+**Why it stayed hidden.** The bug is an omission at one call site, and the code that would
+have noticed — `Planner.plan`'s cache branch — is correct in isolation and simply never
+ran. `agent/regression.py` had no check that the stack carries what it builds. It does
+now: `test_thinking_cache_semantics` runs the cache's version/TTL/eviction rules in the
+gate, `planning.test_thinking_cache` (24 tests) runs the planner and wiring halves through
+the delegated suite loop, and three mutation anchors in `tools/mutate_cause_gate.py` prove
+each invalidation rule can fail. All three were verified CAUGHT.

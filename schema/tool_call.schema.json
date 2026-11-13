@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tool_call",
+  "title": "Agent tool call",
+  "description": "The text-to-action contract shared by the agent, the bridge and the in-client JS: `{tool, args}`. `args` is validated against data/capabilities.json for the named tool, not here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool", "args"],
+  "properties": {
+    "tool": { "type": "string", "minLength": 1 },
+    "args": { "type": "object", "additionalProperties": true },
+    "meta": { "type": "object", "additionalProperties": true }
+  }
+}

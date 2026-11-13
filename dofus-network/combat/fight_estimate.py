@@ -39,6 +39,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STORE = REPO_ROOT / "data" / "knowledge" / "dofus_knowledge.sqlite"
 DEFAULT_CALIBRATOR = REPO_ROOT / "models" / "fight_calibrator.json"
+DEFAULT_DAMAGE_CALIBRATION = REPO_ROOT / "models" / "fight_damage_calibration.json"
 
 MODEL_VERSION = "fight-v0-analytic"
 CALIBRATOR_VERSION = 1
@@ -542,6 +543,7 @@ def estimate_from_facts(
     allow_boss: bool = ALLOW_BOSS,
     bootstrap: bool = False,
     tutorial: bool = False,
+    damage_calibration: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Turn facts into a verdict. No client, no database, no I/O.
 
@@ -549,9 +551,32 @@ def estimate_from_facts(
     the arithmetic: every bound below is still evaluated, and the returned
     `authorization` names which mode let the fight through. A fitted
     calibrator always outranks them.
+
+    ``damage_calibration`` is the shadow differential the live auditor learned
+    from real server deltas. It is applied to the player's damage before turns
+    to kill are computed; without it the estimator trusts the advisor's spell
+    price even when the live server has been paying a different one.
     """
     missing = list(dict.fromkeys(list(player.missing) + list(enemy.missing)))
     notes = list(dict.fromkeys(list(player.notes) + list(enemy.notes)))
+
+    calibrated_dpt = dict(player.dpt_by_element)
+    if damage_calibration:
+        try:
+            from combat.live_learn import apply_damage_calibration
+            raw_total = player.damage_per_turn
+            corrected = apply_damage_calibration(raw_total,
+                                                 calibration=damage_calibration)
+            if raw_total > 0 and corrected != raw_total:
+                factor = corrected / raw_total
+                calibrated_dpt = {element: amount * factor
+                                  for element, amount in calibrated_dpt.items()}
+                overall = damage_calibration.get("overall") or {}
+                notes.append(
+                    "player damage corrected x%.3f from %d live shadow residuals"
+                    % (factor, int(overall.get("rows") or 0)))
+        except Exception:  # noqa: BLE001 - calibration must never block an estimate
+            pass
 
     player_hp = max(0.0, float(player.current_hp or player.max_hp or 0.0))
     if player_hp <= 0:
@@ -568,7 +593,7 @@ def estimate_from_facts(
     for index, member in enumerate(enemy.members):
         raw_damage = sum(
             amount * _resist_factor(member.resist_percent, element)
-            for element, amount in player.dpt_by_element.items()
+            for element, amount in calibrated_dpt.items()
         )
         raw_damage -= max(0.0, float(member.fixed_res)) * max(0, int(player.damage_lines))
         dpt = max(0.0, raw_damage)
@@ -1016,6 +1041,8 @@ class FightAdvisor:
         store=None,
         calibrator: Optional[FightCalibrator] = None,
         calibrator_path: Path = DEFAULT_CALIBRATOR,
+        damage_calibration_path: Path = DEFAULT_DAMAGE_CALIBRATION,
+        damage_calibration: Optional[Dict[str, Any]] = None,
         min_p_win: float = MIN_P_WIN,
         max_hp_loss_fraction: float = MAX_HP_LOSS_FRACTION,
         allow_boss: bool = ALLOW_BOSS,
@@ -1027,6 +1054,10 @@ class FightAdvisor:
         self.calibrator_path = Path(calibrator_path)
         self.calibrator = calibrator if calibrator is not None else FightCalibrator.load(
             self.calibrator_path)
+        self.damage_calibration_path = Path(damage_calibration_path)
+        self.damage_calibration = (
+            damage_calibration if damage_calibration is not None
+            else self._load_damage_calibration())
         self.min_p_win = float(min_p_win)
         self.max_hp_loss_fraction = float(max_hp_loss_fraction)
         self.allow_boss = bool(allow_boss)
@@ -1159,6 +1190,13 @@ class FightAdvisor:
             selected = groups[0]
         return self.estimate_group(selected, observation)
 
+    def _load_damage_calibration(self) -> Optional[Dict[str, Any]]:
+        try:
+            from combat.live_learn import load_damage_calibration
+            return load_damage_calibration(self.damage_calibration_path)
+        except Exception:  # noqa: BLE001 - a missing calibration is not an error
+            return None
+
     def _player(self, observation: Optional[Dict[str, Any]] = None) -> PlayerFacts:
         """The player's side, priced once per character sheet.
 
@@ -1201,6 +1239,7 @@ class FightAdvisor:
             allow_boss=self.allow_boss,
             bootstrap=self.bootstrap,
             tutorial=bool(((observation or {}).get("tutorial") or {}).get("active")),
+            damage_calibration=self.damage_calibration,
         )
 
     def annotate(self, observation: Optional[Dict[str, Any]],

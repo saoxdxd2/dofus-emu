@@ -144,6 +144,34 @@ class Paths:
     versions: Path = DEFAULT_CALIBRATOR.parent / "fight_calibrator.versions"
     history: Path = DEFAULT_CALIBRATOR.parent / "fight_calibrator.history.jsonl"
     pointer: Path = DEFAULT_CALIBRATOR.parent / "fight_calibrator.incumbent.json"
+    damage_calibration: Path = (DEFAULT_CALIBRATOR.parent
+                                / "fight_damage_calibration.json")
+
+
+def _damage_calibration_summary(path: Path) -> Optional[Dict[str, Any]]:
+    """The shadow differential, as provenance for the outcome calibrator.
+
+    The outcome model is fitted on estimates that were produced with a damage
+    price. If that price has since been corrected, the calibrator's training
+    distribution is not the one it will see at serving time; recording the
+    correction here makes the mismatch visible instead of silent.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        return None
+    overall = payload.get("overall") or {}
+    return {
+        "path": str(path),
+        "rows": int(overall.get("rows") or 0),
+        "status": overall.get("status"),
+        "scale": overall.get("scale"),
+        "bias": overall.get("bias"),
+        "spells": len(payload.get("spells") or {}),
+        "effects": len(payload.get("effects") or {}),
+    }
 
 
 def read_rows(path: Path) -> List[Dict[str, Any]]:
@@ -401,6 +429,7 @@ def run(paths: Paths = Paths(), write: bool = True,
     gate = evaluate_gate(samples)
     gate["cadence"] = cadence_state
     gate["filters"] = {key: value for key, value in selection.items() if key != "kept"}
+    gate["damage_calibration"] = _damage_calibration_summary(paths.damage_calibration)
     due = force or cadence_state["due"]
     if not due:
         if write:
@@ -426,6 +455,7 @@ def run(paths: Paths = Paths(), write: bool = True,
         "perm_p": gate["perm_p"],
         "eval_n": gate["eval_n"],
         "thresholds": gate["thresholds"],
+        "damage_calibration": gate.get("damage_calibration"),
     }
     payload = json.dumps(model.to_dict(), indent=1, sort_keys=True)
     version = _stamp(payload)
@@ -499,6 +529,7 @@ def shadow_report(paths: Paths = Paths(),
             baseline.append(float(row["_raw"]))
     report = calibration_report(incumbent, eval_rows)
     return {"status": "incumbent", "filters": funnel,
+            "damage_calibration": _damage_calibration_summary(paths.damage_calibration),
             "eval_n": len(labels),
             "auc": auc(labels, predicted),
             "brier": brier(labels, predicted),

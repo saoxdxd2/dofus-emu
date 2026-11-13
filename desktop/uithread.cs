@@ -22,6 +22,7 @@ namespace DofusFarm.UI
     {
         private static SynchronizationContext _context;
         private static Form _main;
+        private static bool _captured;
 
         /// <summary>Call once, on the UI thread, immediately before Application.Run.</summary>
         public static void Capture()
@@ -31,6 +32,12 @@ namespace DofusFarm.UI
             {
                 try { _context = new WindowsFormsSynchronizationContext(); } catch { }
             }
+            // The one queue every background thread posts into. Starting it here, on
+            // the UI thread before the message loop, is what makes the first frame tick
+            // possible; without it a background post would sit until someone called
+            // Drain by hand.
+            UiDispatcher.Instance.Start();
+            _captured = true;
         }
 
         public static void SetMainForm(Form form)
@@ -58,6 +65,13 @@ namespace DofusFarm.UI
                 return;
             }
 
+            // One bounded, coalescing queue instead of one BeginInvoke per call site.
+            if (_captured)
+            {
+                UiDispatcher.Instance.Post(action);
+                return;
+            }
+
             if (_context != null)
             {
                 _context.Post(delegate { action(); }, null);
@@ -79,6 +93,11 @@ namespace DofusFarm.UI
         {
             if (action == null) return;
             if (OnUiThread) { action(); return; }
+            if (_captured)
+            {
+                UiDispatcher.Instance.Send(action);
+                return;
+            }
             if (_main != null && _main.IsHandleCreated)
             {
                 try { _main.Invoke(action); return; } catch { }

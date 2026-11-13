@@ -28,6 +28,8 @@ encoder is enough for the language part: the world model is *not* in the model.
 from __future__ import annotations
 
 import json
+import mmap as _mmap
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -63,12 +65,20 @@ def _localised(record: Dict[str, Any], lang_order: Sequence[str] = LANGS) -> str
 
 
 class _NameTable:
-    """Append-only UTF-8 blob; entries addressed by (offset, length)."""
+    """Append-only UTF-8 blob; entries addressed by (offset, length).
 
-    __slots__ = ("blob",)
+    Two modes: ``add`` during a build (a mutable bytearray), or ``open`` on the
+    shipped file (a read-only ``mmap``). Slicing the mmap yields bytes for just
+    that entry, so a query decodes one name and never materialises the 2.6 MB
+    blob per process.
+    """
+
+    __slots__ = ("blob", "map", "handle")
 
     def __init__(self) -> None:
         self.blob = bytearray()
+        self.map = None
+        self.handle = None
 
     def add(self, text: str) -> Tuple[int, int]:
         offset = len(self.blob)
@@ -76,10 +86,18 @@ class _NameTable:
         self.blob.extend(raw)
         return offset, len(raw)
 
+    def open(self, path: Path) -> None:
+        self.handle = open(path, "rb")
+        self.map = _mmap.mmap(self.handle.fileno(), 0, access=_mmap.ACCESS_READ)
+
     def get(self, offset: int, length: int, lang: str = "fr") -> str:
         if length <= 0:
             return ""
-        text = self.blob[offset:offset + length].decode("utf-8", "replace")
+        if self.map is not None:
+            raw = self.map[offset:offset + length]
+        else:
+            raw = bytes(self.blob[offset:offset + length])
+        text = raw.decode("utf-8", "replace")
         parts = text.split(NAME_SEP)
         try:
             index = LANGS.index(lang)
@@ -91,6 +109,103 @@ class _NameTable:
             if part:
                 return part
         return ""
+
+
+TRIGRAM = 3
+
+
+def fold(text: str) -> str:
+    """Lowercase, accent-folded ASCII for indexing and comparison."""
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    stripped = decomposed.encode("ascii", "ignore").decode("ascii").lower()
+    out: List[str] = []
+    for ch in stripped:
+        if ch.isalnum() or ch in "'_-":
+            out.append(ch)
+        elif out and out[-1] != " ":
+            out.append(" ")
+    return "".join(out).strip()
+
+
+def trigrams(text: str) -> List[str]:
+    """The distinct character trigrams of the folded text, space-padded."""
+    padded = " " + fold(text) + " "
+    if len(padded) <= TRIGRAM:
+        # An empty (or one-letter) name has no trigram. Returning a short string
+        # here corrupts the fixed 3-bytes-per-trigram blob for every id after it.
+        return []
+    return sorted({padded[index:index + TRIGRAM]
+                   for index in range(len(padded) - TRIGRAM + 1)})
+
+
+def _trigram_csr(names: Sequence[str]) -> Dict[str, np.ndarray]:
+    """CSR inverted index: trigram id -> entity row."""
+    vocab: Dict[str, int] = {}
+    per_row: List[List[int]] = []
+    for name in names:
+        ids: List[int] = []
+        for key in trigrams(name):
+            ids.append(vocab.setdefault(key, len(vocab)))
+        per_row.append(sorted(set(ids)))
+    counts = np.zeros(len(vocab), dtype=np.int32)
+    for ids in per_row:
+        for index in ids:
+            counts[index] += 1
+    offsets = np.zeros(len(vocab) + 1, dtype=np.int32)
+    np.cumsum(counts, out=offsets[1:])
+    postings = np.zeros(int(offsets[-1]), dtype=np.int32)
+    cursor = offsets[:-1].copy()
+    # Rows are visited in ascending order, so each posting list is sorted and
+    # np.intersect1d can use assume_unique=True.
+    for row, ids in enumerate(per_row):
+        for index in ids:
+            postings[cursor[index]] = row
+            cursor[index] += 1
+    ordered = sorted(vocab, key=vocab.get)
+    blob = np.frombuffer("".join(ordered).encode("ascii"), dtype=np.uint8)
+    # Rows are store indices, and every table is under 65,536 entries, so the
+    # postings fit in uint16: 1.56 M of them cost 3.1 MB instead of 6.3 MB. The
+    # offsets stay int32 because one trigram can index the whole item table.
+    dtype = np.uint16 if len(names) < 65536 else np.int32
+    return {"blob": blob, "offsets": offsets,
+            "rows": postings.astype(dtype, copy=False)}
+
+
+def _write_flat(path: Path, arrays: Dict[str, np.ndarray]) -> Dict[str, Any]:
+    """One headerless binary file + a JSON offset table, so it can be mmapped."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    index: Dict[str, Any] = {"version": 1, "arrays": {}}
+    with path.open("wb") as handle:
+        offset = 0
+        for name in sorted(arrays):
+            array = np.ascontiguousarray(arrays[name])
+            handle.write(array.tobytes(order="C"))
+            index["arrays"][name] = {
+                "dtype": str(array.dtype),
+                "shape": [int(v) for v in array.shape],
+                "offset": int(offset),
+            }
+            offset += array.nbytes
+    path.with_suffix(".index.json").write_text(json.dumps(index, sort_keys=True),
+                                               encoding="utf-8")
+    return index
+
+
+class _FlatArrays:
+    """Read-only mmap views over the flat KB file, shared through the page cache."""
+
+    def __init__(self, path: Path) -> None:
+        self._handle = open(path, "rb")
+        self._map = _mmap.mmap(self._handle.fileno(), 0, access=_mmap.ACCESS_READ)
+        index = json.loads(path.with_suffix(".index.json").read_text(encoding="utf-8"))
+        self.arrays: Dict[str, np.ndarray] = {}
+        for name, spec in index["arrays"].items():
+            dtype = np.dtype(spec["dtype"])
+            shape = tuple(int(v) for v in spec["shape"])
+            count = int(np.prod(shape)) if shape else 1
+            flat = np.frombuffer(self._map, dtype=dtype, count=count,
+                                 offset=int(spec["offset"]))
+            self.arrays[name] = flat.reshape(shape) if shape else flat
 
 
 @dataclass
@@ -131,10 +246,21 @@ class KnowledgeBase:
     """Typed-array knowledge base. Build once, load in ~4 MB."""
 
     def __init__(self, path: Path = DEFAULT_KB, names_path: Path = DEFAULT_NAMES) -> None:
-        blob = np.load(path)
-        self._arrays: Dict[str, np.ndarray] = {key: blob[key] for key in blob.files}
+        flat = path.with_suffix(".bin")
+        self._flat = None
+        if flat.is_file() and flat.with_suffix(".index.json").is_file():
+            # One read-only mapping of the flat file: forty instances share the
+            # same page-cache pages instead of decompressing forty private copies.
+            self._flat = _FlatArrays(flat)
+            self._arrays: Dict[str, np.ndarray] = dict(self._flat.arrays)
+            self.mmap_shared = True
+        else:
+            blob = np.load(path)
+            self._arrays = {key: blob[key] for key in blob.files}
+            self.mmap_shared = False
         self._names = _NameTable()
-        self._names.blob = bytearray(names_path.read_bytes())
+        if names_path.is_file():
+            self._names.open(names_path)
 
         self.item_id = self._arrays["item_id"]
         self.monster_id = self._arrays["monster_id"]
@@ -142,12 +268,29 @@ class KnowledgeBase:
 
         # Sorted-id lookup instead of a Python dict: 21,554 dict entries cost
         # ~2.5 MB, two int32/int64 arrays cost ~260 KB and search in O(log n).
-        self._item_sorted = np.sort(self.item_id)
-        self._item_order = np.argsort(self.item_id).astype(np.int32)
-        self._monster_sorted = np.sort(self.monster_id)
-        self._monster_order = np.argsort(self.monster_id).astype(np.int32)
-        self._quest_sorted = np.sort(self.quest_id)
-        self._quest_order = np.argsort(self.quest_id).astype(np.int32)
+        # The flat file ships these, so a reader never re-sorts at startup.
+        if "item_sorted" in self._arrays:
+            self._item_sorted = self._arrays["item_sorted"]
+            self._item_order = self._arrays["item_order"]
+            self._monster_sorted = self._arrays["monster_sorted"]
+            self._monster_order = self._arrays["monster_order"]
+            self._quest_sorted = self._arrays["quest_sorted"]
+            self._quest_order = self._arrays["quest_order"]
+        else:
+            self._item_sorted = np.sort(self.item_id)
+            self._item_order = np.argsort(self.item_id).astype(np.int32)
+            self._monster_sorted = np.sort(self.monster_id)
+            self._monster_order = np.argsort(self.monster_id).astype(np.int32)
+            self._quest_sorted = np.sort(self.quest_id)
+            self._quest_order = np.argsort(self.quest_id).astype(np.int32)
+        self._trigram_vocab: Dict[str, int] = {}
+        blob = self._arrays.get("trigram_blob")
+        if blob is not None:
+            raw = bytes(np.asarray(blob, dtype=np.uint8).tobytes())
+            self._trigram_vocab = {
+                raw[index:index + TRIGRAM].decode("ascii", "ignore"): index // TRIGRAM
+                for index in range(0, len(raw), TRIGRAM)
+            }
 
     @staticmethod
     def _lookup(sorted_ids: np.ndarray, order: np.ndarray, value: int) -> Optional[int]:
@@ -266,8 +409,48 @@ class KnowledgeBase:
             "quest_name_len": refs(quest_name_ref, 1).astype(np.int16),
             "langs": np.frombuffer(NAME_SEP.join(LANGS).encode("utf-8"), dtype=np.uint8),
         }
+        # Trigram index over each table's names in every language, so a German
+        # query and a French one reach the same rows without decoding them.
+        def joined(offsets: Sequence[int], lengths: Sequence[int]) -> List[str]:
+            # Each language name is padded by the trigram builder, so they must
+            # stay separate: joining them into one string turns the trailing
+            # "ou " of "Bouftou" into "ouL" for every language before the last.
+            return [
+                " ".join(names.blob[int(offsets[row]):
+                                    int(offsets[row]) + int(lengths[row])]
+                         .decode("utf-8", "replace").split(NAME_SEP))
+                for row in range(len(offsets))
+            ]
+
+        item_tri = _trigram_csr(joined(payload["item_name_off"], payload["item_name_len"]))
+        monster_tri = _trigram_csr(joined(payload["monster_name_off"],
+                                          payload["monster_name_len"]))
+        quest_tri = _trigram_csr(joined(payload["quest_name_off"],
+                                        payload["quest_name_len"]))
+
+        # Sorted-id tables, stored so every reader skips both the sort and the
+        # argsort allocation at startup.
+        payload["item_sorted"] = np.sort(payload["item_id"])
+        payload["item_order"] = np.argsort(payload["item_id"]).astype(np.int32)
+        payload["monster_sorted"] = np.sort(payload["monster_id"])
+        payload["monster_order"] = np.argsort(payload["monster_id"]).astype(np.int32)
+        payload["quest_sorted"] = np.sort(payload["quest_id"])
+        payload["quest_order"] = np.argsort(payload["quest_id"]).astype(np.int32)
+        payload["trigram_blob"] = item_tri["blob"]
+        for prefix, tri in (("item", item_tri), ("monster", monster_tri),
+                            ("quest", quest_tri)):
+            payload[prefix + "_tri_off"] = tri["offsets"]
+            payload[prefix + "_tri_rows"] = tri["rows"]
+
         np.savez_compressed(out, **payload)
-        names_out.write_bytes(bytes(names.blob))
+        # The names blob is content-addressed by the cache and usually identical
+        # between builds. Comparing first skips the write, which matters because a
+        # live daemon maps this file read-only and Windows refuses to truncate an
+        # open mapping -- a rebuild would otherwise fail with EINVAL.
+        blob_bytes = bytes(names.blob)
+        if not names_out.is_file() or names_out.read_bytes() != blob_bytes:
+            names_out.write_bytes(blob_bytes)
+        flat = _write_flat(out.with_suffix(".bin"), payload)
 
         return {
             "items": len(item_id),
@@ -275,9 +458,15 @@ class KnowledgeBase:
             "drops": len(drop_edges),
             "monsters": len(monster_id),
             "quests": len(quest_id),
+            "trigrams": len(item_tri["offsets"]) - 1,
+            "postings": int(item_tri["rows"].size + monster_tri["rows"].size
+                            + quest_tri["rows"].size),
             "npz_bytes": out.stat().st_size,
+            "flat_bytes": out.with_suffix(".bin").stat().st_size,
+            "flat_arrays": len(flat["arrays"]),
             "names_bytes": names_out.stat().st_size,
-            "resident_mb": round((out.stat().st_size + names_out.stat().st_size) / 1e6, 2),
+            "resident_mb": round((out.with_suffix(".bin").stat().st_size
+                                  + names_out.stat().st_size) / 1e6, 2),
         }
 
     # -- item access ---------------------------------------------------------
@@ -311,6 +500,36 @@ class KnowledgeBase:
             return None
         return int(self._arrays["item_level"][index]), int(self._arrays["item_price"][index])
 
+    def _trigram_rows(self, table: str, text: str) -> Optional[np.ndarray]:
+        """Rows whose folded name shares the query's trigrams, or None if unknown."""
+        # `_name_hits` is called with "item_name"; the index is stored per table
+        # ("item_tri_off"). Getting this wrong silently returns None for every
+        # query and falls back to the full scan it was meant to replace.
+        prefix = table[:-5] if table.endswith("_name") else table
+        offsets = self._arrays.get("%s_tri_off" % prefix)
+        postings = self._arrays.get("%s_tri_rows" % prefix)
+        if offsets is None or postings is None or not self._trigram_vocab:
+            return None
+        lists: List[np.ndarray] = []
+        for key in trigrams(text):
+            index = self._trigram_vocab.get(key)
+            if index is None:
+                continue
+            start, end = int(offsets[index]), int(offsets[index + 1])
+            if end > start:
+                lists.append(postings[start:end])
+        if not lists:
+            return np.zeros(0, dtype=np.int32)
+        # Most selective first: one common trigram can cover half the table, and
+        # intersecting against it first would defeat the index.
+        lists.sort(key=lambda values: values.size)
+        rows = lists[0]
+        for other in lists[1:]:
+            if rows.size == 0:
+                break
+            rows = np.intersect1d(rows, other, assume_unique=True)
+        return rows
+
     def _name_hits(self, needle: str, ids: Any, table: str,
                    lang: str) -> List[Tuple[int, int, int]]:
         from ai.data_splits import normalize
@@ -318,7 +537,28 @@ class KnowledgeBase:
         offsets = self._arrays[f"{table}_off"]
         lengths = self._arrays[f"{table}_len"]
         hits: List[Tuple[int, int, int]] = []
-        for index in range(len(ids)):
+        candidates = self._trigram_rows(table, needle)
+        if candidates is not None and candidates.size == 0:
+            # No shared trigram at all: either the name is not in the KB, or the
+            # query is a typo long enough to destroy every trigram. Fall back to
+            # the least common single trigram so one wrong character still finds
+            # the row, and let the ranking rules reject a bad match.
+            prefix = table[:-5] if table.endswith("_name") else table
+            offsets_tri = self._arrays.get("%s_tri_off" % prefix)
+            postings = self._arrays.get("%s_tri_rows" % prefix)
+            best = None
+            if offsets_tri is not None and postings is not None and len(trigrams(needle)) > 1:
+                for key in trigrams(needle):
+                    index = self._trigram_vocab.get(key)
+                    if index is None:
+                        continue
+                    start, end = int(offsets_tri[index]), int(offsets_tri[index + 1])
+                    if end > start and (best is None or end - start < best.size):
+                        best = postings[start:end]
+            candidates = best
+        order = (candidates if candidates is not None
+                 else np.arange(len(ids), dtype=np.int32))
+        for index in order:
             name = self._names.get(int(offsets[index]), int(lengths[index]), lang)
             flat = normalize(name)
             if not flat:
@@ -331,8 +571,29 @@ class KnowledgeBase:
                 rank = 2
             else:
                 continue
-            hits.append((rank, int(ids[index]), index))
+            hits.append((rank, int(ids[int(index)]), int(index)))
         hits.sort()
+        if not hits and candidates is not None and candidates.size:
+            # Substring ranking cannot see a one-character edit ("bouftu" vs
+            # "Bouftou"). Fall back to trigram Dice over the same candidates --
+            # still no full scan, and the threshold keeps a different word out.
+            needle_tris = set(trigrams(needle))
+            fuzzy: List[Tuple[float, int, int]] = []
+            for index in candidates[:600]:
+                row = int(index)
+                name = fold(self._names.get(int(offsets[row]),
+                                            int(lengths[row]), lang))
+                if not name:
+                    continue
+                name_tris = set(trigrams(name))
+                if not name_tris:
+                    continue
+                score = 2.0 * len(needle_tris & name_tris) / (
+                    len(needle_tris) + len(name_tris))
+                if score >= 0.55:
+                    fuzzy.append((score, int(ids[row]), row))
+            fuzzy.sort(key=lambda item: (-item[0], item[2]))
+            hits.extend((3, ident, row) for _score, ident, row in fuzzy)
         return hits
 
     def find_items(self, query: str, lang: str = "fr", limit: int = 8) -> List[Item]:
@@ -523,7 +784,10 @@ class KnowledgeBase:
             "recipe_edges": int(len(self._arrays["recipe_edges"])),
             "drop_edges": int(len(self._arrays["drop_edges"])),
             "arrays_mb": round(sum(a.nbytes for a in self._arrays.values()) / 1e6, 2),
-            "names_mb": round(len(self._names.blob) / 1e6, 2),
+            "names_mb": round(self._names.map.size() / 1e6, 2) if self._names.map is not None
+                        else round(len(self._names.blob) / 1e6, 2),
+            "trigrams": len(self._trigram_vocab),
+            "mmap_shared": bool(self.mmap_shared),
         }
 
 

@@ -159,7 +159,7 @@ where the two disagree the dated section wins.
 | **10** | Combat AI |
 | **11** | Supporting packages |
 | **12** | Measured results (the numbers that matter) |
-| **13** | Open gaps (G1–G123<!--f:gaps_max-->) |
+| **13** | Open gaps (G1–G127<!--f:gaps_max-->) |
 | **14** | Current uncommitted work (working tree at snapshot) |
 | **15** | Build and release |
 | **16** | Configuration reference |
@@ -334,11 +334,11 @@ How to read those two tables honestly:
 - **The equip refusals are real and now explained.** dofus-02's autopilot view prints
   `equip {refused: 76, uids: 41, unaddressed: 41, ok: 6}` — six executed equips, and the
   76 refusals are the tutorial-gate/"already worn"/quest-object cases G62 settled offline.
-- **Recover/replan still dominates the budget**: 1,403<!--f:live_recover--> recover + 846<!--f:live_replan-->
-  replan + 251<!--f:live_retry--> retry rows against 4,280<!--f:live_steps--> steps across the four autopilot
+- **Recover/replan still dominates the budget**: 1,184<!--f:live_recover--> recover + 798<!--f:live_replan-->
+  replan + 247<!--f:live_retry--> retry rows against 3,823<!--f:live_steps--> steps across the four autopilot
   logs (G97 raised both totals — the reader
   used to drop records glued onto a brain row). Manual intervention is the other honest
-  number — 1,342<!--f:live_interventions--> in total, 762<!--f:live_top_slot_interventions--> of them on
+  number — 1,869<!--f:live_interventions--> in total, 1,079<!--f:live_top_slot_interventions--> of them on
   dofus-05, where it was counted as 140. Full Auto
   is not yet zero-intervention.
 
@@ -427,7 +427,7 @@ Other readouts from the same logs:
   the gate's C# compile passed). After recompiling it: release exits 0, 11 bundle
   patches, `DofusFarm.exe` 565,248 B, `uninstall.exe` 17,920 B, `setup.exe` 214.0 MB
   carrying a 213.8 MB standalone-WebView2 payload.
-- **The test gate is green: `python -m agent.regression` 2,445<!--f:gate_checks--> checks / 0 failed, exit
+- **The test gate is green: `python -m agent.regression` 2,448<!--f:gate_checks--> checks / 0 failed, exit
   0** (measured 2026-10-30 on this tree, after re-syncing the Kaggle mirror for
   `tools/quest_witness.py` — the one failure was toolkit drift).
 
@@ -497,7 +497,7 @@ Other readouts from the same logs:
 - **No instrument gap left in the reporting path:** the `OSError: [Errno 22]` that stopped
   `tools/session_report.py` from reading `play_*.jsonl` was fixed on 2026-10-30 (§2.1) and
   pinned by new checks in `test_session_report_census`.
-- Test coverage is still split: `agent.regression` (**2,445<!--f:gate_checks--> checks**, exit 0) + JS suites +
+- Test coverage is still split: `agent.regression` (**2,448<!--f:gate_checks--> checks**, exit 0) + JS suites +
   Go relay tests + C# selftests. The combat suites, the simulator floor (119 quests /
   148 objectives, no stall), the 40-instance daemon control plane, the C# host compile and
   the checked-in Kaggle mirror are inside that gate; the C# bundle selftest and the full
@@ -647,7 +647,7 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 ```
 
 **Line counts, re-measured 2026-10-30:** C# **24,033** (desktop 23,117 + `builder/build.cs`
-916), Go/JS **27,570<!--f:script_lines-->** (Go 5,288<!--f:go_lines--> + JS 22,282<!--f:js_lines--> across `scripts/` and `tools/`), Python
+916), Go/JS **29,012<!--f:script_lines-->** (Go 6,469<!--f:go_lines--> + JS 22,543<!--f:js_lines--> across `scripts/` and `tools/`), Python
 **99,335** in 259 files, docs **12,721**. The 2026-10-27 snapshot of this document claimed
 23,064 / 13,516 / 76,699 / ~10,500 — every one of those was understated, the Python figure
 by 22,636 lines, and part of the rest is this day's own work: the shadow, alternative and
@@ -2802,12 +2802,12 @@ not be compared against anything except a re-run of the same commands.
 See §2.1 for both per-instance tables. Totals across the 5<!--f:live_logs--> **autopilot** logs,
 measured 2026-10-31 with a reader that no longer loses glued records, and now copied into
 the repository itself (`dofus-network/data/evidence/live_sessions.jsonl`, G96):
-88<!--f:live_sessions--> sessions, 694.7<!--f:live_wall_minutes--> min wall, **4,280<!--f:live_steps--> steps**
-(3,796<!--f:live_ok--> ok / 484<!--f:live_failed--> failed), **1,342<!--f:live_interventions--> manual
-interventions**, and 251<!--f:live_retry--> retry / 1,403<!--f:live_recover--> recover / 846<!--f:live_replan-->
-replan — so recovering or replanning is 52.5<!--f:live_budget_share-->% of the step budget
-(2,500<!--f:live_recovery_rows--> rows, or 59.3%, counting the retries), and one slot (dofus-05)
-carries 762<!--f:live_top_slot_interventions--> of the 1,342<!--f:live_interventions--> interventions. The
+105<!--f:live_sessions--> sessions, 554.6<!--f:live_wall_minutes--> min wall, **3,823<!--f:live_steps--> steps**
+(3,317<!--f:live_ok--> ok / 506<!--f:live_failed--> failed), **1,869<!--f:live_interventions--> manual
+interventions**, and 247<!--f:live_retry--> retry / 1,184<!--f:live_recover--> recover / 798<!--f:live_replan-->
+replan — so recovering or replanning is 51.8<!--f:live_budget_share-->% of the step budget
+(2,229<!--f:live_recovery_rows--> rows, or 59.3%, counting the retries), and one slot (dofus-05)
+carries 1,079<!--f:live_top_slot_interventions--> of the 1,869<!--f:live_interventions--> interventions. The
 newest page build those rows ran is `2026-10-29bf`;
 the source is `2026-10-31a`, which has not run yet, so these numbers do not test the
 interactive-use fix (§2.4).
@@ -2954,10 +2954,10 @@ asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 
 ---
 
-## 13. Open gaps (G1–G123<!--f:gaps_max-->)
+## 13. Open gaps (G1–G127<!--f:gaps_max-->)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (7,850<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (8,060<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -2969,7 +2969,7 @@ touching the area.
 | G5 | Network-health forecaster dark | torch import + missing checkpoint; ONNX port + retrain owed |
 | G6 | Verifier head wired but unmeasured/circular | GUI auto-load gated on a live/human validation contract; no contract → rules-only |
 | G7 | Live combat unverified | open; fallback planner now behaviorally tested; brain auto-start wired |
-| G8 | Test gate was deleted; partially restored | `agent.regression` **2,445<!--f:gate_checks--> checks, 0 failed, exit 0** (re-measured 2026-10-30 on build `2026-10-30b`, after the session_report, mutation-journal and preflight checks landed); combat suites, sim floor, 40-instance daemon, C# compile and live toolkit drift are gated; C# selftest/release still outside |
+| G8 | Test gate was deleted; partially restored | `agent.regression` **2,448<!--f:gate_checks--> checks, 0 failed, exit 0** (re-measured 2026-10-30 on build `2026-10-30b`, after the session_report, mutation-journal and preflight checks landed); combat suites, sim floor, 40-instance daemon, C# compile and live toolkit drift are gated; C# selftest/release still outside |
 | G9 | Identity keyed by slot, not account | fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed |
 | G10 | `kaggle/toolkit/` drifts with no generator | generator + real-tree drift gate shipped 2026-10-28; dataset re-upload owed |
 | G11 | `js-error-finder.js` red (9 bundle checks) | checker vs runtime-patch mismatch |
@@ -3037,11 +3037,11 @@ touching the area.
 **Unnumbered but real:**
 
 - Manual interventions are instrumented (trusted input events only), and the newest logs
-  count **1,342<!--f:live_interventions--> across four slots** — 762<!--f:live_top_slot_interventions--> of
+  count **1,869<!--f:live_interventions--> across four slots** — 1,079<!--f:live_top_slot_interventions--> of
   them on dofus-05, a number that read 194/140
   until G97. Unattended Full Auto is not yet zero-intervention.
-- Recover/replan is still 2,186 of 4,280<!--f:live_steps--> steps (52.5<!--f:live_budget_share-->%;
-  2,500<!--f:live_recovery_rows--> or 59.3% counting the 251<!--f:live_retry-->
+- Recover/replan is still 2,186 of 3,823<!--f:live_steps--> steps (51.8<!--f:live_budget_share-->%;
+  2,229<!--f:live_recovery_rows--> or 59.3% counting the 247<!--f:live_retry-->
   retries) — see §12.2. The
   three-return park (G63) is the fix; its effect has not been measured live yet.
 - `tools/session_report.py` **no longer** refuses `play_*.jsonl`: the millisecond-epoch
@@ -3099,7 +3099,7 @@ uncommitted **is now committed**.
 - `dofus-network/kaggle/toolkit/**` + `TOOLKIT_MANIFEST.json` — the mirror, re-synced.
   **This was the one failing check when this snapshot was taken:** `--check` reported
   `tools/quest_witness.py` as drift, `--write` copied it, and the gate went back to
-  2,445<!--f:gate_checks-->/0. Run `python -m tools.sync_kaggle_toolkit --write` after every source edit.
+  2,448<!--f:gate_checks-->/0. Run `python -m tools.sync_kaggle_toolkit --write` after every source edit.
   The same check then caught a second, self-inflicted drift minutes later: an interrupted
   `tools/mutate_cause_gate.py` run had left a real mutation in `agent/autopilot.py`
   (`ok=None, error=None`) and a line-ending change in `agent/controller.py`; both were
@@ -3353,7 +3353,7 @@ go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
 
 ```bat
 cd dofus-network
-python -m agent.regression       :: 2,445<!--f:gate_checks--> checks, 0 failed (measured 2026-10-31)
+python -m agent.regression       :: 2,448<!--f:gate_checks--> checks, 0 failed (measured 2026-10-31)
 python -m agent.constraint_corpus --check  :: 39 hand cases, 28<!--f:tools-->-tool preconditions and causes
 python -m agent.constraint_corpus --generate --out data/constraint_synthetic.jsonl
                                   :: 2,600 synthetic rows, 100% cause/action agreement
@@ -3365,13 +3365,13 @@ python -m advisor selftest       :: 91 check sites
 ```bat
 cd dofus-network
 python tools/mutate_cause_gate.py
-:: 771<!--f:mutations--> mutations (counted from MUTATIONS on 2026-10-31);
+:: 777<!--f:mutations--> mutations (counted from MUTATIONS on 2026-10-31);
 :: MUT_ONLY=<batch> runs one batch; MUT_SHARD=i/n splits one sweep;
 :: MUT_RESUME=<log,...> re-runs only the labels a finished log did not catch
 ```
 
 **Do not interrupt a mutation run — and if you do, it now repairs itself.** The driver
-writes a real mutation into a source file, runs the mutation snippet (130<!--f:snippet_tests--> gate tests) in a
+writes a real mutation into a source file, runs the mutation snippet (132<!--f:snippet_tests--> gate tests) in a
 throwaway process, and restores the file in a `finally`; a hard kill skips that `finally`. That happened while
 this snapshot was written: the source `agent/autopilot.py` was left with
 `ok=None, error=None` at the decision site (mutation *"game-level outcome dropped at the
@@ -4620,7 +4620,7 @@ four defects, and one new rule.
   224,413,696 B rather than "≈288 MB"; bridge candidates 8893–8899 with `bridge_port.txt`
   = **8896** instead of "seen at 8894"; **23 patch rules, 23 matched, 0 skipped** at
   5,362,362<!--f:bundle_chars--> chars instead of the 13-rule/11-patch sample; **28<!--f:tools--> tools** with `ui.tap`,
-  `ui.icons` and `shop.buy` added to its table; gate **2,445<!--f:gate_checks-->** checks and `advisor` 91
+  `ui.icons` and `shop.buy` added to its table; gate **2,448<!--f:gate_checks-->** checks and `advisor` 91
   instead of 276/122, with the C# compile, combat/data suites and mirror drift now inside
   the gate; the AI page's missing policy/budget fields, the 12-column grid with **no port
   column**, the pill's **four** shapes and daemon-driven colour, **64 MB** log rotation,
@@ -4740,7 +4740,7 @@ four defects, and one new rule.
   - **§1 bridge port** — `CANDIDATE_PORTS` is `{8893…8899}`, `DEFAULT_PORT = 8893`
     (`agent/bridge.py:22`), and the live `bridge_port.txt` says **8896**; the doc no longer
     implies 8893 is the running port.
-  - **§4 release/blocker** — `setup.exe` **62,793,216<!--f:setup_bytes--> B = 214.0 MiB**, and the real
+  - **§4 release/blocker** — `setup.exe` **62,903,808<!--f:setup_bytes--> B = 214.0 MiB**, and the real
     `live_ready` verdict instead of a claim of readiness: **FAIL egress** (no
     `127.0.0.1:40000`, `fail_closed=1`), **WARN client** (host not running), **FAIL page
     build** (last client log is `2026-10-29bf`, the build is `2026-10-30b`).
@@ -4807,7 +4807,7 @@ four defects, and one new rule.
 - **Pinned:** `test_docs_quote_measurements_by_tag` (10 checks) — the tagged numbers equal
   their measurements, every doc exists, the bundle fact equals the selftest's own line,
   `render` repairs a drifted tag, and an unknown reference is left alone rather than
-  guessed. Registered in `run()`; gate now **2,445<!--f:gate_checks--> checks / 0 failed** (exit 0,
+  guessed. Registered in `run()`; gate now **2,448<!--f:gate_checks--> checks / 0 failed** (exit 0,
   measured on this pass), and `data/last_gate_run.json` is the file the docs quote from.
   Mirror re-synced (`tools/sync_kaggle_toolkit --write`, 1 file).
 
@@ -4838,7 +4838,7 @@ four defects, and one new rule.
   and it is a regex fragment in a code example) and G-number duplication (0 duplicates,
   G1–G83 contiguous). Building checkers for those would have been machinery with nothing
   to find; the measurement is recorded here so the next session does not rebuild it.
-- Gate **2,445<!--f:gate_checks--> checks / 0 failed**, mirror synced, and the doc health is
+- Gate **2,448<!--f:gate_checks--> checks / 0 failed**, mirror synced, and the doc health is
   self-reporting: adding the five checks made four tagged counts stale, `--check` named
   them, `--render` fixed them.
 
@@ -4891,7 +4891,7 @@ four defects, and one new rule.
   were issued with no group on the map and 6 at 0 HP (G73). The first draft of that entry
   called the claim unjudgeable; it was wrong (it probed a field the built rows do not
   store), and the correction is in the entry.
-- Gate **2,445<!--f:gate_checks--> checks / 0 failed**, mirror synced (2 files).
+- Gate **2,448<!--f:gate_checks--> checks / 0 failed**, mirror synced (2 files).
 
 ### P-1q — a play-quality census, and a wrong gap entry corrected before it shipped (2026-10-30i)
 
@@ -4919,7 +4919,7 @@ four defects, and one new rule.
   visible, and deliberately does not claim a code fix: the zero-group rows are from a
   session that predates the planner's group filter, so the next live session decides
   whether the farm path still emits joins without a group.
-- Gate **2,445<!--f:gate_checks--> checks / 0 failed**, mirror synced (3 files).
+- Gate **2,448<!--f:gate_checks--> checks / 0 failed**, mirror synced (3 files).
 
 ### P-1r — the census found an unreachable destination, and the planner was sending it anyway (2026-10-30j)
 
@@ -4944,7 +4944,7 @@ four defects, and one new rule.
   is the second missing-field misreading of the day (G73 was the first), and the rule now
   written into G74 is the general one: check that the row kind carries a field before
   concluding anything from its absence.
-- Gate **2,445<!--f:gate_checks--> checks / 0 failed**, mirror synced (3 files).
+- Gate **2,448<!--f:gate_checks--> checks / 0 failed**, mirror synced (3 files).
 
 ---
 
@@ -5199,13 +5199,13 @@ four defects, and one new rule.
   `  - <check>` marker: a clean tree reports 0/0. With that parser, the corrected resume
   sweep (the first one selected 232 mutations instead of 40 because it split long labels
   on double spaces) and the four shard logs merge to the final verdict: every mutation the
-  driver holds -- **771<!--f:mutations-->** on 2026-10-31 -- is caught by a named failing
+  driver holds -- **777<!--f:mutations-->** on 2026-10-31 -- is caught by a named failing
   check, 0 missed, 0 skipped (518 in the merged sweep logs, the two `console:` mutations in
   the batch that follows).
 - **A crash is not a check (fixed 2026-10-31).** The corrected resume run credited four
   mutations to a crashed section -- `live: a torn log line...` and three `close:` rows --
   because the snippet printed its `  - ` lines only at the end, so one exception erased
-  every verdict. Each of the 130<!--f:snippet_tests--> snippet tests now runs through the gate's `_run_test`,
+  every verdict. Each of the 132<!--f:snippet_tests--> snippet tests now runs through the gate's `_run_test`,
   which names the test that raised; the torn-log and promoted-head mutations became named
   checks that way. The other two crashes had hidden two real coverage holes, and the
   19-mutation rerun exposed a third: the close tests stubbed the learner and trainer, so
@@ -5382,7 +5382,7 @@ four defects, and one new rule.
   fails. Both new checks run inside the mutation snippet, so every later mutation now pays
   about five to six seconds for them -- the scan parses 195 files, the console check
   spawns a real report -- worth it while the class is new. Driver:
-  **771<!--f:mutations-->** mutations, all caught.
+  **777<!--f:mutations-->** mutations, all caught.
 - **The snapshot's read-out step named a tool its own directory cannot find (fixed 2026-10-31).**
   §24 listed `tools/quest_witness.py`, `tools/session_report.py` and
   `tools/damage_calibration.py` as one list, but this repo has two folders called `tools/`
@@ -5518,7 +5518,7 @@ four defects, and one new rule.
   promoted file artifact keeps its predecessor as `<name>.previous.json`, and the
   move and router trainers accept `--rollback` (`agent/artifacts.py`, 5 checks, 2
   mutations) -- the recoverability the fight calibrator already had. Gate
-  **2,445<!--f:gate_checks--> checks, 3 failed**; driver **771<!--f:mutations--> mutations**. The
+  **2,448<!--f:gate_checks--> checks, 3 failed**; driver **777<!--f:mutations--> mutations**. The
   three failures are the rebuilt `setup.exe` of 2026-11-12 15:29, not a source change: it ships
   `dofus-network/.venv` (717.8 MB, 19,913 files) and `dofus-network/scratch` (261.8 MB), so it is
   536,801,280 B against a 62,914,560 B budget and carries `bin/warp/wireproxy.log`. The builder's
@@ -5802,7 +5802,7 @@ four defects, and one new rule.
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
 | `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G123<!--f:gaps_max-->**) | **current** (2026-10-31), 7,850<!--f:known_gaps_lines--> lines |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G127<!--f:gaps_max-->**) | **current** (2026-10-31), 8,060<!--f:known_gaps_lines--> lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
 | `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |
@@ -5818,7 +5818,7 @@ four defects, and one new rule.
 | `dofus-network/docs/LEARNING.md` | latent bus/online updates judgement | current decision, not shipped |
 | `dofus-network/docs/CAPABILITY_REGISTRY.md` | tools as data | **note corrected 2026-10-30 to 28<!--f:tools--> tools** (it said 25; its worked example still discusses the 16-object era by design) |
 | `rules.md` (root) | the owner's standing instruction file: capability policy, the "no moralizing disclaimers" rule, and (added 2026-10-30) the **change policy** — clean the code you touch before you add to it | **current** (2026-10-30). Its tool count was stale at 25 and now says 28 with the list; `data/capabilities.json` remains the authority and the gate asserts it |
-| `README.md` (root) | high-level overview, quick start, architecture | **corrected 2026-10-30b**: installer 224,413,696 B, bridge 8893–8899 (`bridge_port.txt` = 8896), 23 patch rules matched 23/23, 28<!--f:tools--> tools, gate 2,445<!--f:gate_checks--> / advisor 91, pill's four shapes, 64 MB log rotation, no policy/budget field in the GUI, `-config` is never passed to the relay, `networkhealth_artifacts/` is gone. Its §1–§9 prose still describes the 2026-10-27 build in places it was not touched |
+| `README.md` (root) | high-level overview, quick start, architecture | **corrected 2026-10-30b**: installer 224,413,696 B, bridge 8893–8899 (`bridge_port.txt` = 8896), 23 patch rules matched 23/23, 28<!--f:tools--> tools, gate 2,448<!--f:gate_checks--> / advisor 91, pill's four shapes, 64 MB log rotation, no policy/budget field in the GUI, `-config` is never passed to the relay, `networkhealth_artifacts/` is gone. Its §1–§9 prose still describes the 2026-10-27 build in places it was not touched |
 | `docs/archive/STATUS.md` | 2026-10-23 reasoning + kick history | superseded in part |
 | `PLAN.md` (root) | 2026-10-23 next steps | historical |
 | `docs/archive/now.md` | long historical record, 2026-10-23 | historical |
@@ -5835,8 +5835,8 @@ four defects, and one new rule.
 | 21 tools (older docs) | **28<!--f:tools--> tools** |
 | 25 tools (`CURRENT.md`, `CAPABILITY_REGISTRY.md`, this document — all corrected 2026-10-30) | **28<!--f:tools--> tools** — `ui.tap`, `ui.icons` and `shop.buy` were added with the tutorial work and never propagated to the prose; the gate has asserted 28 since (`regression.py:208`). `TRAINING_PLAN.md`'s "25 tools × 8 causes × 13 families" is a description of when that corpus was cut, not a registry claim |
 | 11 patches (`README.md`) | **23 rules, 23 matched, 0 skipped** — `bundle-selftest.txt` (re-run 2026-11-11) lists all 23 ids and `RESULT: DIFFERENT` at 5,362,362<!--f:bundle_chars--> live chars, because `client-patches.quarantine` serves the vendor bundle. This document's earlier "16 matched, 7 skipped" was the 1.74.9 bundle |
-| 276 checks (`README.md`) | **2,445<!--f:gate_checks--> checks / 0 failed** in `agent.regression` (measured 2026-10-30; `README.md` §15 corrected the same day) |
-| 892 / 1,024 / 1,241 / 1,486 / 1,503 / 1,514 / 1,517 / 1,527 / 1,537 checks (this document's own earlier snapshots, `AI_ARCHITECTURE.md`) | **2,445<!--f:gate_checks--> checks** — the gate grows every session; quote the number you just ran |
+| 276 checks (`README.md`) | **2,448<!--f:gate_checks--> checks / 0 failed** in `agent.regression` (measured 2026-10-30; `README.md` §15 corrected the same day) |
+| 892 / 1,024 / 1,241 / 1,486 / 1,503 / 1,514 / 1,517 / 1,527 / 1,537 checks (this document's own earlier snapshots, `AI_ARCHITECTURE.md`) | **2,448<!--f:gate_checks--> checks** — the gate grows every session; quote the number you just ran |
 | 13 patch rules / 11 active | **23 rules** after 1.74.10 |
 | 288 MB `setup.exe` (`README.md`) | **224,413,696 B = 214.0 MiB** since the stale `builder/Build.exe` was recompiled; it carries a 213.8 MB standalone-WebView2 payload (the 100.1 MiB / 105.7 MB / 288 MB numbers were earlier builds — `README.md` now gives the measured byte count) |
 | G1–G34 (`KNOWN_GAPS.md`, this document until now) | **G1–G69**, 6,619 lines |
@@ -5903,7 +5903,7 @@ What is measured now, with the number and where it came from:
 - **four routes to a learned veto were measured and all four failed their own bar**
   (G57 encoder, G59 frozen forest, G66 count calibration at equal budget, G67 state
   block). `agent/gate.py` shadows the incumbent counter and refuses nothing;
-- **the gate is green**: `python -m agent.regression` → **2,445<!--f:gate_checks--> checks / 0 failed, exit
+- **the gate is green**: `python -m agent.regression` → **2,448<!--f:gate_checks--> checks / 0 failed, exit
   0** on this tree. Four defects were found and fixed while writing this snapshot: Kaggle
   toolkit drift on `tools/quest_witness.py` (cured with `sync_kaggle_toolkit --write`), the
   `session_report.py` millisecond crash that made every protocol capture unreadable, the
@@ -5933,7 +5933,7 @@ Honest scorecard (0–10, measured, not aspirational):
 | Learned command parser | 4 | 93.9% tool / 69.8% call offline, routed per-instance adapter accepted, **still shadow-only** — every log prints `command_shadow: no status/row` |
 | Learned decision replacement | 2 | Four measured rejections (G57/G59/G66/G67); the incumbent streak counter is correct on four rolling cuts but runs **shadow-only** and prices no alternative — and it has **zero recorded rows**, since every existing log predates `agent/gate.py` |
 | Data and observability | 9 | Five label defects found and fixed in one programme; refusal text, witness attribution, `proofs:` counters and per-instance recovery all in the reports. The 2026-10-30 dock for `session_report.py` crashing on `play_*.jsonl` is gone: the millisecond-epoch fix is measured on the real captures (exit 0 over `play_dofus-02.jsonl`, 13.8 MB, every wire session reported as an honest `steps 0` empty). The cp1252 dock is gone too (`--json` pinned to UTF-8 on 2026-10-31, with the console test above), and G96's evidence half closed on 2026-11-01: `session_close` now copies the live logs' derived totals into `data/evidence/live_sessions.jsonl` and §12.2 quotes them by tag. Held back from 10 because the raw 82 MB is still outside the repository (a new question about those logs cannot be answered from a clone), the capture only grows where a close runs, and that file -- like the G95 sources and `data/session_closes.jsonl` -- is not `git add`ed yet |
-| Always-on fleet | 3 | 1,342<!--f:live_interventions--> manual interventions across 5<!--f:live_logs--> slots (762<!--f:live_top_slot_interventions--> on one) once G97's lost rows are read — the same logs read 194/140 before the fix; two permanent guest bans on record; 40-instance scaling unproven |
+| Always-on fleet | 3 | 1,869<!--f:live_interventions--> manual interventions across 5<!--f:live_logs--> slots (1,079<!--f:live_top_slot_interventions--> on one) once G97's lost rows are read — the same logs read 194/140 before the fix; two permanent guest bans on record; 40-instance scaling unproven |
 
 **The dream model** is not a bigger network. It is one always-on per-instance brain
 that sees the client's own state (quest graph and dialogs, battle log and challenges,

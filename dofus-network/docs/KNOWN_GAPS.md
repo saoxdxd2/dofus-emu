@@ -160,7 +160,11 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G120** | A diagnostic `print` could stop the whole AI, and the panel said "started" anyway | measured 2026-11-13 |
 | **G121** | The guest grant is behind an AWS WAF challenge, and the challenge is a blank window | measured 2026-11-13 |
 | **G122** | The guest grant completes in a real browser and has never completed in the popup | measured 2026-11-13 |
-| **G123** | The learned tool policy can only ever choose 21 of the 28 tools — documented, but unguarded and… | measured 2026-11-13 |
+| **G123** | The learned tool policy can only ever choose 21 of the 28 tools — documented four ways, warned… | measured 2026-11-13 |
+| **G124** | Four exported combat names cannot be imported, because the reasoner needs a wheel this runtime… | measured 2026-11-13 |
+| **G125** | The structure cache was 184 lines nothing constructed | fixed 2026-11-13, measured — closed, archived |
+| **G126** | The whole `planning/` brain is built at startup and never asked to plan or record anything | measured 2026-11-13 |
+| **G127** | `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work | measured 2026-11-13, partly fixed |
 
 ---
 
@@ -7776,16 +7780,24 @@ that path is unexercised rather than broken, and it is not touched here: the sho
 billing library on a licensed device, and the only legitimate substitute on this host is Ankama's web
 shop in the system browser.
 
-## G123. The learned tool policy can only ever choose 21 of the 28 tools — documented, but unguarded and never priced per tool *(measured 2026-11-13)*
+## G123. The learned tool policy can only ever choose 21 of the 28 tools — documented four ways, warned twice, and deliberately not fatal *(measured 2026-11-13)*
 
-An outside review of this tree listed "21-logit vs. 28-tool mismatch: NNPlanner silently cannot
-select the newest 7 tools" as a defect. The mismatch is real. The word *silently* is not: `CURRENT.md`
-§4 already says it, in as many words — *"The legal registry is 28 tools; the seven added since the
-21-logit head was trained (the four of 2026-10-27 plus `ui.tap`, `ui.icons`, `shop.buy`) are rule-only
-until the head is retrained."* What the review found that was genuinely missing is narrower, and it is
-the point of this entry: **nothing in the gate pinned that set**, and **nobody had priced what each of
-the seven costs the loop**. A prose note that the numbers differ is not a guard, and the two numbers
-were free to drift apart again with no check noticing.
+An outside review listed "21-logit vs. 28-tool mismatch: NNPlanner silently cannot select the newest
+7 tools" as a defect. The mismatch is real. Almost every other word in that sentence is not, and the
+first draft of this entry repeated them — it said the gap "was not recorded anywhere" and that
+"nothing in the gate pinned that set". Both were wrong, and this entry is written the second time
+because the first version is exactly the confident-wrong documentation this project keeps fixing.
+
+**What already exists.** `CURRENT.md` §4, `AI_ARCHITECTURE.md` (line 25 and the model table),
+`rules.md` line 22, and two dedicated suites — `agent/test_rule_only_tools_head_width.py` and
+`agent/test_tool_registry_vs_head.py` — all name the seven and the retrain dependency. The two
+suites are wired into the gate and they **warn** rather than fail, on purpose:
+
+> *"This test reports the gap as a WARNING (exit 0) — the gate stays green because the loop still
+> works rule-first — but CI must not treat '0 failed' as 'the full vocabulary is learned.'"*
+
+So the gap was known, tested, and visible. The review found a real number and got the governance
+wrong; so did I on the first pass.
 
 **The measurement.** `models/tool_policy.json` carries `tools`, and it names 21:
 
@@ -7808,8 +7820,9 @@ The runtime says it out loud on every start, in the line this project has been r
 [autopilot] policy: tool policy tool_policy.onnx (21 tools, +history); stack not loaded
 ```
 
-**Why it matters, per tool** — the part that was never written down. These seven are not decorative,
-and they are not equally cheap:
+**What was genuinely missing, and is now here.** The two existing suites warn, so a 29th tool added
+without a retrain would also only warn — the set was free to grow while the gate stayed green. And
+nobody had written down what each of the seven costs, which is the part a reader needs:
 
 | tool | what the loop loses while it is rule-only |
 |---|---|
@@ -7823,9 +7836,7 @@ project has spent the most effort on, and the rule picks up every one of them. A
 scores well on the 21 it can emit is not evidence about the 7 it cannot.
 
 **What it is not.** Not a crash and not a silent wrong answer: `NNPlanner` scores the logits it has
-and the rule supplies the rest, so the loop runs. `test_tool_vocabulary` asserted the vocabulary had
-28 tools and never asserted the policy could emit them — that asymmetry, not the 21 itself, is the
-defect this entry closes.
+and the rule supplies the rest, so the loop runs.
 
 **What closing it would take.** Two paths, and the second is the honest default until the first is
 paid for:
@@ -7844,7 +7855,206 @@ logits are not the binding constraint and this entry should be closed as "not th
 re-opened by refitting again. If it does beat it, the seven were the constraint and the entry closes
 with that number.
 
-**Guarded, so it cannot grow quietly.** `agent/regression.py` now carries `POLICY_UNEMITTABLE` and
-two checks in `test_tool_vocabulary`: the policy's tools must be a subset of the vocabulary, and the
-set it cannot emit must be exactly the seven above. Adding a 29th tool without a retrain fails the
-gate by name instead of becoming rule-only in silence.
+**Guarded, so it cannot grow quietly.** The two warning suites report the gap; they do not fail on
+it, so a 29th tool added without a retrain would warn too and the gate would stay green.
+`agent/regression.py` now carries `POLICY_UNEMITTABLE` and two checks in `test_tool_vocabulary` that
+fail instead: the policy's tools must be a subset of the vocabulary, and the set it cannot emit must
+be exactly the seven above. Warning suites stay the place to read *why*; this is the place that stops
+the set from changing without somebody deciding to change it.
+
+## G124. Four exported combat names cannot be imported, because the reasoner needs a wheel this runtime deliberately does not have *(measured 2026-11-13)*
+
+**Symptom.** `from combat import TinyRecursiveReasoner` raises
+`ModuleNotFoundError: No module named 'torch'`. So do `SingletonCombatReasoner`,
+`RecursiveDecision` and `TacticalStateEncoder`. Nothing in the tree imports them, so
+nothing fails — which is exactly why this went unnoticed.
+
+**Cause.** `combat/__init__.py` lists all four in its PEP 562 lazy-export map, and the
+module they resolve to (`combat/recursive_reasoner.py`) does `import torch` at line 15.
+`requirements.txt` pins only `numpy` and `requests`, and says so on purpose:
+
+> NOTE: this machine runs Python 3.15, for which PyTorch wheels may not exist yet.
+
+Measured 2026-11-13: `python -c "import torch"` fails on this interpreter. The lazy
+export is what hides it — `import combat` succeeds, so every import-time check passes,
+and the failure is deferred to the one call that asks for the name.
+
+**The second half, which matters if it ever is imported.** `TacticalStateEncoder.encode`
+normalises features against ceilings written as literals: `strength / 800.0`,
+`intelligence / 800.0`, `chance / 800.0`, `agility / 800.0`, `power / 400.0`,
+`flat_damage / 100.0`, `target_hp / 1500.0`, `distance_cells / 10.0`, plus the
+thresholds `target_hp < 180` and `char_hp_percent < 0.35`. A level-200 character reaches
+strength well past 800, so those slots saturate at 1.0 and the encoder stops
+distinguishing builds that differ by hundreds of points. The ceilings are not measured
+from anything and no test pins them.
+
+**Why it is not fixed by porting it to NumPy.** That was the obvious next step and it is
+the wrong one: the module is referenced by nothing except its own four export names, so a
+torch-free kernel would be a faster implementation of an unused function. What it needs
+first is a caller. If one appears, the port is small (one `torch.tensor` at the end of
+`encode`, one `nn.Module` forward); the ceilings should be derived from
+`data/kb` (the observed stat range at the target level) rather than from literals.
+
+**What is cheap now, and done.** The gap is recorded here so the next reader does not
+rediscover it as a crash. Deliberately not deleting the module: it carries the ACL-2026
+rationale (latent-space recursion, adaptive computation time) that the planning notes
+refer to, and a deleted design document is harder to find than an unused module.
+
+**Falsifier.** `python -c "from combat import TinyRecursiveReasoner"` succeeds, and a
+character at `strength=1200` encodes differently from one at `strength=800`.
+
+## G126. The whole `planning/` brain is built at startup and never asked to plan or record anything *(measured 2026-11-13)*
+
+**Symptom.** None visible, which is why it lasted. `data/kb/experience.jsonl` and
+`data/kb/posteriors.json` do not exist; `data/kb/economy_state.json` still says
+`parameters: 5, events_seen: 11` and is dated 2026-10-21, and it points at a log that is
+not on disk. Every economy estimate the planner produces is therefore a prior, and every
+`Estimate` carries `calibrated=False`.
+
+**The chain, each link read off the code.**
+
+1. `agent/serve.py:515` is the only production caller of `build_schedule_stack()`. It
+   calls `sm.restore()` and then uses exactly two things: `sm.active_objective` and the
+   experience store's `len()` / `events_seen` for a log line.
+2. `ScheduleManager.restore()` (`planning/schedule.py:116`) returns `None` on its first
+   line when `state_file` does not exist. `data/kb/schedule_state.json` does not exist
+   and is not tracked, and nothing creates it: `_persist()` is only reached from
+   `submit()` (`:115`), `report()` (`:261`) and `_replan()` (`:452`), and all three need
+   a plan that does not exist.
+3. `submit()` is called only by `restore()` (unreachable, per 2) and by `tick()`, which
+   needs `self.plan` to be non-`None` first. So `submit` is never called either.
+4. `self.plan` stays `None`, so `active_objective()` returns `None` on its first line
+   (`if self.plan is None ... return None`) for the entire life of the process. That is
+   the callable wired into `runtime.objective_provider` at `serve.py:517`, and
+   `agent/runtime.py:484` calls it every decision.
+5. `record_action()` (`planning/schedule.py:329`) — the only path that calls
+   `record_farm`, `record_drop_run`, `record_price` and `StrategyRanker.observe` — has
+   **zero callers in the tree**. `report()` and `tick()` have none either. Verified with
+   `grep -rn "record_action\|\.tick(" --include=*.py`, excluding `.venv`; the only hits
+   are the definitions themselves.
+
+**What that costs.** The `Planner`'s AND/OR search, the `Economy`'s Gamma/Beta/Log-Normal
+posteriors, the `StrategyRanker` bandit, the `DecisionGraph` penalties and the
+`ThinkingCache` (G125) are all constructed and all inert. The quest decisions the AI
+actually makes come from `agent/planner.py` (`QuestPlanner`), which is a separate module
+and does not consult any of this.
+
+**How it was probably lost.** `serve.py`'s docstring and the `build_schedule_stack`
+docstring both describe an earlier wiring where a broad `except` swallowed the
+`TypeError`s. Fixing the constructors made the log line honest ("experience store: 0
+params, 0 events seen") without making the stack reachable, so the fix removed the
+symptom that had been pointing at the cause.
+
+**What is not claimed.** This is not a regression from today's work: the missing log
+predates it, and `G125`'s cache wiring is correct and measured (136.6 ms -> 0.4 ms) but
+its beneficiary is the same unreachable `Planner.plan`.
+
+**Falsifier, already run.** Driving the stack by hand on 2026-11-13 proves the code is
+intact and only the caller is missing:
+
+```
+submit(Goal(1001, 3), PlayerState(level=60, kamas=0))
+  -> planned: buy, 1 leaf
+  -> active_objective(): {'tool': 'farm.start',
+                          'args': {'monster': 'Black Tiwabbit', 'kill_count': 10},
+                          'why': 'farm Black Tiwabbit for 150 kamas'}
+_ingest(action="farm", tool="fight.join",
+        entity={"monster_id": 68, "item_id": 1001},
+        result={"ok": True, "data": {"kills": 20, "drops": 1}},
+        elapsed_minutes=3.0)
+  -> signal: verified, 3 parameter updates, 3 params, 3 events
+```
+
+So the AND/OR planner plans, the objective context materialises, and one farm action
+produces three posterior updates. The whole gap is that nothing in `agent/` calls
+`submit()` or `record_action()`. Note also that `_ingest` only learns when
+`outcome.signal == "verified"`, which requires the backend payload under `result["data"]`
+— a bare `{"ok": true}` learns nothing, silently.
+
+**The fix is one caller, not a rewrite.** `agent/runtime.py` already holds the executor
+and the observation; it needs to (a) `submit` a goal when the objective changes, and
+(b) `record_action` after each executed step with the result payload it already has.
+
+## G127. `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work *(measured 2026-11-13, partly fixed)*
+
+**Symptom.** None on screen. `agent/planner_nn.py:207-219` reads `move_prob` and compares
+it to `0.20`, `0.20` and `0.25`, and nothing anywhere says whether `0.20` means "one in
+five".
+
+**The drift, measured.** The three transition splits are strictly chronological (`at`
+ranges do not overlap), and the base rate of "this action moved the world" is not stable
+across them:
+
+```
+split   n      base rate   mean predicted   ECE
+train   4099   0.220       0.251            0.103
+val     1087   0.642       0.418            0.241
+test    298    0.466       0.368            0.110
+```
+
+The artifact already carries a fitted `move_temperature` (2.5002), so this was never a
+missing-temperature problem. On the era it was trained on the model is essentially
+perfect: **ECE 0.0086** over the first 3,838 rows. The 0.24 on `val` is drift, not
+miscalibration.
+
+**The cause is one tool, and it is good news.** Per tool, either side of the same
+boundary:
+
+```
+tool            fit era (1,485 rows)      report era (730 rows)
+nav.goto        moved 0.173, pred 0.255   moved 0.722, pred 0.385
+quest.advance   moved 0.250, pred 0.249   moved 0.495, pred 0.437
+```
+
+`nav.goto` went from moving the character **17.3%** of the time to **72.2%** of the time.
+Navigation started working. That one tool is 44% of the report window and accounts for the
+whole calibration collapse, and it means the "86% of actions are inert" figure quoted in
+several reviews was substantially a *harness* failure that has since been fixed — the
+model is the last thing still acting as though it had not been.
+
+**What was fixed.** `agent/calibration.py` fits a Platt map `p = sigmoid(a·z + b)` on the
+raw move logit, with per-tool pairs where the tool has at least 60 rows, and
+`agent/foresight.py` applies it from a sidecar `models/foresight_v1/calibration.json`.
+Fitted on the newest 2,500 rows, measured on the 1,100 newest after it:
+
+```
+                  ECE      AUC     log loss   rows below 0.25 that actually moved
+raw (T = 2.5)     0.2189   0.8534  0.5516     0.345
+calibrated        0.0802   0.8709  0.4071     0.092
+```
+
+The last column is the one that matters for a decision: with the raw probability the
+`alt_p >= 0.25` preemption test rejects candidates that go on to move **34.5%** of the
+time; after calibration that is **9.2%**. `nav.goto` goes from a predicted 0.465 to 0.701
+against a true 0.868. The preemption *rate* is unchanged (11.2% -> 11.0% of states), so
+the rule behaves the same and only the number becomes honest.
+
+**Three negative results, so they are not repeated.**
+
+1. A refitted **temperature alone makes it worse** (log loss 0.5516 -> 0.5689). The error
+   is a level shift; a slope cannot move a level. The intercept is the part that matters.
+2. **Isotonic is the worst of the four out of sample** (log loss 1.0401) despite being
+   perfect in sample (ECE 0.0000). Its blocks fit the window's noise.
+3. A four-fold rolling-origin backtest across era boundaries gains far less than the
+   within-era test: mean ECE 0.0863 -> 0.0827, worst fold 0.2323 -> 0.1900. No map fitted
+   on the past knows the next era's base rate.
+
+**What is still open.** Recalibration makes the existing logit honest; it does not make the
+logit better. The fix that remains is retraining the net on current-era rows, which needs
+torch and is not something this session can run. The sidecar is a stopgap that must be
+refitted at session close (`--write --method platt`), and it is off when
+`DOFUS_FORESIGHT_CALIBRATION=0` or the file is deleted.
+
+**Also found while measuring.** `models/foresight_live_v1` — the artifact
+`tools/session_close.py` writes and `ai/train_move_head.py` defaults to — has a **dead
+move head**: every tool's `move_prob` is ~0.50 (`farm.start` 0.523, `safe.stop` 0.515,
+`nav.goto` 0.518) against moved rates of 0.000, 0.000 and 0.823, and `mean_predicted_gain`
+is 0.0. It is not the artifact the runtime loads (`agent/foresight.py:38` defaults to
+`foresight_v1`), so nothing is currently harmed, but the session-close job keeps
+regenerating a model that cannot rank anything and reports no metrics file to say so.
+
+**Guards.** `agent/test_calibration` (49 tests, delegated from `test_combat_suites`) pins
+the three properties that make a calibrator safe: never worse than identity in sample,
+never a negative slope (a negative `a` would make `planner_nn` prefer the candidate it is
+sure will fail — the first solver returned `a = -0.0247` on anti-correlated data), and
+bit-identical output when no sidecar is present.

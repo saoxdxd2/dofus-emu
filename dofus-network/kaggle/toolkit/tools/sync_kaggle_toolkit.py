@@ -31,7 +31,14 @@ TOOLKIT = ROOT / "kaggle" / "toolkit"
 MANIFEST = TOOLKIT / "TOOLKIT_MANIFEST.json"
 
 SYNC_DIRS = ("agent", "sim", "ai", "knowledge", "combat", "advisor", "tools")
-SYNC_FILES = ("_lazy_exports.py", "run_autopilot.py", "run_brain.py", "data/capabilities.json")
+SYNC_FILES = (
+    "_lazy_exports.py",
+    "run_autopilot.py",
+    "run_brain.py",
+    "data/capabilities.json",
+    "data/session_closes.jsonl",
+    "data/evidence/live_sessions.jsonl",
+)
 PINNED = (
     "dataset-metadata.json",
     "data/maps/_index.json",

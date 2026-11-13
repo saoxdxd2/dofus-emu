@@ -64,6 +64,9 @@ class ForesightNet:
         self.meta = meta or {}
         # one fitted scalar: a ranker used as an abstention signal has to mean what it says
         self.temperature = max(1e-6, float(self.meta.get("move_temperature") or 1.0))
+        # fitted on the logit scale by `agent.calibration`; None means "apply the temperature
+        # above and nothing else", which is exactly the pre-existing behaviour
+        self.calibrator: Any = None
 
     # -- basics ------------------------------------------------------------
 
@@ -93,9 +96,28 @@ class ForesightNet:
         vec = self.vector(x, tool)
         if vec is None:
             return None
-        return self.score_vector(vec[None, :])[0]
+        return self.score_vector(vec[None, :], groups=[tool])[0]
 
-    def score_vector(self, batch: Any) -> List[Dict[str, Any]]:
+    def score_vector(self, batch: Any, groups: Optional[Sequence[Optional[str]]] = None
+                     ) -> List[Dict[str, Any]]:
+        import numpy as np
+        out = self.forward(batch)
+        rows: List[Dict[str, Any]] = []
+        # clipped: a large negative logit overflows exp() and would raise inside a decision loop
+        # that is supposed to fail open
+        probs = self.probability(out[:, 0], groups)
+        for index, raw in enumerate(out):
+            curve = [float(v) for v in raw[2:2 + self.depth]]
+            rows.append({
+                "move_prob": float(probs[index]),
+                "gain": float(raw[1]),
+                "curve": curve,
+                "flat": bool(all(c <= 1e-6 for c in curve)),
+            })
+        return rows
+
+    def forward(self, batch: Any) -> Any:
+        """The 105 -> 128 -> 128 -> 7 matmul, shared by scoring and by calibration fitting."""
         import numpy as np
         a = self.a
 
@@ -106,21 +128,27 @@ class ForesightNet:
                  + np.asarray(a["b1"], dtype=np.float32))
         h = relu(np.dot(h, np.asarray(a["w2"], dtype=np.float32))
                  + np.asarray(a["b2"], dtype=np.float32))
-        out = np.dot(h, np.asarray(a["w3"], dtype=np.float32))
-        out = out + np.asarray(a["b3"], dtype=np.float32)
-        rows: List[Dict[str, Any]] = []
-        # clipped: a large negative logit overflows exp() and would raise inside a decision loop
-        # that is supposed to fail open
-        probs = 1.0 / (1.0 + np.exp(-np.clip(out[:, 0] / self.temperature, -30.0, 30.0)))
-        for index, raw in enumerate(out):
-            curve = [float(v) for v in raw[2:2 + self.depth]]
-            rows.append({
-                "move_prob": float(probs[index]),
-                "gain": float(raw[1]),
-                "curve": curve,
-                "flat": bool(all(c <= 1e-6 for c in curve)),
-            })
-        return rows
+        return (np.dot(h, np.asarray(a["w3"], dtype=np.float32))
+                + np.asarray(a["b3"], dtype=np.float32))
+
+    def move_logits(self, batch: Any) -> Any:
+        """The raw move logit, before temperature or calibration. This is what
+        `agent.calibration` fits against, so a fitted transform can be reproduced exactly."""
+        return self.forward(batch)[:, 0]
+
+    def probability(self, z: Any, groups: Optional[Sequence[Optional[str]]] = None) -> Any:
+        """Logits to probabilities. A fitted calibrator supersedes the temperature scalar,
+        because it was fitted on these same raw logits and applying both would double-count."""
+        import numpy as np
+        if self.calibrator is not None:
+            names = list(groups) if groups is not None else [None] * len(z)
+            return np.asarray([self.calibrator.apply_logit(float(v), names[i] if i < len(names) else None)
+                               for i, v in enumerate(z)], dtype=np.float32)
+        return 1.0 / (1.0 + np.exp(-np.clip(z / self.temperature, -30.0, 30.0)))
+
+    def attach_calibration(self, calibrator: Any) -> "ForesightNet":
+        self.calibrator = calibrator
+        return self
 
     def rank(self, x: Sequence[float], candidates: Iterable[str]) -> List[Dict[str, Any]]:
         """Candidates ordered by predicted gain, then by predicted movement. Reads never
@@ -135,7 +163,7 @@ class ForesightNet:
             kept.append(tool)
         if not vectors:
             return []
-        scored = self.score_vector(np.asarray(vectors, dtype=np.float32))
+        scored = self.score_vector(np.asarray(vectors, dtype=np.float32), groups=kept)
         out: List[Dict[str, Any]] = []
         for tool, cell in zip(kept, scored):
             out.append({"tool": tool, "read": tool in READ_ONLY_TOOLS, **cell})
@@ -143,9 +171,20 @@ class ForesightNet:
         return out
 
 
+def calibration_path(target: Path) -> Path:
+    """The recalibration sidecar beside an artifact, so `foresight.json` is never rewritten."""
+    return Path(target).parent / "calibration.json"
+
+
 def load(path: Optional[Path] = None) -> Optional[ForesightNet]:
     """Load the artifact, or return None. Never raises: a missing model means the loop runs the
-    rules, exactly as it did before this component existed."""
+    rules, exactly as it did before this component existed.
+
+    A `calibration.json` beside the artifact is applied when present, because the raw
+    `move_prob` drifts with the base rate of the era the model was trained on (see
+    `agent/calibration.py`). `DOFUS_FORESIGHT_CALIBRATION=0` ignores it; deleting the file
+    restores the pre-calibration behaviour exactly.
+    """
     import numpy as np
     target = Path(path) if path else MODEL_PATH / "foresight.json"
     try:
@@ -159,9 +198,16 @@ def load(path: Optional[Path] = None) -> Optional[ForesightNet]:
         required = ("w1", "b1", "w2", "b2", "w3", "b3", "x_mean", "x_std", "tool_gate")
         if any(name not in arrays for name in required):
             return None
-        return ForesightNet(arrays, tools=raw.get("tools"), meta=raw.get("meta") or {})
+        net = ForesightNet(arrays, tools=raw.get("tools"), meta=raw.get("meta") or {})
     except Exception:  # noqa: BLE001 - fail open, the rule path is authoritative
         return None
+    if os.environ.get("DOFUS_FORESIGHT_CALIBRATION", "1") != "0":
+        try:
+            from agent.calibration import load as load_calibration
+            net.attach_calibration(load_calibration(calibration_path(target)))
+        except Exception:  # noqa: BLE001 - an unreadable sidecar is the same as no sidecar
+            net.calibrator = None
+    return net
 
 
 def features_of(obs: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Optional[List[float]]:

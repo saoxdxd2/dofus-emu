@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
+using DofusFarm.UI;
 using Microsoft.Web.WebView2.Core;
 
 namespace DofusFarm.Engine
@@ -88,6 +89,33 @@ namespace DofusFarm.Engine
             }
 
             SetState(id, ClientInstanceState.Starting);
+
+            // Account-scoped launches resolve to one deterministic profile,
+            // device identity and egress. Fail closed before the form is spawned:
+            // a profile owned by another login or a second live client on the
+            // same account must not open a window at all.
+            if (!string.IsNullOrEmpty(options.AccountLogin))
+            {
+                string isoFailure;
+                AccountCapsule capsule = AccountIsolation.Resolve(
+                    options.AccountLogin, id, options.Profile, options.Proxy, out isoFailure);
+                if (capsule == null)
+                {
+                    SetState(id, ClientInstanceState.Faulted);
+                    OnLog?.Invoke(string.Format("[{0}] account isolation refused: {1}", id, isoFailure));
+                    return;
+                }
+                if (!AccountIsolation.Preflight(capsule, out isoFailure))
+                {
+                    SetState(id, ClientInstanceState.Faulted);
+                    OnLog?.Invoke(string.Format("[{0}] account preflight failed: {1}", id, isoFailure));
+                    return;
+                }
+                options.UserDataDirectory = capsule.ProfileDir;
+                options.Profile = capsule.Profile;
+                options.DeviceSerial = capsule.DeviceSerial;
+                options.DeviceUuid = capsule.DeviceUuid;
+            }
 
             // Calculate user data directory
             if (string.IsNullOrEmpty(options.UserDataDirectory))
@@ -172,6 +200,22 @@ namespace DofusFarm.Engine
                             raw, uuid, serial, options.Profile,
                             options.Profile != null ? options.Profile.UserAgent : "",
                             options.AppVersion, options.VersionCode, options.BuildVersion);
+
+                        // The generated validators travel in the same injected script,
+                        // first, so mobile-disguise.js can check an envelope against the
+                        // exact schema the Python agent and the Go relay use. Missing
+                        // file: the page keeps its structural checks only.
+                        try
+                        {
+                            string contractsPath = Path.Combine(Path.GetDirectoryName(scriptPath),
+                                "contracts.generated.js");
+                            if (File.Exists(contractsPath))
+                            {
+                                options.DisguiseScript = File.ReadAllText(contractsPath, Encoding.UTF8)
+                                    + "\n" + options.DisguiseScript;
+                            }
+                        }
+                        catch { }
                     }
                     catch { }
                 }
@@ -577,7 +621,13 @@ namespace DofusFarm.Engine
         {
             foreach (var kv in _activeForms)
             {
-                try { var ignored = kv.Value.ExecuteScriptAsync(script); } catch { }
+                WebView2ClientForm target = kv.Value;
+                if (target == null || target.IsDisposed) continue;
+                // Guarded rather than discarded: an exception inside a bare
+                // ExecuteScriptAsync task used to surface as an unobserved-task fault
+                // at some unrelated point, or not at all.
+                UiDispatcher.Instance.Guard("backend.broadcast",
+                    delegate { return target.ExecuteScriptAsync(script); });
             }
         }
 
@@ -591,7 +641,8 @@ namespace DofusFarm.Engine
                 {
                     WebView2ClientForm f = kvp.Value;
                     if (f != null && !f.IsDisposed)
-                        SafeUiInvoke(f, () => { _ = f.ExecuteScriptAsync(script); });
+                        SafeUiInvoke(f, () => { UiDispatcher.Instance.Guard("backend.instance",
+                            delegate { return f.ExecuteScriptAsync(script); }); });
                 }
                 return;
             }
@@ -599,7 +650,8 @@ namespace DofusFarm.Engine
             WebView2ClientForm form;
             if (_activeForms.TryGetValue(instanceId, out form) && form != null && !form.IsDisposed)
             {
-                SafeUiInvoke(form, () => { _ = form.ExecuteScriptAsync(script); });
+                SafeUiInvoke(form, () => { UiDispatcher.Instance.Guard("backend.instance",
+                    delegate { return form.ExecuteScriptAsync(script); }); });
             }
         }
 
@@ -611,13 +663,12 @@ namespace DofusFarm.Engine
 
         private static void SafeUiInvoke(Control c, Action action)
         {
-            if (c == null || c.IsDisposed) return;
-            try
-            {
-                if (c.InvokeRequired && c.IsHandleCreated) c.BeginInvoke(action);
-                else action();
-            }
-            catch { }
+            if (c == null || c.IsDisposed || !c.IsHandleCreated) return;
+            if (!c.InvokeRequired) { action(); return; }
+            // Deferred through the shared queue, like every other cross-thread update.
+            // Coalescing keys are not used here: window creation and teardown must all
+            // run, not only the last one.
+            UiDispatcher.Instance.Post(action);
         }
 
         public void Dispose()

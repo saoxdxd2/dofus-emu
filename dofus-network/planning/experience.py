@@ -93,6 +93,19 @@ class Posterior:
         mean = self.mean()
         return mean, mean
 
+    def sample(self, size: int = 1, rng: Any = None) -> Any:
+        """Draw ``size`` samples from the posterior.
+
+        Closed form for every subclass -- these are conjugate families, so there is no
+        need for anything iterative. Used by Thompson sampling and CVaR in
+        ``planning.risk``; a posterior that cannot be sampled returns its mean, which
+        makes Thompson sampling degrade to greedy rather than to an error.
+
+        Returns a numpy array of length ``size``.
+        """
+        import numpy as _np
+        return _np.full(max(1, int(size)), float(self.mean()), dtype=float)
+
     def to_dict(self) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -144,6 +157,13 @@ class BetaRate(Posterior):
         """
         return max(0.0, self.alpha - 2.0), max(0.0, self.beta - 30.0)
 
+    def sample(self, size: int = 1, rng: Any = None) -> Any:
+        """Beta(alpha, beta). The drop-rate posterior, drawn exactly."""
+        import numpy as _np
+        generator = rng if rng is not None else _np.random.default_rng()
+        return generator.beta(max(self.alpha, 1e-9), max(self.beta, 1e-9),
+                              size=max(1, int(size)))
+
     def interval(self, level: float = 0.9) -> Tuple[float, float]:
         # Normal approximation to the Beta; adequate for display, not for testing.
         mean = self.mean()
@@ -193,6 +213,13 @@ class GammaRate(Posterior):
 
     def mean(self) -> float:
         return self.shape / self.rate if self.rate > 0 else 0.0
+
+    def sample(self, size: int = 1, rng: Any = None) -> Any:
+        """Gamma(shape, scale=1/rate). ``shape`` events over ``rate`` exposure."""
+        import numpy as _np
+        generator = rng if rng is not None else _np.random.default_rng()
+        scale = 1.0 / self.rate if self.rate > 0 else 1.0
+        return generator.gamma(max(self.shape, 1e-9), scale, size=max(1, int(size)))
 
     def to_dict(self) -> Dict[str, Any]:
         return {"kind": self.kind, "shape": self.shape, "rate": self.rate,
@@ -269,6 +296,19 @@ class LogNormalDuration(Posterior):
     def confidence(self) -> float:
         return min(1.0, self.n / 20.0)
 
+    def sample(self, size: int = 1, rng: Any = None) -> Any:
+        """Log-normal with the shrunk ``(mu, sigma^2)`` from ``_stats``.
+
+        The variance is shrunk toward the prior exactly as ``mean()`` is, so a thin
+        posterior draws wide -- which is what makes Thompson sampling explore a
+        destination nobody has timed yet.
+        """
+        import numpy as _np
+        generator = rng if rng is not None else _np.random.default_rng()
+        mean_log, var = self._stats()
+        return generator.lognormal(mean_log, math.sqrt(max(var, 1e-9)),
+                                   size=max(1, int(size)))
+
     def to_dict(self) -> Dict[str, Any]:
         return {"kind": self.kind, "sum_log": self.sum_log, "sum_log2": self.sum_log2,
                 "n": self.n, "prior_log": self.prior_log,
@@ -339,6 +379,13 @@ class NormalPosterior(Posterior):
 
     def confidence(self) -> float:
         return min(1.0, self.n / 10.0)
+
+    def sample(self, size: int = 1, rng: Any = None) -> Any:
+        """Normal with the shrunk mean and variance from ``_stats``."""
+        import numpy as _np
+        generator = rng if rng is not None else _np.random.default_rng()
+        mean, var = self._stats()
+        return generator.normal(mean, math.sqrt(max(var, 1e-9)), size=max(1, int(size)))
 
     def to_dict(self) -> Dict[str, Any]:
         return {"kind": self.kind, "sum_x": self.sum_x, "sum_x2": self.sum_x2,

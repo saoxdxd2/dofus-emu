@@ -199,42 +199,57 @@ def _same_id(candidate: Dict[str, Any], wanted: Any) -> bool:
 
 
 class PointerRows(Dataset):
-    def __init__(self, rows: Iterable[Dict[str, Any]], include_reads: bool) -> None:
+    """One item per (row, goal wording); the entity label is shared by variants."""
+
+    def __init__(self, rows: Iterable[Dict[str, Any]], include_reads: bool,
+                 augment: int = 0, augmenter: Any = None) -> None:
         self.items: List[Dict[str, Any]] = []
-        for row in rows:
+        for index, row in enumerate(rows):
             if row.get("was_read") and not include_reads:
                 continue
-            candidates = _candidates(row)
-            if len(candidates) < 2:
-                continue
-            chosen = row.get("chosen") or {}
-            tool = str(row.get("tool") or "")
-            label = _label_index(chosen, candidates, tool)
-            if label is None:
-                continue
-            if label >= MAX_CANDIDATES:
-                candidates = [candidates[label]] + candidates[:MAX_CANDIDATES - 1]
-                label = 0
-            else:
-                candidates = candidates[:MAX_CANDIDATES]
-            self.items.append({
-                "quest": " ".join(str(row.get("goal") or "").split())
-                         + " " + str(((row.get("entities") or {}).get("quest") or {}).get("text") or ""),
-                "quest_num": [
-                    _num(((row.get("entities") or {}).get("self") or {}).get("level"), 200.0),
-                    _num(((row.get("entities") or {}).get("self") or {}).get("kamas"), 1_000_000.0),
-                    _num(((row.get("entities") or {}).get("self") or {}).get("hp"), 1000.0),
-                    _num(((row.get("entities") or {}).get("self") or {}).get("max_hp"), 1000.0),
-                    _num(len(((row.get("entities") or {}).get("inventory") or {}).get("items") or []), 120.0),
-                    _num(len(((row.get("entities") or {}).get("npcs") or [])), 40.0),
-                    _num(len(((row.get("entities") or {}).get("interactives") or [])), 40.0),
-                    _num(len(((row.get("entities") or {}).get("mobs") or [])), 20.0),
-                ],
-                "candidates": candidates,
-                "label": label,
-                "moved": 1.0 if row.get("moved") else 0.0,
-                "progress": 1.0 if row.get("progress") else 0.0,
-            })
+            goals = [str(row.get("goal") or "")]
+            if augment and augmenter is not None:
+                goals.extend(augmenter.variants(row, augment, seed=index))
+            for goal in goals:
+                item = self._item(row, goal)
+                if item is not None:
+                    self.items.append(item)
+
+    @staticmethod
+    def _item(row: Dict[str, Any], goal: str) -> Optional[Dict[str, Any]]:
+        candidates = _candidates(row)
+        if len(candidates) < 2:
+            return None
+        chosen = row.get("chosen") or {}
+        tool = str(row.get("tool") or "")
+        label = _label_index(chosen, candidates, tool)
+        if label is None:
+            return None
+        if label >= MAX_CANDIDATES:
+            candidates = [candidates[label]] + candidates[:MAX_CANDIDATES - 1]
+            label = 0
+        else:
+            candidates = candidates[:MAX_CANDIDATES]
+        entities = row.get("entities") or {}
+        me = entities.get("self") or {}
+        return {
+            "quest": " ".join(str(goal or "").split())
+                     + " " + str(((entities.get("quest") or {}).get("text") or "")),
+            "quest_num": [
+                _num(me.get("level"), 200.0),
+                _num(me.get("kamas"), 1_000_000.0),
+                _num(me.get("hp"), 1000.0),
+                _num(me.get("max_hp"), 1000.0),
+                _num(len((entities.get("inventory") or {}).get("items") or []), 120.0),
+                _num(len(entities.get("npcs") or []), 40.0),
+                _num(len(entities.get("interactives") or []), 40.0),
+                _num(len(entities.get("mobs") or []), 20.0),
+            ],
+            "candidates": candidates,
+            "label": label,
+            "moved": 1.0 if row.get("moved") else 0.0,
+            "progress": 1.0 if row.get("progress") else 0.0,
+        }
 
     def __len__(self) -> int:
         return len(self.items)
@@ -286,7 +301,8 @@ def collate(items: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
 
 
 class EntityPointer(nn.Module):
-    def __init__(self, hidden: int = 128, layers: int = 2) -> None:
+    def __init__(self, hidden: int = 128, layers: int = 2,
+                 priors: Optional[Tuple[float, float]] = None) -> None:
         super().__init__()
         self.tok = nn.Embedding(VOCAB, hidden)
         self.kind = nn.Embedding(len(KINDS), 16)
@@ -303,6 +319,13 @@ class EntityPointer(nn.Module):
                                   nn.Linear(hidden // 2, 1))
         self.progress = nn.Sequential(nn.Linear(hidden * 2, hidden // 2), nn.ReLU(),
                                       nn.Linear(hidden // 2, 1))
+        # Logit-adjusted bias start: with 0.8% positives a zero bias makes the
+        # first epochs spend their updates rediscovering the base rate. Starting
+        # at the prior costs nothing and keeps sigmoid(output) calibrated at step 0.
+        move_prior, progress_prior = priors or (0.02, 0.01)
+        for head, prior in ((self.move, move_prior), (self.progress, progress_prior)):
+            rate = min(0.5, max(1e-4, float(prior)))
+            nn.init.constant_(head[-1].bias, math.log(rate / (1.0 - rate)))
 
     @staticmethod
     def _pool(ids: torch.Tensor, mask: torch.Tensor,
@@ -312,7 +335,8 @@ class EntityPointer(nn.Module):
         total = (vectors * weights).sum(1) / weights.sum(1).clamp(min=1.0)
         return total
 
-    def forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, ...]:
+    def forward(self, batch: Dict[str, torch.Tensor],
+                return_embeddings: bool = False) -> Tuple[torch.Tensor, ...]:
         q_text = self._pool(batch["quest"], batch["quest_mask"], self.tok)
         q = self.query(torch.cat([q_text, batch["quest_num"]], dim=-1))
         flat_ids = batch["cand"].reshape(-1, MAX_TOKENS)
@@ -325,7 +349,72 @@ class EntityPointer(nn.Module):
         weights = batch["cand_mask"].unsqueeze(-1)
         pooled = (entity * weights).sum(1) / weights.sum(1).clamp(min=1.0)
         head = torch.cat([q, pooled], dim=-1)
+        if return_embeddings:
+            # ``q`` and ``entity`` are the projections the score is built from, so
+            # their dot product is exactly the pointer score; InfoNCE needs them
+            # kept apart to use other rows' candidates as keys.
+            return (scores, self.move(head).squeeze(-1),
+                    self.progress(head).squeeze(-1), entity, q)
         return scores, self.move(head).squeeze(-1), self.progress(head).squeeze(-1)
+
+
+def info_nce_loss(q: torch.Tensor, entity: torch.Tensor, cand_mask: torch.Tensor,
+                  labels: torch.Tensor, temperature: float = 0.07,
+                  hard_negatives: int = 8) -> torch.Tensor:
+    """InfoNCE with in-batch hard negatives over the pointer scores.
+
+    Positives are each row's labelled candidate. Negatives are two pools:
+
+    * the row's own unlabelled candidates, which the softmax already saw;
+    * every *other* row's candidates in the batch, which is the part that matters
+      here. The corpus repeats a handful of entities across goals, so own-row
+      negatives are trivially separable while a goal about one NPC against a
+      candidate offered for another is the confusion a pointer must survive.
+      Cross-row keys are absent from this row's candidate mask, so they can never
+      be a false negative.
+
+    Only the hardest ``hard_negatives`` are kept: 32 rows by 80 candidates is
+    ~2,500 negatives, most of which contribute a gradient of almost zero. The
+    softmax runs over 1 + K logits, so the loss stays O(B*K) instead of O(B^2*C).
+    """
+    batch, width = q.shape[0], entity.shape[2]
+    own = (entity * q.unsqueeze(1)).sum(-1) / math.sqrt(width)
+    positive = own.gather(1, labels.unsqueeze(1))
+    own_negatives = own.masked_fill(cand_mask <= 0, float("-inf"))
+    own_negatives = own_negatives.scatter(1, labels.unsqueeze(1), float("-inf"))
+    cross = torch.einsum("bd,jcd->bjc", q, entity) / math.sqrt(width)
+    allow = cand_mask.unsqueeze(0).expand(batch, batch, -1).clone()
+    allow[torch.arange(batch), torch.arange(batch)] = 0.0
+    cross = cross.masked_fill(allow <= 0, float("-inf")).reshape(batch, -1)
+    negatives = torch.cat([own_negatives, cross], dim=1)
+    keep = min(hard_negatives, negatives.shape[1])
+    hardest = negatives.topk(keep, dim=1).values
+    logits = torch.cat([positive / temperature, hardest / temperature], dim=1)
+    targets = torch.zeros(batch, dtype=torch.long, device=logits.device)
+    return nn.functional.cross_entropy(logits, targets)
+
+
+def focal_bce(logits: torch.Tensor, targets: torch.Tensor, gamma: float = 2.0,
+              balance: Optional[float] = None) -> torch.Tensor:
+    """Focal loss with a class-balanced positive weight.
+
+    ``moved`` is 8% of the rows and ``progress`` is 0.1%, so a plain mean BCE is
+    dominated by the negative class and the head learns to answer "no". Focal
+    weighting (1 - p_t)^gamma removes the gradient from the thousands of easy
+    negatives, and ``balance`` scales the positive term so the rare class is not
+    drowned before focal reweighting. ``p_t`` is detached by construction (it is
+    only the modulation factor), so the loss stays a proper scoring rule.
+    """
+    ce = nn.functional.binary_cross_entropy_with_logits(logits, targets,
+                                                        reduction="none")
+    probability = torch.sigmoid(logits)
+    p_t = torch.where(targets > 0.5, probability, 1.0 - probability)
+    weight = torch.ones_like(p_t)
+    if balance is not None:
+        weight = torch.where(targets > 0.5,
+                             torch.as_tensor(balance, device=logits.device),
+                             torch.as_tensor(1.0 - balance, device=logits.device))
+    return (weight * (1.0 - p_t).pow(gamma) * ce).mean()
 
 
 def _auc(labels: torch.Tensor, probs: torch.Tensor) -> Optional[float]:
@@ -423,6 +512,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="include state.snapshot rows (default: actions only)")
     parser.add_argument("--limit", type=int, default=0,
                         help="cap train rows for a smoke run (0 = all)")
+    parser.add_argument("--augment", type=int, default=0, metavar="N",
+                        help="extra KB/gazetteer goal paraphrases per training row")
+    parser.add_argument("--info-nce", action="store_true",
+                        help="pointer loss as InfoNCE with in-batch hard negatives")
+    parser.add_argument("--hard-negatives", type=int, default=8, metavar="K",
+                        help="hardest negatives kept per row for InfoNCE")
+    parser.add_argument("--temperature", type=float, default=0.07)
+    parser.add_argument("--focal", action="store_true",
+                        help="focal + class-balanced weighting on the outcome heads")
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--device", default=None,
                         help="cpu, cuda, or auto (default: cuda when available)")
@@ -430,7 +529,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     torch.manual_seed(args.seed)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    train_rows = PointerRows(load_split(args.data, "train"), args.include_reads)
+    augmenter = None
+    if args.augment:
+        from ai.pointer_augment import Augmenter, load_defaults
+
+        kb, gazetteer = load_defaults()
+        augmenter = Augmenter(kb=kb, gazetteer=gazetteer)
+        print("augment %d per row  kb %s  gazetteer %s"
+              % (args.augment, "yes" if kb is not None else "no",
+                 "yes" if gazetteer is not None else "no"))
+    train_rows = PointerRows(load_split(args.data, "train"), args.include_reads,
+                             augment=args.augment, augmenter=augmenter)
+    # Held-out splits are never augmented: a paraphrase of a val row is still
+    # that row, and scoring it would report the memorised corpus as held-out.
     val_rows = PointerRows(load_split(args.data, "val"), args.include_reads)
     test_rows = PointerRows(load_split(args.data, "test"), args.include_reads)
     if args.limit:
@@ -447,7 +558,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                             collate_fn=collate)
     test_loader = DataLoader(test_rows, batch_size=args.batch, shuffle=False,
                              collate_fn=collate)
-    model = EntityPointer(hidden=args.hidden, layers=args.layers).to(device)
+    positives = (sum(item["moved"] for item in train_rows.items) / max(1, len(train_rows)),
+                 sum(item["progress"] for item in train_rows.items) / max(1, len(train_rows)))
+    model = EntityPointer(hidden=args.hidden, layers=args.layers,
+                          priors=positives if train_rows.items else None).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     pointer_loss = nn.CrossEntropyLoss()
     outcome_loss = nn.BCEWithLogitsLoss()
@@ -458,10 +572,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         for batch in train_loader:
             batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad()
-            scores, moved, progress = model(batch)
-            loss = pointer_loss(scores, batch["labels"])
-            loss = loss + 0.5 * outcome_loss(moved, batch["moved"])
-            loss = loss + 0.5 * outcome_loss(progress, batch["progress"])
+            if args.info_nce:
+                scores, moved, progress, entity, q = model(batch, return_embeddings=True)
+                loss = info_nce_loss(q, entity, batch["cand_mask"], batch["labels"],
+                                     temperature=args.temperature,
+                                     hard_negatives=args.hard_negatives)
+            else:
+                scores, moved, progress = model(batch)
+                loss = pointer_loss(scores, batch["labels"])
+            if args.focal:
+                # Balance at the square root of the complement: at a 0.1% base
+                # rate the raw complement (0.999) is a ~1000x positive weight and
+                # the head collapses onto false positives.
+                loss = loss + 0.5 * focal_bce(moved, batch["moved"], args.focal_gamma,
+                                              balance=math.sqrt(max(0.01, 1.0 - positives[0])))
+                loss = loss + 0.5 * focal_bce(progress, batch["progress"], args.focal_gamma,
+                                              balance=math.sqrt(max(0.01, 1.0 - positives[1])))
+            else:
+                loss = loss + 0.5 * outcome_loss(moved, batch["moved"])
+                loss = loss + 0.5 * outcome_loss(progress, batch["progress"])
             loss.backward()
             optimizer.step()
             total_loss += float(loss.item())
@@ -474,6 +603,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                "test_rows": len(test_rows), "history": history,
                "config": {"hidden": args.hidden, "layers": args.layers,
                           "include_reads": args.include_reads,
+                          "augment": args.augment, "info_nce": args.info_nce,
+                          "hard_negatives": args.hard_negatives,
+                          "temperature": args.temperature, "focal": args.focal,
+                          "priors": list(positives),
                           "vocab": VOCAB, "max_tokens": MAX_TOKENS,
                           "max_candidates": MAX_CANDIDATES}}
     if test_rows:

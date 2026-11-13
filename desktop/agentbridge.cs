@@ -8,6 +8,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using DofusFarm.Contracts;
+using DofusFarm.UI;
 
 namespace DofusFarm.Engine
 {
@@ -187,13 +189,16 @@ namespace DofusFarm.Engine
                 }
                 ThreadPool.QueueUserWorkItem(delegate(object state)
                 {
-                    try { Handle((TcpClient)state); }
-                    catch (Exception ex) { Log("[AGENT] request error: " + ex.Message); }
+                    // No blocking wait at the root of the chain: HandleAsync is fully
+                    // ConfigureAwait(false), and Guard owns its exception, so a slow
+                    // client window parks a task instead of a thread.
+                    UiDispatcher.Instance.Guard("AgentDirectiveBridge.Handle",
+                        delegate { return HandleAsync((TcpClient)state); });
                 }, client);
             }
         }
 
-        private void Handle(TcpClient client)
+        private async Task HandleAsync(TcpClient client)
         {
             using (client)
             using (NetworkStream stream = client.GetStream())
@@ -253,11 +258,25 @@ namespace DofusFarm.Engine
                     return;
                 }
 
-                string id = ExtractJsonString(body, "id");
-                string tool = ExtractJsonString(body, "tool");
-                string directive = ExtractJsonString(body, "directive");
-                string target = ExtractJsonString(body, "target_instance");
-                int slot = ExtractJsonInt(body, "target_slot", -1);
+                // Parse the envelope once, structurally, against the canonical
+                // schema. The old ExtractJsonString regexed the whole body, so a
+                // tool argument named "id" or "tool" could be returned as the
+                // envelope's own field -- a directive answered under another
+                // window's name with a success envelope around it.
+                BridgeDirective envelope;
+                List<string> parseErrors;
+                if (!BridgeDirective.TryParse(body, out envelope, out parseErrors))
+                {
+                    WriteResponse(stream, 400, FailureJson("",
+                        "invalid directive: " + string.Join("; ", parseErrors.ToArray())));
+                    return;
+                }
+
+                string id = envelope.Id ?? "";
+                string tool = envelope.Tool ?? "";
+                string directive = envelope.Directive ?? "";
+                string target = envelope.TargetInstance ?? "";
+                int slot = envelope.TargetSlot.HasValue ? (int)envelope.TargetSlot.Value : -1;
 
                 List<string> targets = ResolveTargets(target, slot);
                 if (targets.Count == 0)
@@ -269,7 +288,8 @@ namespace DofusFarm.Engine
                 string label = string.IsNullOrEmpty(tool) ? directive : tool;
                 if (targets.Count == 1)
                 {
-                    WriteResponse(stream, 200, RunOne(id, body, label, targets[0], true));
+                    WriteResponse(stream, 200,
+                        await RunOneAsync(id, body, label, targets[0], true).ConfigureAwait(false));
                     return;
                 }
 
@@ -277,8 +297,18 @@ namespace DofusFarm.Engine
                 // envelope and the caller gets them all, in order: one client being
                 // down or slow must not erase the answers of the others, and a
                 // "success" that only reached the first window would be a lie.
-                var answers = new List<string>();
-                foreach (string one in targets) answers.Add(RunOne(id, body, label, one, false));
+                // Dispatched concurrently across slots so one slow or hung WebView2
+                // does not block the other slots behind it.
+                var answers = new List<string>(targets.Count);
+                var tasks = new Task<string>[targets.Count];
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    string one = targets[i];
+                    tasks[i] = Task.Run(() => RunOneAsync(id, body, label, one, false));
+                }
+                string[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                for (int i = 0; i < results.Length; i++) answers.Add(results[i]);
+
                 WriteResponse(stream, 200, "{\"ok\":true,\"id\":" + JsonQuote(id)
                     + ",\"targets\":" + JsonQuote(string.Join(",", targets.ToArray()))
                     + ",\"results\":[" + string.Join(",", answers.ToArray()) + "]}");
@@ -333,12 +363,12 @@ namespace DofusFarm.Engine
         /// several named targets, quietly answering for a different window would put
         /// one character's result under another instance's name.
         /// </summary>
-        private string RunOne(string id, string body, string label, string target, bool allowFallback)
+        private async Task<string> RunOneAsync(string id, string body, string label, string target, bool allowFallback)
         {
             WebView2ClientForm form = _backend != null ? _backend.GetForm(target) : null;
             if (form == null || form.IsDisposed)
             {
-                // The caller's idea of the instance name can be stale — a slot was
+                // The caller's idea of the instance name can be stale -- a slot was
                 // restarted, or the panel remembers "dofus-05" while the only window
                 // open is "dofus-01". Refusing outright made that look like the
                 // client was down. If exactly one window is active, it is
@@ -372,7 +402,7 @@ namespace DofusFarm.Engine
                 + payloadLiteral + ",id:" + JsonQuote(id) + ",target:" + JsonQuote(target) + "}) "
                 + ": JSON.stringify({ok:false,error:'__agentDirectiveWithSnapshot missing'})";
             bool legacy = false;
-            string raw = RunOnForm(form, combined, 10000);
+            string raw = await RunOnFormAsync(form, combined, 10000).ConfigureAwait(false);
             if (raw == null)
             {
                 Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
@@ -386,14 +416,14 @@ namespace DofusFarm.Engine
                 legacy = true;
                 string script = "window.__agentDirective ? window.__agentDirective(" + body + ") "
                     + ": JSON.stringify({ok:false,error:'__agentDirective missing (mobile-disguise.js not loaded in this page)'})";
-                raw = RunOnForm(form, script, 8000);
+                raw = await RunOnFormAsync(form, script, 8000).ConfigureAwait(false);
                 if (raw == null)
                 {
                     Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
                     return FailureJson(id, "directive '" + label + "' timed out or the client page is not ready");
                 }
                 decoded = DecodeJsResult(raw);
-                string snapshot = CaptureSnapshot(form);
+                string snapshot = await CaptureSnapshotAsync(form).ConfigureAwait(false);
                 decoded = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
                     + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
                     + ",\"snapshot\":" + snapshot + "}";
@@ -424,12 +454,12 @@ namespace DofusFarm.Engine
         // the literal `null`. 2 s budget: building the snapshot is a pure object
         // read in the page, so a timeout means the page is wedged, not that the
         // snapshot is expensive.
-        private string CaptureSnapshot(WebView2ClientForm form)
+        private async Task<string> CaptureSnapshotAsync(WebView2ClientForm form)
         {
             try
             {
-                string raw = RunOnForm(form,
-                    "window.__agentSnapshot ? window.__agentSnapshot() : null", 2000);
+                string raw = await RunOnFormAsync(form,
+                    "window.__agentSnapshot ? window.__agentSnapshot() : null", 2000).ConfigureAwait(false);
                 if (raw == null) return "null";
                 string decoded = DecodeJsResult(raw);
                 return LooksLikeJson(decoded) ? decoded : "null";
@@ -440,36 +470,45 @@ namespace DofusFarm.Engine
             }
         }
 
-        private string RunOnForm(WebView2ClientForm form, string script, int timeoutMs)
+        /// <summary>
+        /// Run one script on the window's UI thread and wait at most `timeoutMs` for
+        /// its answer. The wait is on a task, not on a thread: the caller's chain is
+        /// ConfigureAwait(false) all the way down, so a wedged renderer leaves no
+        /// blocked UI thread behind and no .Result to deadlock on.
+        /// </summary>
+        private async Task<string> RunOnFormAsync(WebView2ClientForm form, string script, int timeoutMs)
         {
             TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
             try
             {
-                Action kick = delegate { KickScript(form, script, tcs); };
-                if (form.InvokeRequired && form.IsHandleCreated)
-                    form.BeginInvoke(kick);
-                else
-                    kick();
-            }
-            catch
-            {
-                return null;
-            }
-            if (!tcs.Task.Wait(timeoutMs)) return null;
-            return tcs.Task.Result;
-        }
-
-        private static async void KickScript(WebView2ClientForm form, string script, TaskCompletionSource<string> tcs)
-        {
-            try
-            {
-                string result = await form.ExecuteScriptAsync(script);
-                tcs.TrySetResult(result);
+                if (form == null || form.IsDisposed || !form.IsHandleCreated) return null;
+                UiDispatcher.Instance.Post("agentbridge.script", delegate
+                {
+                    // ExecuteScriptAsync must *start* on the thread that owns CoreWebView2.
+                    form.ExecuteScriptAsync(script).ContinueWith(delegate(Task<string> task)
+                    {
+                        if (task.Status == TaskStatus.RanToCompletion)
+                        {
+                            tcs.TrySetResult(task.Result);
+                        }
+                        else
+                        {
+                            Exception error = task.Exception != null ? task.Exception.GetBaseException() : null;
+                            tcs.TrySetResult("{\"ok\":false,\"error\":"
+                                + JsonQuote(error != null ? error.Message : "script failed") + "}");
+                        }
+                    }, TaskScheduler.Default);
+                });
             }
             catch (Exception ex)
             {
-                tcs.TrySetResult("{\"ok\":false,\"error\":" + JsonQuote(ex.Message) + "}");
+                Log("[AGENT] could not dispatch the script: " + ex.Message);
+                return null;
             }
+
+            Task finished = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+            if (finished != tcs.Task) return null;
+            return await tcs.Task.ConfigureAwait(false);
         }
 
         // ExecuteScriptAsync returns the JSON serialization of the script result.
@@ -664,8 +703,16 @@ namespace DofusFarm.Engine
             int count = 0;
             try { if (_backend != null) count = _backend.GetActiveInstanceIds().Count; }
             catch { }
-            return "{\"status\":\"ok\",\"service\":\"dofus-agent-bridge\",\"port\":" + _port
-                + ",\"instances\":" + count + ",\"time\":" + DateTimeOffset.UtcNow.ToUnixTimeSeconds() + "}";
+            // Encoded from the same schema the Python agent validates against, so a
+            // field rename cannot leave one side reading a document the other stopped
+            // writing.
+            BridgeHealth health = new BridgeHealth();
+            health.Status = "ok";
+            health.Service = "dofus-agent-bridge";
+            health.Port = _port;
+            health.Instances = count;
+            health.Time = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            return health.ToJson();
         }
 
         private static string FailureJson(string id, string error)
@@ -674,23 +721,6 @@ namespace DofusFarm.Engine
         }
 
         // -- minimal JSON helpers (payloads are machine-generated) ---------------
-
-        private static string ExtractJsonString(string json, string key)
-        {
-            if (string.IsNullOrEmpty(json)) return "";
-            Match m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
-            if (!m.Success) return "";
-            return UnescapeJson(m.Groups[1].Value);
-        }
-
-        private static int ExtractJsonInt(string json, string key, int fallback)
-        {
-            if (string.IsNullOrEmpty(json)) return fallback;
-            Match m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*(-?\\d+)");
-            if (!m.Success) return fallback;
-            int value;
-            return int.TryParse(m.Groups[1].Value, out value) ? value : fallback;
-        }
 
         private static string UnescapeJson(string text)
         {

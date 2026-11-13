@@ -149,9 +149,9 @@
       "missing": false,
       "path": "agent/autopilot.py",
       "source": "agent/autopilot.py",
-      "source_sha256": "a4bb6c34b22b5829d4e9ad2d2c207d51fe7e28716b7251954b9e5564f44c7af8",
+      "source_sha256": "0ee66eabed28163e69da805a9887dc032677432099f0ca74e55dd68a2e621f2c",
       "status": "sync",
-      "toolkit_sha256": "a4bb6c34b22b5829d4e9ad2d2c207d51fe7e28716b7251954b9e5564f44c7af8"
+      "toolkit_sha256": "0ee66eabed28163e69da805a9887dc032677432099f0ca74e55dd68a2e621f2c"
     },
     {
       "drift": false,
@@ -176,9 +176,18 @@
       "missing": false,
       "path": "agent/bridge.py",
       "source": "agent/bridge.py",
-      "source_sha256": "e8c29b5f79da115efa62984981391d77381082e7d6967ff253502637a2cdcb14",
+      "source_sha256": "f47966db04cf456c99d107320b439d3d49191c365df5551145fea0dc67fb3190",
       "status": "sync",
-      "toolkit_sha256": "e8c29b5f79da115efa62984981391d77381082e7d6967ff253502637a2cdcb14"
+      "toolkit_sha256": "f47966db04cf456c99d107320b439d3d49191c365df5551145fea0dc67fb3190"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "agent/calibration.py",
+      "source": "agent/calibration.py",
+      "source_sha256": "1ff02e07defc82d024907449b1cb22da9b280d7fffdf76dee774d3fa40d512f8",
+      "status": "sync",
+      "toolkit_sha256": "1ff02e07defc82d024907449b1cb22da9b280d7fffdf76dee774d3fa40d512f8"
     },
     {
       "drift": false,
@@ -275,9 +284,9 @@
       "missing": false,
       "path": "agent/executor.py",
       "source": "agent/executor.py",
-      "source_sha256": "193d8efb2cc4bf59241b0e57e91e9f6fe0a41d1484c35f3c93453d4c45e0d12d",
+      "source_sha256": "f5cc984d33a297e02b6e22e66cd030eb87d7e528415d261815e0367c270f861c",
       "status": "sync",
-      "toolkit_sha256": "193d8efb2cc4bf59241b0e57e91e9f6fe0a41d1484c35f3c93453d4c45e0d12d"
+      "toolkit_sha256": "f5cc984d33a297e02b6e22e66cd030eb87d7e528415d261815e0367c270f861c"
     },
     {
       "drift": false,
@@ -302,9 +311,9 @@
       "missing": false,
       "path": "agent/foresight.py",
       "source": "agent/foresight.py",
-      "source_sha256": "9d6d17c45115eff5c24ddede3ee211752eaa81d5828c8fd4861f5872d40d54d6",
+      "source_sha256": "d24c388ea5ced655391c13cc694a47a5a32e495b4e833a121bd8361ce4a75160",
       "status": "sync",
-      "toolkit_sha256": "9d6d17c45115eff5c24ddede3ee211752eaa81d5828c8fd4861f5872d40d54d6"
+      "toolkit_sha256": "d24c388ea5ced655391c13cc694a47a5a32e495b4e833a121bd8361ce4a75160"
     },
     {
       "drift": false,
@@ -410,9 +419,9 @@
       "missing": false,
       "path": "agent/planner_nn.py",
       "source": "agent/planner_nn.py",
-      "source_sha256": "c84867bba6ed1f052b9fe2debd80a4b9f304457c0d8e68be35fcc2ad67b685df",
+      "source_sha256": "372dbcd6f22b39a0336a6a4148e84e22daf5e3e99c6a39cdf0699ac54590dcec",
       "status": "sync",
-      "toolkit_sha256": "c84867bba6ed1f052b9fe2debd80a4b9f304457c0d8e68be35fcc2ad67b685df"
+      "toolkit_sha256": "372dbcd6f22b39a0336a6a4148e84e22daf5e3e99c6a39cdf0699ac54590dcec"
     },
     {
       "drift": false,
@@ -446,9 +455,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "83c545aee86b48c51a58b44245f6593b44cab0eb81c5fa0ac736552aab28ae81",
+      "source_sha256": "387f536b3cf3f15f3f9121293899366bc51c6976041a6721a38ef849af71e5fd",
       "status": "sync",
-      "toolkit_sha256": "83c545aee86b48c51a58b44245f6593b44cab0eb81c5fa0ac736552aab28ae81"
+      "toolkit_sha256": "387f536b3cf3f15f3f9121293899366bc51c6976041a6721a38ef849af71e5fd"
     },
     {
       "drift": false,
@@ -527,9 +536,9 @@
       "missing": false,
       "path": "agent/test_brain_daemon.py",
       "source": "agent/test_brain_daemon.py",
-      "source_sha256": "d994351a826096ac3576ec1965610b232dfbffae8492bb4692d6088088c73ca7",
+      "source_sha256": "4b91adf592bbe4ff3ec483d8de8ee611a84089c211d9f65d4ab0e554a6d74f7f",
       "status": "sync",
-      "toolkit_sha256": "d994351a826096ac3576ec1965610b232dfbffae8492bb4692d6088088c73ca7"
+      "toolkit_sha256": "4b91adf592bbe4ff3ec483d8de8ee611a84089c211d9f65d4ab0e554a6d74f7f"
     },
     {
       "drift": false,
@@ -539,6 +548,15 @@
       "source_sha256": "f9e3505a8192ff999693ecc69f660ae476d4e945e8dcd7ee7559ac320e3bf662",
       "status": "sync",
       "toolkit_sha256": "f9e3505a8192ff999693ecc69f660ae476d4e945e8dcd7ee7559ac320e3bf662"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "agent/test_calibration.py",
+      "source": "agent/test_calibration.py",
+      "source_sha256": "909f2b74eb0836f38bdc9d4c1e15b70813a49150c40ebf07f2a142d469dea8b8",
+      "status": "sync",
+      "toolkit_sha256": "909f2b74eb0836f38bdc9d4c1e15b70813a49150c40ebf07f2a142d469dea8b8"
     },
     {
       "drift": false,
@@ -750,6 +768,33 @@
     {
       "drift": false,
       "missing": false,
+      "path": "ai/capability_head.py",
+      "source": "ai/capability_head.py",
+      "source_sha256": "c34018e5e84ddc1a1850240c4be8c636ed9ce1f47e6cbae4150a6a1d81c0b389",
+      "status": "sync",
+      "toolkit_sha256": "c34018e5e84ddc1a1850240c4be8c636ed9ce1f47e6cbae4150a6a1d81c0b389"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "ai/capability_torch.py",
+      "source": "ai/capability_torch.py",
+      "source_sha256": "1a24268b7a02ba8974221468cd7ef0397a890854db9c84dfa982eb28325c41e6",
+      "status": "sync",
+      "toolkit_sha256": "1a24268b7a02ba8974221468cd7ef0397a890854db9c84dfa982eb28325c41e6"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "ai/conformal.py",
+      "source": "ai/conformal.py",
+      "source_sha256": "63a5f20229edc55ca814d20189d324266c8d90698ec51f654ac78da7592689d8",
+      "status": "sync",
+      "toolkit_sha256": "63a5f20229edc55ca814d20189d324266c8d90698ec51f654ac78da7592689d8"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "ai/data_splits.py",
       "source": "ai/data_splits.py",
       "source_sha256": "6e775f61a595b9bc89ba1e38d4df322ccd160afaa7c52c28034809ad22df7083",
@@ -851,9 +896,9 @@
       "missing": false,
       "path": "ai/guard_policy.py",
       "source": "ai/guard_policy.py",
-      "source_sha256": "e39688760e3582c67e175d2c71f66ae9b87431ba22627838d42557f0b66de614",
+      "source_sha256": "8618010e11650c24b7d92b9a692c2dac7c01fe67382afdf1d609830a21047a99",
       "status": "sync",
-      "toolkit_sha256": "e39688760e3582c67e175d2c71f66ae9b87431ba22627838d42557f0b66de614"
+      "toolkit_sha256": "8618010e11650c24b7d92b9a692c2dac7c01fe67382afdf1d609830a21047a99"
     },
     {
       "drift": false,
@@ -881,6 +926,15 @@
       "source_sha256": "ac13c4470f4c0e65f517c9296ef3e672f1f0d668c83d60a5722f4b04745e6772",
       "status": "sync",
       "toolkit_sha256": "ac13c4470f4c0e65f517c9296ef3e672f1f0d668c83d60a5722f4b04745e6772"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "ai/pointer_augment.py",
+      "source": "ai/pointer_augment.py",
+      "source_sha256": "81d07077c665938f98582d73dcbfbf6869a0f20e367c905a935780ee3149962b",
+      "status": "sync",
+      "toolkit_sha256": "81d07077c665938f98582d73dcbfbf6869a0f20e367c905a935780ee3149962b"
     },
     {
       "drift": false,
@@ -939,6 +993,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "ai/test_capability_head.py",
+      "source": "ai/test_capability_head.py",
+      "source_sha256": "9c89b8d180d6069165170201795617546b6af0ec702663d1981c96bbb4a8d45b",
+      "status": "sync",
+      "toolkit_sha256": "9c89b8d180d6069165170201795617546b6af0ec702663d1981c96bbb4a8d45b"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "ai/test_cause_head.py",
       "source": "ai/test_cause_head.py",
       "source_sha256": "fe748c424afa2956688e711fe953f7b0d859410750e4619ee31e1b147c6f847f",
@@ -957,6 +1020,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "ai/test_conformal.py",
+      "source": "ai/test_conformal.py",
+      "source_sha256": "8d374e574e27af480871afcd4ee9f73a14adef29c5379bce5990cd4aeb9ba945",
+      "status": "sync",
+      "toolkit_sha256": "8d374e574e27af480871afcd4ee9f73a14adef29c5379bce5990cd4aeb9ba945"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "ai/test_egress.py",
       "source": "ai/test_egress.py",
       "source_sha256": "25b29e3c41a693bc3c7765ea011c1b4961fbe8e0fc5e78277e8e9b8bc50e25e3",
@@ -971,6 +1043,15 @@
       "source_sha256": "713645754e788144149ee48cf01869fb5b6e4da48b6e92c0957091016be81346",
       "status": "sync",
       "toolkit_sha256": "713645754e788144149ee48cf01869fb5b6e4da48b6e92c0957091016be81346"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "ai/test_pointer_train.py",
+      "source": "ai/test_pointer_train.py",
+      "source_sha256": "e4006ee331bba0d2f129614965e98c47ad8f488e1e0e1a9c0b6362a49d87bdc5",
+      "status": "sync",
+      "toolkit_sha256": "e4006ee331bba0d2f129614965e98c47ad8f488e1e0e1a9c0b6362a49d87bdc5"
     },
     {
       "drift": false,
@@ -1013,9 +1094,9 @@
       "missing": false,
       "path": "ai/train_entity_pointer.py",
       "source": "ai/train_entity_pointer.py",
-      "source_sha256": "d8c1b691aed89fdd0a89f30f9639586d0263cc2f5b449bba01f03e30fb91d64d",
+      "source_sha256": "09e6f41ae9bd845966dbd81dfe66c6fd1e0ee32283891ba4f20a1bf14fed60ae",
       "status": "sync",
-      "toolkit_sha256": "d8c1b691aed89fdd0a89f30f9639586d0263cc2f5b449bba01f03e30fb91d64d"
+      "toolkit_sha256": "09e6f41ae9bd845966dbd81dfe66c6fd1e0ee32283891ba4f20a1bf14fed60ae"
     },
     {
       "drift": false,
@@ -1058,18 +1139,18 @@
       "missing": false,
       "path": "ai/train_stacker.py",
       "source": "ai/train_stacker.py",
-      "source_sha256": "3724c1e69df9bb6e38ed29503389a6aee422b759e4c4ffda93669ac1b39b0e12",
+      "source_sha256": "949f95dec5ff2c4c9411bd664b09a05c6ead79b063ae7750bfbbd08f0fa1c2dd",
       "status": "sync",
-      "toolkit_sha256": "3724c1e69df9bb6e38ed29503389a6aee422b759e4c4ffda93669ac1b39b0e12"
+      "toolkit_sha256": "949f95dec5ff2c4c9411bd664b09a05c6ead79b063ae7750bfbbd08f0fa1c2dd"
     },
     {
       "drift": false,
       "missing": false,
       "path": "ai/train_tool_policy.py",
       "source": "ai/train_tool_policy.py",
-      "source_sha256": "25c7387e2c268f3da687ec5a19f8d8e4080a1ba3ed5f44720f1299f0bcc55d74",
+      "source_sha256": "68e187b49b8c086065e8a1a68db9bc695f9af0721eb19cd37208ce4ae68db40a",
       "status": "sync",
-      "toolkit_sha256": "25c7387e2c268f3da687ec5a19f8d8e4080a1ba3ed5f44720f1299f0bcc55d74"
+      "toolkit_sha256": "68e187b49b8c086065e8a1a68db9bc695f9af0721eb19cd37208ce4ae68db40a"
     },
     {
       "drift": false,
@@ -1121,9 +1202,9 @@
       "missing": false,
       "path": "combat/board_pca.py",
       "source": "combat/board_pca.py",
-      "source_sha256": "37c991c67dcccbe1ab1f961403d0201c8863175b952a2289251f6baffa5f380f",
+      "source_sha256": "13fcda357d6cd2ceef3e35876780851f5119610c1f93c6fa4f557bcb0b492816",
       "status": "sync",
-      "toolkit_sha256": "37c991c67dcccbe1ab1f961403d0201c8863175b952a2289251f6baffa5f380f"
+      "toolkit_sha256": "13fcda357d6cd2ceef3e35876780851f5119610c1f93c6fa4f557bcb0b492816"
     },
     {
       "drift": false,
@@ -1373,18 +1454,18 @@
       "missing": false,
       "path": "combat/episodic_memory.py",
       "source": "combat/episodic_memory.py",
-      "source_sha256": "00da068656009a451fcc639621ffaa8e579adf3bdc1db32bacf119703de4eedb",
+      "source_sha256": "b154ff0f31385703a94b52b1473852979db247034be4b88a6b1d4033246079fa",
       "status": "sync",
-      "toolkit_sha256": "00da068656009a451fcc639621ffaa8e579adf3bdc1db32bacf119703de4eedb"
+      "toolkit_sha256": "b154ff0f31385703a94b52b1473852979db247034be4b88a6b1d4033246079fa"
     },
     {
       "drift": false,
       "missing": false,
       "path": "combat/fight_estimate.py",
       "source": "combat/fight_estimate.py",
-      "source_sha256": "379fbe25212860397c4688a2738be3afe6f4091f66f95651346d2a771a8ed81f",
+      "source_sha256": "a25d0d65f0195a649b83c815f4897ba2c7f239c14240c5545065508d290530dc",
       "status": "sync",
-      "toolkit_sha256": "379fbe25212860397c4688a2738be3afe6f4091f66f95651346d2a771a8ed81f"
+      "toolkit_sha256": "a25d0d65f0195a649b83c815f4897ba2c7f239c14240c5545065508d290530dc"
     },
     {
       "drift": false,
@@ -1407,6 +1488,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "combat/grid_export.py",
+      "source": "combat/grid_export.py",
+      "source_sha256": "880612e01b5f909e091368414affe401b9e0fc5df030a4b940e4a126bfb313e9",
+      "status": "sync",
+      "toolkit_sha256": "880612e01b5f909e091368414affe401b9e0fc5df030a4b940e4a126bfb313e9"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "combat/grid_infer.py",
       "source": "combat/grid_infer.py",
       "source_sha256": "bef94ab2a2ef52e62dae1a26f75a47556ae6ee5c14b5c5536099b136e5c909bb",
@@ -1418,9 +1508,9 @@
       "missing": false,
       "path": "combat/grid_model.py",
       "source": "combat/grid_model.py",
-      "source_sha256": "1ecad810ef3c0e316d9420c835840a598ecca8157896bc702c4329f714428c7c",
+      "source_sha256": "604a7502347c6945eabccc3869ea83eead86a5d01f1acd0d5a7ae1949d228379",
       "status": "sync",
-      "toolkit_sha256": "1ecad810ef3c0e316d9420c835840a598ecca8157896bc702c4329f714428c7c"
+      "toolkit_sha256": "604a7502347c6945eabccc3869ea83eead86a5d01f1acd0d5a7ae1949d228379"
     },
     {
       "drift": false,
@@ -1436,18 +1526,18 @@
       "missing": false,
       "path": "combat/grid_synth.py",
       "source": "combat/grid_synth.py",
-      "source_sha256": "0d8e08125a4337687b80afcbd5a51b1d29c4edca5c9c60e89bfb09c145b183bf",
+      "source_sha256": "d4a0f8da6e9424ccfa58b6c5e58fdb83cd182bafa33826438fe797113f26e2e5",
       "status": "sync",
-      "toolkit_sha256": "0d8e08125a4337687b80afcbd5a51b1d29c4edca5c9c60e89bfb09c145b183bf"
+      "toolkit_sha256": "d4a0f8da6e9424ccfa58b6c5e58fdb83cd182bafa33826438fe797113f26e2e5"
     },
     {
       "drift": false,
       "missing": false,
       "path": "combat/grid_train.py",
       "source": "combat/grid_train.py",
-      "source_sha256": "a96018b43400fcb9cdb6bee45315168322c349dd4c5aa96c77335f4577f924bd",
+      "source_sha256": "3ab0b0da87d7f6406b4237ba4a33c4f3f3b6ef5a469277647aba1fd7c7a1f139",
       "status": "sync",
-      "toolkit_sha256": "a96018b43400fcb9cdb6bee45315168322c349dd4c5aa96c77335f4577f924bd"
+      "toolkit_sha256": "3ab0b0da87d7f6406b4237ba4a33c4f3f3b6ef5a469277647aba1fd7c7a1f139"
     },
     {
       "drift": false,
@@ -1463,9 +1553,9 @@
       "missing": false,
       "path": "combat/live_learn.py",
       "source": "combat/live_learn.py",
-      "source_sha256": "4aff422de48e578964b3c5b39f6c44bc258f0a1d7304425482caa0fa09d2ef4a",
+      "source_sha256": "d6a7cb880a745b823e4ce4ec5a248203256ef83fdddf0343b60c39266d235e08",
       "status": "sync",
-      "toolkit_sha256": "4aff422de48e578964b3c5b39f6c44bc258f0a1d7304425482caa0fa09d2ef4a"
+      "toolkit_sha256": "d6a7cb880a745b823e4ce4ec5a248203256ef83fdddf0343b60c39266d235e08"
     },
     {
       "drift": false,
@@ -1526,9 +1616,9 @@
       "missing": false,
       "path": "combat/online_learn.py",
       "source": "combat/online_learn.py",
-      "source_sha256": "c18c609b7ae4b4e546726e28a3b79754b9064369e45555ae82b0070d4bb44f43",
+      "source_sha256": "962770a24683e29b1648fee75cf1f9c0f72294a1f352745fba9ba44785c3f7c1",
       "status": "sync",
-      "toolkit_sha256": "c18c609b7ae4b4e546726e28a3b79754b9064369e45555ae82b0070d4bb44f43"
+      "toolkit_sha256": "962770a24683e29b1648fee75cf1f9c0f72294a1f352745fba9ba44785c3f7c1"
     },
     {
       "drift": false,
@@ -1571,9 +1661,9 @@
       "missing": false,
       "path": "combat/recursive_reasoner.py",
       "source": "combat/recursive_reasoner.py",
-      "source_sha256": "88ef5221c9ef10e464319a71fe392e0eb08cc93f359b2ee713fb4a4bb98529bc",
+      "source_sha256": "30edc69b80ba413efeb4aa635f4c49782dfbfee3b1766b45840926fcb98f68ad",
       "status": "sync",
-      "toolkit_sha256": "88ef5221c9ef10e464319a71fe392e0eb08cc93f359b2ee713fb4a4bb98529bc"
+      "toolkit_sha256": "30edc69b80ba413efeb4aa635f4c49782dfbfee3b1766b45840926fcb98f68ad"
     },
     {
       "drift": false,
@@ -1601,6 +1691,24 @@
       "source_sha256": "aef27f8bd2ae4d55dc02cf2de53c72c30035309b66b83f1b0dd9150aa6881fe9",
       "status": "sync",
       "toolkit_sha256": "aef27f8bd2ae4d55dc02cf2de53c72c30035309b66b83f1b0dd9150aa6881fe9"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "combat/test_battle_solver_fuzz.py",
+      "source": "combat/test_battle_solver_fuzz.py",
+      "source_sha256": "7b1e4ad082d3abeb27bade1199990e5f5ed4e32645530027d0e475684002122d",
+      "status": "sync",
+      "toolkit_sha256": "7b1e4ad082d3abeb27bade1199990e5f5ed4e32645530027d0e475684002122d"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "combat/test_board_pca_stream.py",
+      "source": "combat/test_board_pca_stream.py",
+      "source_sha256": "eaba67c1b8422a3aa5569ddd5a4bacc9d17641f8e1fcf7ab3217e2694e254484",
+      "status": "sync",
+      "toolkit_sha256": "eaba67c1b8422a3aa5569ddd5a4bacc9d17641f8e1fcf7ab3217e2694e254484"
     },
     {
       "drift": false,
@@ -1650,6 +1758,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "combat/test_episodic_memory.py",
+      "source": "combat/test_episodic_memory.py",
+      "source_sha256": "8efbed0f1d0deafc6eb52ec0b03446e000ce8c5c3fbe55c1778da7cb7fb92906",
+      "status": "sync",
+      "toolkit_sha256": "8efbed0f1d0deafc6eb52ec0b03446e000ce8c5c3fbe55c1778da7cb7fb92906"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "combat/test_grid_dataset.py",
       "source": "combat/test_grid_dataset.py",
       "source_sha256": "9fdbd1bfb85062e19cfc5db89318814701ec63ea82b812b2da09f1a585336798",
@@ -1664,6 +1781,24 @@
       "source_sha256": "9981c48c1bb4b06b4dc8f03376b54ec29d4efb88e3df83d8bdd22a81faa02faf",
       "status": "sync",
       "toolkit_sha256": "9981c48c1bb4b06b4dc8f03376b54ec29d4efb88e3df83d8bdd22a81faa02faf"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "combat/test_grid_prune.py",
+      "source": "combat/test_grid_prune.py",
+      "source_sha256": "c8fac5ecc387777aab31a0f3027def19b405fed557e291ec5384a31082bdafa7",
+      "status": "sync",
+      "toolkit_sha256": "c8fac5ecc387777aab31a0f3027def19b405fed557e291ec5384a31082bdafa7"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "combat/test_grid_synth.py",
+      "source": "combat/test_grid_synth.py",
+      "source_sha256": "21e3a93b3e3b2b85c756c593fae2c833dd6e3085faff016cb546115e15deb499",
+      "status": "sync",
+      "toolkit_sha256": "21e3a93b3e3b2b85c756c593fae2c833dd6e3085faff016cb546115e15deb499"
     },
     {
       "drift": false,
@@ -1758,6 +1893,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "combat/test_shadow_differential.py",
+      "source": "combat/test_shadow_differential.py",
+      "source_sha256": "4ac54ea5d80848ab2b0d65e085c49635d9cf386d4f56f810d5728016b610dd0c",
+      "status": "sync",
+      "toolkit_sha256": "4ac54ea5d80848ab2b0d65e085c49635d9cf386d4f56f810d5728016b610dd0c"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "combat/test_side_swap.py",
       "source": "combat/test_side_swap.py",
       "source_sha256": "1a9a6a2ecd7b1ff0f02c062911f4956de5332e96b036479260104e0963dd5667",
@@ -1839,11 +1983,29 @@
     {
       "drift": false,
       "missing": false,
+      "path": "data/evidence/live_sessions.jsonl",
+      "source": "data/evidence/live_sessions.jsonl",
+      "source_sha256": "086bc63f8e5c112719706731c91b3803c286e9ec4b4a7e3b99662e5d74324f2a",
+      "status": "sync",
+      "toolkit_sha256": "086bc63f8e5c112719706731c91b3803c286e9ec4b4a7e3b99662e5d74324f2a"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "data/maps/_index.json",
       "source": null,
       "source_sha256": null,
       "status": "pinned",
-      "toolkit_sha256": "911a4e148d724ff230b340caa2b6f2597249b6e1a3e14c01567694c29804e046"
+      "toolkit_sha256": "f91322dc904aa4df61a306cbc45e2f4406421c91817afa70dbc9747d36ea3bbe"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "data/session_closes.jsonl",
+      "source": "data/session_closes.jsonl",
+      "source_sha256": "ac4a6d253662e2d68042455312477eddf10d9c231d72e9a37d52fd663acb7aa4",
+      "status": "sync",
+      "toolkit_sha256": "ac4a6d253662e2d68042455312477eddf10d9c231d72e9a37d52fd663acb7aa4"
     },
     {
       "drift": false,
@@ -2381,9 +2543,9 @@
       "missing": false,
       "path": "tools/mutate_cause_gate.py",
       "source": "tools/mutate_cause_gate.py",
-      "source_sha256": "eedddf649c4790911edf531a0bebfa9cc537cb0ab1d6c8a505f9c53209d6e6c1",
+      "source_sha256": "94164703e1229ea803e5e9b4ca1aaa84ae8dbd97c293c2d3c11cc410d5294970",
       "status": "sync",
-      "toolkit_sha256": "eedddf649c4790911edf531a0bebfa9cc537cb0ab1d6c8a505f9c53209d6e6c1"
+      "toolkit_sha256": "94164703e1229ea803e5e9b4ca1aaa84ae8dbd97c293c2d3c11cc410d5294970"
     },
     {
       "drift": false,
@@ -2550,6 +2712,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "tools/storage_tool.py",
+      "source": "tools/storage_tool.py",
+      "source_sha256": "6388edeef036a75131acbc619b08f6222d5cf1c689b65b5ad74c73bd92bb7f68",
+      "status": "sync",
+      "toolkit_sha256": "6388edeef036a75131acbc619b08f6222d5cf1c689b65b5ad74c73bd92bb7f68"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "tools/stratified_adjust.py",
       "source": "tools/stratified_adjust.py",
       "source_sha256": "ae9e8a7de95a86ec10b001e925c9b4293f9eb9c50be32f81a54e6670c31475b0",
@@ -2561,9 +2732,9 @@
       "missing": false,
       "path": "tools/sync_kaggle_toolkit.py",
       "source": "tools/sync_kaggle_toolkit.py",
-      "source_sha256": "ae3ab51583f375f1930df02ac22dd5c6586108982f45d81ed498b937db4b14c4",
+      "source_sha256": "18ba68c0d421e69f7fbe67717e5e64f66c9090bab36b54be358c5ba756a23817",
       "status": "sync",
-      "toolkit_sha256": "ae3ab51583f375f1930df02ac22dd5c6586108982f45d81ed498b937db4b14c4"
+      "toolkit_sha256": "18ba68c0d421e69f7fbe67717e5e64f66c9090bab36b54be358c5ba756a23817"
     },
     {
       "drift": false,
@@ -2573,6 +2744,15 @@
       "source_sha256": "8c66d39bcf6de3d3516f3d40e123b43b4c84899ecc331fa5d0989ce39be5cd62",
       "status": "sync",
       "toolkit_sha256": "8c66d39bcf6de3d3516f3d40e123b43b4c84899ecc331fa5d0989ce39be5cd62"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "tools/test_contracts.py",
+      "source": "tools/test_contracts.py",
+      "source_sha256": "f90f1f1688969bc62d0d640311462666afb33e1b23edbf1a61c8f6d84c7b0210",
+      "status": "sync",
+      "toolkit_sha256": "f90f1f1688969bc62d0d640311462666afb33e1b23edbf1a61c8f6d84c7b0210"
     },
     {
       "drift": false,
@@ -2746,7 +2926,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-13T03:28:32.559355+00:00",
+  "generated_at": "2026-11-13T05:58:28.101775+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

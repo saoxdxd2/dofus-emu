@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using DofusFarm.UI;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -264,6 +265,17 @@ namespace DofusFarm.Engine
                 return await _webView.CoreWebView2.ExecuteScriptAsync(script);
             }
             return null;
+        }
+
+        /// <summary>
+        /// Every diagnostic line this form writes goes through one batching sink: the
+        /// dispatcher collects a frame's lines and hands them over at ~30 Hz, so a
+        /// directive that logs 200 lines costs one UI callback instead of 200 -- and
+        /// the order the lines were produced in is the order they are written.
+        /// </summary>
+        private void LogLine(string message)
+        {
+            UiDispatcher.Instance.Log(_logCallback, message);
         }
 
         // Host-performed guest token exchange result. The game's own cross-site
@@ -642,11 +654,11 @@ namespace DofusFarm.Engine
                     }
                     try { File.Delete(Path.Combine(_userDataDir, "account.identity")); } catch { }
                     try { File.WriteAllText(cleared, DateTime.UtcNow.ToString("o")); } catch { }
-                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Cleared shared session storage once; a fresh guest account will be registered", _instanceId));
+                    LogLine(string.Format("[{0}] [ACCOUNT GUARD] Cleared shared session storage once; a fresh guest account will be registered", _instanceId));
                 }
                 else
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Fresh-identity mode active; pool seeding stays disabled for this instance", _instanceId));
+                    LogLine(string.Format("[{0}] [ACCOUNT GUARD] Fresh-identity mode active; pool seeding stays disabled for this instance", _instanceId));
                 }
             }
             catch { }
@@ -697,7 +709,7 @@ namespace DofusFarm.Engine
             // Initialization Error" with no hint about the apartment.
             if (!DofusFarm.UI.UiThread.OnUiThread)
             {
-                _logCallback?.Invoke(string.Format(
+                LogLine(string.Format(
                     "[{0}] WebView2 init reached a {1} thread; moving it to the UI thread.",
                     _instanceId, DofusFarm.UI.UiThread.Apartment()));
                 DofusFarm.UI.UiThread.Post(delegate { var ignored = StartAsync(); });
@@ -706,7 +718,7 @@ namespace DofusFarm.Engine
 
             try
             {
-                _logCallback?.Invoke(string.Format("[{0}] Preparing WebView2 profile at: {1}", _instanceId, _userDataDir));
+                LogLine(string.Format("[{0}] Preparing WebView2 profile at: {1}", _instanceId, _userDataDir));
                 Directory.CreateDirectory(_userDataDir);
 
                 // Resolve the standalone bundle root once; used for the virtual
@@ -786,11 +798,11 @@ namespace DofusFarm.Engine
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":5}");
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setEmitTouchEventsForMouse", "{\"enabled\":true,\"configuration\":\"mobile\"}");
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.setCacheDisabled", "{\"cacheDisabled\":false}");
-                    _logCallback?.Invoke(string.Format("[{0}] Enabled native mobile touch emulation; HTTP cache active (versioned asset URLs keep it safe).", _instanceId));
+                    LogLine(string.Format("[{0}] Enabled native mobile touch emulation; HTTP cache active (versioned asset URLs keep it safe).", _instanceId));
                 }
                 catch (Exception ex)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] Touch emulation setup warning: {1}", _instanceId, ex.Message));
+                    LogLine(string.Format("[{0}] Touch emulation setup warning: {1}", _instanceId, ex.Message));
                 }
 
                 BrowserProcessId = (int)_webView.CoreWebView2.BrowserProcessId;
@@ -813,7 +825,7 @@ namespace DofusFarm.Engine
                 // 0. Ensure dynamic version is resolved
                 if (string.IsNullOrEmpty(_options.AppVersion))
                 {
-                    var vi = DynamicVersionResolver.ResolveVersion(null, false, msg => _logCallback?.Invoke(msg));
+                    var vi = DynamicVersionResolver.ResolveVersion(null, false, msg => LogLine(msg));
                     _options.AppVersion = vi.AppVersion;
                     _options.BuildVersion = vi.BuildVersion;
                     _options.VersionCode = vi.VersionCode;
@@ -829,7 +841,7 @@ namespace DofusFarm.Engine
                 if (!string.IsNullOrEmpty(_options.DisguiseScript))
                 {
                     await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(_options.DisguiseScript);
-                    _logCallback?.Invoke(string.Format("[{0}] Registered mobile spoofing disguise script in CoreWebView2.", _instanceId));
+                    LogLine(string.Format("[{0}] Registered mobile spoofing disguise script in CoreWebView2.", _instanceId));
                 }
 
                 // 3. Synchronously inject Cordova compatibility polyfill
@@ -859,7 +871,7 @@ namespace DofusFarm.Engine
                     }
                     else if (acc.HasValue)
                     {
-                        _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Pool account {1} already belongs to another instance profile; keeping this profile's own identity", _instanceId, acc.Value.Key));
+                        LogLine(string.Format("[{0}] [ACCOUNT GUARD] Pool account {1} already belongs to another instance profile; keeping this profile's own identity", _instanceId, acc.Value.Key));
                     }
                 }
 
@@ -1026,7 +1038,7 @@ namespace DofusFarm.Engine
                 catch { }
                 if (manualLogin)
                 {
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] manual-login.flag present: skipping credential seeding and auto-login",
                         _instanceId));
                     // Clear anything the profile still carries that belongs to a previous
@@ -1073,17 +1085,17 @@ namespace DofusFarm.Engine
                 // identity was pushed into a session the user was signing into by hand.
                 // That contradiction sent a debugging session down the wrong path.
                 if (manualLogin)
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] manual-login: no credentials injected; any guest identity or HAAPI key from a previous exit was cleared",
                         _instanceId));
                 else if (oauthLogin)
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] oauth-login: pool seeding skipped; keeping the profile's saved OAuth identity",
                         _instanceId));
                 else if (hasSeedAccount)
-                    _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
+                    LogLine(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
                 else
-                    _logCallback?.Invoke(string.Format("[{0}] Registered guest auto-login (profile keeps its own identity)", _instanceId));
+                    LogLine(string.Format("[{0}] Registered guest auto-login (profile keeps its own identity)", _instanceId));
 
                 // 3b. CDN relay: expose the local relay config, then inject the
                 // shim that rewrites CDN asset URLs through it. Inert when no
@@ -1099,11 +1111,11 @@ namespace DofusFarm.Engine
                     Directory.CreateDirectory(mirrorDir);
                     _webView.CoreWebView2.SetVirtualHostNameToFolderMapping("assets.local", mirrorDir, CoreWebView2HostResourceAccessKind.Allow);
                     cacheBase = "https://assets.local/";
-                    _logCallback?.Invoke(string.Format("[{0}] Mapped asset mirror https://assets.local/ -> {1}", _instanceId, mirrorDir));
+                    LogLine(string.Format("[{0}] Mapped asset mirror https://assets.local/ -> {1}", _instanceId, mirrorDir));
                 }
                 catch (Exception mirrorEx)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] Asset mirror mapping warning: {1}", _instanceId, mirrorEx.Message));
+                    LogLine(string.Format("[{0}] Asset mirror mapping warning: {1}", _instanceId, mirrorEx.Message));
                 }
                 // The boot stamp is the bundle's identity, handed to the page so the canary
                 // answer can name the exact build it judged. Without it the page would have to
@@ -1128,12 +1140,12 @@ namespace DofusFarm.Engine
                     if (File.Exists(cdnShimPath))
                     {
                         await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(File.ReadAllText(cdnShimPath));
-                        _logCallback?.Invoke(string.Format("[{0}] Registered CDN relay shim (relay port: {1}).", _instanceId, _options.ProxyPort));
+                        LogLine(string.Format("[{0}] Registered CDN relay shim (relay port: {1}).", _instanceId, _options.ProxyPort));
                     }
                 }
                 catch (Exception shimEx)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] CDN relay shim injection warning: {1}", _instanceId, shimEx.Message));
+                    LogLine(string.Format("[{0}] CDN relay shim injection warning: {1}", _instanceId, shimEx.Message));
                 }
 
                 // 3c. wizAssets local-file layer: the official mobile client
@@ -1146,19 +1158,19 @@ namespace DofusFarm.Engine
                     if (File.Exists(wizShimPath))
                     {
                         await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(File.ReadAllText(wizShimPath));
-                        _logCallback?.Invoke(string.Format("[{0}] Registered wizAssets local-file shim.", _instanceId));
+                        LogLine(string.Format("[{0}] Registered wizAssets local-file shim.", _instanceId));
                     }
                 }
                 catch (Exception wizEx)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] wizAssets shim injection warning: {1}", _instanceId, wizEx.Message));
+                    LogLine(string.Format("[{0}] wizAssets shim injection warning: {1}", _instanceId, wizEx.Message));
                 }
 
                 // 4. Map virtual origin https://dofus.local/ to standalone game bundle
                 if (Directory.Exists(clientDir))
                 {
                     _webView.CoreWebView2.SetVirtualHostNameToFolderMapping("dofus.local", clientDir, CoreWebView2HostResourceAccessKind.Allow);
-                    _logCallback?.Invoke(string.Format("[{0}] Mapped virtual origin https://dofus.local/ -> {1}", _instanceId, clientDir));
+                    LogLine(string.Format("[{0}] Mapped virtual origin https://dofus.local/ -> {1}", _instanceId, clientDir));
                 }
 
                 // Wire event handlers
@@ -1178,7 +1190,7 @@ namespace DofusFarm.Engine
                 }
                 catch (Exception filtEx)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] CDN filter registration warning: {1}", _instanceId, filtEx.Message));
+                    LogLine(string.Format("[{0}] CDN filter registration warning: {1}", _instanceId, filtEx.Message));
                 }
                 _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
@@ -1194,7 +1206,7 @@ namespace DofusFarm.Engine
                 }
                 catch (Exception authFiltEx)
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] AUTH filter registration warning: {1}", _instanceId, authFiltEx.Message));
+                    LogLine(string.Format("[{0}] AUTH filter registration warning: {1}", _instanceId, authFiltEx.Message));
                 }
                 _webView.CoreWebView2.WebResourceResponseReceived += OnAuthNetResponse;
 
@@ -1217,7 +1229,7 @@ namespace DofusFarm.Engine
                     ApplyAutoZoom();
                 }
 
-                _logCallback?.Invoke(string.Format("[{0}] WebView2 Core initialized successfully (Version: {1}, Browser PID: {2})",
+                LogLine(string.Format("[{0}] WebView2 Core initialized successfully (Version: {1}, Browser PID: {2})",
                     _instanceId, env.BrowserVersionString, BrowserProcessId));
 
                 // Navigate to target
@@ -1261,7 +1273,7 @@ namespace DofusFarm.Engine
                         targetUrl += string.Format("{0}bundle={1}", sep, bundleStamp);
                     }
 
-                    _logCallback?.Invoke(string.Format("[{0}] Navigating to: {1}", _instanceId, targetUrl));
+                    LogLine(string.Format("[{0}] Navigating to: {1}", _instanceId, targetUrl));
                     // Background: a manifest check must never delay the first paint,
                     // and a 403 from the CDN must not stall navigation either.
                     var updaterLog = _logCallback;
@@ -1276,7 +1288,7 @@ namespace DofusFarm.Engine
             catch (Exception ex)
             {
                 IsReady = false;
-                _logCallback?.Invoke(string.Format("[{0}] WebView2 Initialization Error: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] WebView2 Initialization Error: {1}", _instanceId, ex.Message));
                 MessageBox.Show(
                     "WebView2 runtime failed to initialize:\n\n" + ex.Message,
                     "WebView2 Initialization Error",
@@ -1330,7 +1342,7 @@ namespace DofusFarm.Engine
                 (e.Uri.Contains("login-authorized") && (e.Uri.Contains("code=") || e.Uri.Contains("error="))))
             {
                 e.Cancel = true;
-                _logCallback?.Invoke(string.Format("[{0}] Intercepted Ankama Connect DeepLink in client: {1}", _instanceId, e.Uri));
+                LogLine(string.Format("[{0}] Intercepted Ankama Connect DeepLink in client: {1}", _instanceId, e.Uri));
                 HandleDeepLinkUri(e.Uri);
                 return;
             }
@@ -1339,7 +1351,7 @@ namespace DofusFarm.Engine
                 !e.Uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                 !e.Uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
             {
-                _logCallback?.Invoke(string.Format("[{0}] Blocked disallowed navigation scheme: {1}", _instanceId, e.Uri));
+                LogLine(string.Format("[{0}] Blocked disallowed navigation scheme: {1}", _instanceId, e.Uri));
                 e.Cancel = true;
             }
         }
@@ -1348,7 +1360,7 @@ namespace DofusFarm.Engine
         {
             if (e.IsSuccess)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Navigation completed successfully (Status: {1})", _instanceId, e.HttpStatusCode));
+                LogLine(string.Format("[{0}] Navigation completed successfully (Status: {1})", _instanceId, e.HttpStatusCode));
                 if (_autoZoomEnabled)
                 {
                     ApplyAutoZoom();
@@ -1366,13 +1378,13 @@ namespace DofusFarm.Engine
             }
             else
             {
-                _logCallback?.Invoke(string.Format("[{0}] Navigation failed: {1} (Status: {2})", _instanceId, e.WebErrorStatus, e.HttpStatusCode));
+                LogLine(string.Format("[{0}] Navigation failed: {1} (Status: {2})", _instanceId, e.WebErrorStatus, e.HttpStatusCode));
             }
         }
 
         private void OnProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
         {
-            _logCallback?.Invoke(string.Format("[{0}] ⚠️ WebView2 Process Failed! Kind: {1}, Reason: {2}",
+            LogLine(string.Format("[{0}] ⚠️ WebView2 Process Failed! Kind: {1}, Reason: {2}",
                 _instanceId, e.ProcessFailedKind, e.Reason));
 
             if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
@@ -1386,7 +1398,15 @@ namespace DofusFarm.Engine
             }
         }
 
-        private async void OnAuthNetResponse(object sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
+        // The event stays synchronous; the body is a Task behind the one boundary.
+        // A throw escaping this handler used to take the host down with it.
+        private void OnAuthNetResponse(object sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
+        {
+            UiDispatcher.Instance.Guard("auth-net",
+                delegate { return OnAuthNetResponseAsync(sender, e); });
+        }
+
+        private async Task OnAuthNetResponseAsync(object sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
         {
             try
             {
@@ -1425,7 +1445,7 @@ namespace DofusFarm.Engine
                 }
 
                 string shortUri = uri.Length > 110 ? uri.Substring(0, 110) + "..." : uri;
-                _logCallback?.Invoke(string.Format("[{0}] [AUTH-NET] {1} {2} -> {3}{4}",
+                LogLine(string.Format("[{0}] [AUTH-NET] {1} {2} -> {3}{4}",
                     _instanceId, e.Request.Method, shortUri, status,
                     body.Length > 0 ? " body=" + body : ""));
 
@@ -1442,14 +1462,14 @@ namespace DofusFarm.Engine
                         _cloudFrontBlockLogged = true;
                         string requestId = ExtractCloudFrontRequestId(rawBody)
                             ?? SafeHeader(e.Response.Headers, "x-amz-cf-id");
-                        _logCallback?.Invoke(string.Format("[{0}] [OAUTH-BLOCKED] {1}",
+                        LogLine(string.Format("[{0}] [OAUTH-BLOCKED] {1}",
                             _instanceId, CloudFrontBlockAdvice(requestId, uri)));
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] [AUTH-NET] handler error: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] [AUTH-NET] handler error: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1528,7 +1548,7 @@ namespace DofusFarm.Engine
                 string json = UnwrapJsonString(e.WebMessageAsJson);
                 if (!json.Contains("\"type\":\"CONSOLE_LOG\"") && !json.Contains("\"type\":\"PLAY_LOG\""))
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));
+                    LogLine(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));
                 }
 
                 if (json.Contains("\"type\":\"PLAY_LOG\""))
@@ -1545,7 +1565,7 @@ namespace DofusFarm.Engine
                     Match mLvl = WmConsoleLevelRe.Match(json);
                     string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : json;
                     string lvl = mLvl.Success ? mLvl.Groups[1].Value.ToUpper() : "JS";
-                    _logCallback?.Invoke(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
+                    LogLine(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
                 }
                 else if (json.Contains("\"type\":\"BOOT_CANARY\""))
                 {
@@ -1576,7 +1596,7 @@ namespace DofusFarm.Engine
                     // same log ("WebView2 client closed by user") and the same symptom.
                     Match mReason = Regex.Match(json, "\"reason\":\"([^\"]*)\"");
                     Match mVia = Regex.Match(json, "\"via\":\"([^\"]*)\"");
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] [NET] game connection ended: reason={1} (via {2})",
                         _instanceId,
                         mReason.Success ? mReason.Groups[1].Value : "unknown",
@@ -1622,13 +1642,13 @@ namespace DofusFarm.Engine
                         _lastGuestTokensRaw = null;
                         _webView.CoreWebView2.PostWebMessageAsJson(
                             "{\"type\":\"webauth_tokens\",\"ok\":true,\"code\":\"" + code + "\",\"raw\":" + raw + "}");
-                        _logCallback?.Invoke(string.Format("[{0}] [WEBAUTH] Delivered pre-exchanged guest tokens to game (code {1})", _instanceId, shortCode));
+                        LogLine(string.Format("[{0}] [WEBAUTH] Delivered pre-exchanged guest tokens to game (code {1})", _instanceId, shortCode));
                     }
                     else
                     {
                         _webView.CoreWebView2.PostWebMessageAsJson(
                             "{\"type\":\"webauth_tokens\",\"ok\":false,\"code\":\"" + (code ?? "") + "\"}");
-                        _logCallback?.Invoke(string.Format("[{0}] [WEBAUTH] No pre-exchanged tokens for code {1}; game falls back to its own fetch", _instanceId, shortCode));
+                        LogLine(string.Format("[{0}] [WEBAUTH] No pre-exchanged tokens for code {1}; game falls back to its own fetch", _instanceId, shortCode));
                     }
                 }
                 else if (json.Contains("\"type\":\"MOD_WHISPER_ALERT\""))
@@ -1660,7 +1680,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1681,7 +1701,7 @@ namespace DofusFarm.Engine
                     FormBorderStyle = FormBorderStyle.None;
                     Bounds = Screen.FromControl(this).Bounds;
                     _isFullscreen = true;
-                    _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Entered fullscreen (F11 to exit)", _instanceId));
+                    LogLine(string.Format("[{0}] [FULLSCREEN] Entered fullscreen (F11 to exit)", _instanceId));
                 }
                 else
                 {
@@ -1693,12 +1713,12 @@ namespace DofusFarm.Engine
                     }
                     WindowState = _preFullscreenWindowState;
                     _isFullscreen = false;
-                    _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Exited fullscreen", _instanceId));
+                    LogLine(string.Format("[{0}] [FULLSCREEN] Exited fullscreen", _instanceId));
                 }
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Toggle error: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] [FULLSCREEN] Toggle error: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1723,21 +1743,21 @@ namespace DofusFarm.Engine
                     if (!string.Equals(_claimedLogin, login, StringComparison.OrdinalIgnoreCase))
                     {
                         _claimedLogin = login;
-                        _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Account {1} reserved for this instance", _instanceId, login));
+                        LogLine(string.Format("[{0}] [ACCOUNT GUARD] Account {1} reserved for this instance", _instanceId, login));
                     }
                     try { File.WriteAllText(Path.Combine(_userDataDir, "account.identity"), login); } catch { }
                     return;
                 }
 
-                _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] BLOCKED: account {1} is already live on '{2}' - closing before a simultaneous same-account login (ban risk).", _instanceId, login, conflict));
+                LogLine(string.Format("[{0}] [ACCOUNT GUARD] BLOCKED: account {1} is already live on '{2}' - closing before a simultaneous same-account login (ban risk).", _instanceId, login, conflict));
                 if (!_explicitAccount)
                 {
                     try { File.WriteAllText(Path.Combine(_userDataDir, "force_fresh_identity.flag"), "1"); } catch { }
-                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Next launch will reset this shared identity and register a fresh guest account", _instanceId));
+                    LogLine(string.Format("[{0}] [ACCOUNT GUARD] Next launch will reset this shared identity and register a fresh guest account", _instanceId));
                 }
                 else
                 {
-                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] This account was set manually - change it in Edit so every instance uses a unique login", _instanceId));
+                    LogLine(string.Format("[{0}] [ACCOUNT GUARD] This account was set manually - change it in Edit so every instance uses a unique login", _instanceId));
                 }
                 if (InvokeRequired) BeginInvoke(new Action(Close)); else Close();
             }
@@ -1813,7 +1833,7 @@ namespace DofusFarm.Engine
                     {
                         try { File.Delete(Path.Combine(_userDataDir, "force_fresh_identity.flag")); } catch { }
                     }
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] Auto-harvested visitor credentials into accounts.txt: {1}{2}",
                         _instanceId, login,
                         replaced ? string.Format(" (slot index {0} now owns this guest)", slotIdx) : ""));
@@ -1821,7 +1841,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Failed to persist visitor credentials: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] Failed to persist visitor credentials: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1838,7 +1858,7 @@ namespace DofusFarm.Engine
                 string sender = mSender.Success ? Regex.Unescape(mSender.Groups[1].Value) : "Unknown";
                 string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : "";
 
-                _logCallback?.Invoke(string.Format("🚨 [{0}] {1} from '{2}': \"{3}\"",
+                LogLine(string.Format("🚨 [{0}] {1} from '{2}': \"{3}\"",
                     _instanceId, isMod ? "CRITICAL MODERATOR PM" : "Private Message", sender, text));
 
                 if (InvokeRequired)
@@ -1852,7 +1872,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Error parsing MOD_WHISPER_ALERT: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] Error parsing MOD_WHISPER_ALERT: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1912,7 +1932,7 @@ namespace DofusFarm.Engine
                 {
                     Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
                     string urgency = mUrgency.Success ? mUrgency.Groups[1].Value : "HIGH";
-                    _logCallback?.Invoke(string.Format("🧠 [{0}] Central Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
+                    LogLine(string.Format("🧠 [{0}] Central Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
                 }
             }
             catch { }
@@ -1951,7 +1971,7 @@ namespace DofusFarm.Engine
                 string queryText = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : "";
                 if (string.IsNullOrWhiteSpace(queryText)) return;
 
-                _logCallback?.Invoke(string.Format("🤖 [{0}] In-Game NLP Query: \"{1}\"", _instanceId, queryText));
+                LogLine(string.Format("🤖 [{0}] In-Game NLP Query: \"{1}\"", _instanceId, queryText));
 
                 System.Threading.ThreadPool.QueueUserWorkItem(delegate
                 {
@@ -1984,20 +2004,20 @@ namespace DofusFarm.Engine
                                             "window.__onCommanderReply && window.__onCommanderReply({0});", response));
                                     }
 
-                                    _logCallback?.Invoke(string.Format("🤖 [{0}] AI Commander reply: [{1}] {2}", _instanceId, directive, exp));
+                                    LogLine(string.Format("🤖 [{0}] AI Commander reply: [{1}] {2}", _instanceId, directive, exp));
                                 });
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logCallback?.Invoke(string.Format("[{0}] NLP query failed: {1}", _instanceId, ex.Message));
+                        LogLine(string.Format("[{0}] NLP query failed: {1}", _instanceId, ex.Message));
                     }
                 });
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Error in HandleNlpQueryMessage: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] Error in HandleNlpQueryMessage: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2017,7 +2037,7 @@ namespace DofusFarm.Engine
                 }
                 else
                 {
-                    _logCallback?.Invoke(string.Format("💬 [{0}] In-game message from '{1}': \"{2}\"", _instanceId, sender, text));
+                    LogLine(string.Format("💬 [{0}] In-game message from '{1}': \"{2}\"", _instanceId, sender, text));
                     string low = text.ToLowerInvariant();
                     if (low.StartsWith("!") || low.StartsWith("/") || low.Contains("va en") || low.Contains("suis") || low.Contains("passe") || low.Contains("farm") || low.Contains("join") || low.Contains("stop"))
                     {
@@ -2027,7 +2047,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Error in HandleInGameChatMessage: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] Error in HandleInGameChatMessage: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2035,7 +2055,7 @@ namespace DofusFarm.Engine
         {
             e.Handled = true;
             string targetUrl = e.Uri;
-            _logCallback?.Invoke(string.Format("[{0}] Intercepted new window request: {1}", _instanceId, targetUrl));
+            LogLine(string.Format("[{0}] Intercepted new window request: {1}", _instanceId, targetUrl));
             OpenOAuthDialog(targetUrl);
         }
 
@@ -2064,7 +2084,7 @@ namespace DofusFarm.Engine
                 if (uri.IndexOf("/maps/", StringComparison.Ordinal) >= 0 && _mapProbeLeft > 0)
                 {
                     _mapProbeLeft--;
-                    _logCallback?.Invoke(string.Format(
+                    LogLine(string.Format(
                         "[{0}] MAP PROBE {1} origin={2} reqHeaders={3} -> cors={4}",
                         _instanceId, method,
                         SafeGetHeader(e.Request, "Origin") ?? "<absent>",
@@ -2097,7 +2117,7 @@ namespace DofusFarm.Engine
                 if (_cdnInterceptReqLog < 60)
                 {
                     _cdnInterceptReqLog++;
-                    _logCallback?.Invoke(string.Format("[{0}] CDN intercept req #{1} {2}",
+                    LogLine(string.Format("[{0}] CDN intercept req #{1} {2}",
                         _instanceId, _cdnInterceptReqLog,
                         requestUri.Length > 170 ? requestUri.Substring(0, 170) : requestUri));
                 }
@@ -2134,7 +2154,7 @@ namespace DofusFarm.Engine
                             if (!_cdnInterceptFirstOkLogged)
                             {
                                 _cdnInterceptFirstOkLogged = true;
-                                _logCallback?.Invoke(string.Format(
+                                LogLine(string.Format(
                                     "[{0}] CDN intercept live: first asset {1} ({2}B, cookies={3})",
                                     _instanceId, status, body != null ? body.Length : 0,
                                     string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c"));
@@ -2144,7 +2164,7 @@ namespace DofusFarm.Engine
                         {
                             _cdnInterceptFail++;
                             if (_cdnInterceptFail <= 5)
-                                _logCallback?.Invoke(string.Format("[{0}] CDN intercept {1} ({4}) for {2} (cookies={3})",
+                                LogLine(string.Format("[{0}] CDN intercept {1} ({4}) for {2} (cookies={3})",
                                     _instanceId, status, requestUri, string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c", reason));
                         }
                     }
@@ -2152,7 +2172,7 @@ namespace DofusFarm.Engine
                     {
                         _cdnInterceptFail++;
                         if (_cdnInterceptFail <= 5)
-                            _logCallback?.Invoke(string.Format("[{0}] CDN fetch failed ({1}): {2}", _instanceId, requestUri, ex.Message));
+                            LogLine(string.Format("[{0}] CDN fetch failed ({1}): {2}", _instanceId, requestUri, ex.Message));
                     }
                     try
                     {
@@ -2176,7 +2196,7 @@ namespace DofusFarm.Engine
             {
                 _cdnInterceptLoggedErrors++;
                 if (_cdnInterceptLoggedErrors <= 3 || _cdnInterceptLoggedErrors % 100 == 0)
-                    _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error #{1}: {2}",
+                    LogLine(string.Format("[{0}] WebResourceRequested error #{1}: {2}",
                         _instanceId, _cdnInterceptLoggedErrors, ex.Message));
             }
         }
@@ -2515,7 +2535,7 @@ namespace DofusFarm.Engine
                 return;
             }
 
-            _logCallback?.Invoke(string.Format("[{0}] 🔑 Dispatching OAuth DeepLink to game engine: {1}", _instanceId, uri.Length > 80 ? uri.Substring(0, 80) + "..." : uri));
+            LogLine(string.Format("[{0}] 🔑 Dispatching OAuth DeepLink to game engine: {1}", _instanceId, uri.Length > 80 ? uri.Substring(0, 80) + "..." : uri));
 
             CloseOAuthDialog();
 
@@ -2557,11 +2577,12 @@ namespace DofusFarm.Engine
                     "  }}" +
                     "}})();", escapedUri);
 
-                DispatchDeepLinkDiagnosticsAsync(normalizedUri, dispatchJs);
+                UiDispatcher.Instance.Guard("deeplink-diag",
+                    delegate { return DispatchDeepLinkDiagnosticsAsync(normalizedUri, dispatchJs); });
             }
         }
 
-        private async void DispatchDeepLinkDiagnosticsAsync(string normalizedUri, string dispatchJs)
+        private async Task DispatchDeepLinkDiagnosticsAsync(string normalizedUri, string dispatchJs)
         {
             string shortUri = normalizedUri.Length > 70 ? normalizedUri.Substring(0, 70) + "..." : normalizedUri;
             try
@@ -2575,14 +2596,14 @@ namespace DofusFarm.Engine
                     " hasDofusWebAuth: !!(window.dofus && window.dofus.webAuth && typeof window.dofus.webAuth.connectThroughIonicDeepLink === 'function')" +
                     " }); } catch (e) { return 'probe-error:' + e.message; } })();";
                 string probeResult = await _webView.CoreWebView2.ExecuteScriptAsync(probeJs);
-                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] probe {1} -> {2}", _instanceId, shortUri, probeResult));
+                LogLine(string.Format("[{0}] [DEEPLINK-DIAG] probe {1} -> {2}", _instanceId, shortUri, probeResult));
 
                 string dispatchResult = await _webView.CoreWebView2.ExecuteScriptAsync(dispatchJs);
-                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] dispatch result: {1}", _instanceId, dispatchResult));
+                LogLine(string.Format("[{0}] [DEEPLINK-DIAG] dispatch result: {1}", _instanceId, dispatchResult));
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] failed: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] [DEEPLINK-DIAG] failed: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2624,7 +2645,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] Failed to open OAuth dialog: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] Failed to open OAuth dialog: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2684,7 +2705,7 @@ namespace DofusFarm.Engine
             catch (Exception ex)
             {
                 _isUpdatingZoom = false;
-                _logCallback?.Invoke(string.Format("[{0}] AutoZoom error: {1}", _instanceId, ex.Message));
+                LogLine(string.Format("[{0}] AutoZoom error: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2723,7 +2744,7 @@ namespace DofusFarm.Engine
             // down, or the task manager killed it. Sixty-two of those in one log, and no
             // way to tell a kick from a shutdown from a stray Close(). CloseReason says
             // which, and it costs one line.
-            _logCallback?.Invoke(string.Format("[{0}] closing: reason={1} requested_by={2}{3}",
+            LogLine(string.Format("[{0}] closing: reason={1} requested_by={2}{3}",
                 _instanceId, e.CloseReason, _closeRequestedBy ?? "the player (window close)",
                 e.Cancel ? " (cancelled)" : ""));
 
@@ -2735,13 +2756,13 @@ namespace DofusFarm.Engine
             CloseOAuthDialog();
 
             if (_cdnInterceptTotal > 0)
-                _logCallback?.Invoke(string.Format(
+                LogLine(string.Format(
                     "[{0}] CDN intercept summary: {1} requests, {2} ok, {3} failed, {4} handler errors",
                     _instanceId, _cdnInterceptTotal, _cdnInterceptOk, _cdnInterceptFail, _cdnInterceptLoggedErrors));
 
             // Which CORS case the interceptor really served: an Origin the handler could read, or
             // the page-origin fallback. Without this the answer is folklore.
-            _logCallback?.Invoke(string.Format(
+            LogLine(string.Format(
                 "[{0}] CDN CORS: originHeaderSeen={1} originHeaderAbsent={2} (fallback echoed {3})",
                 _instanceId, _corsOriginSeen, _corsOriginWasAbsent, PageOrigin));
 
@@ -2844,6 +2865,12 @@ namespace DofusFarm.Engine
             InitializeComponent();
         }
 
+        /// <summary>Popup diagnostics take the same batching route as the client's.</summary>
+        private void LogLine(string message)
+        {
+            UiDispatcher.Instance.Log(_logCallback, message);
+        }
+
         private void InitializeComponent()
         {
             Text = "Connexion Ankama Connect";
@@ -2900,9 +2927,15 @@ namespace DofusFarm.Engine
             _webView.BringToFront();
         }
 
-        protected override async void OnLoad(EventArgs e)
+        protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            UiDispatcher.Instance.Guard("WebView2ClientForm.OnLoad",
+                delegate { return OnLoadCoreAsync(e); });
+        }
+
+        private async Task OnLoadCoreAsync(EventArgs e)
+        {
             try
             {
                 // Google blocks sign-in from spoofed/embedded browser identities
@@ -3007,7 +3040,7 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.NavigationStarting += async (sdr, ev) =>
                 {
                     string u = ev.Uri;
-                    _logCallback?.Invoke("[OAUTH-POPUP] Navigating: " + u);
+                    LogLine("[OAUTH-POPUP] Navigating: " + u);
 
                     if (u.Contains("accounts.google.com"))
                     {
@@ -3028,7 +3061,7 @@ namespace DofusFarm.Engine
                     {
                         ev.Cancel = true;
                         _deepLinkDispatched = true;
-                        _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
+                        LogLine("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
                         await CopyAuthCookiesToParentAsync();
                         _parentForm.HandleDeepLinkUri(u);
                         this.Close();
@@ -3074,7 +3107,7 @@ namespace DofusFarm.Engine
                                     return;
                                 }
                                 _continueMimicStarted = true;
-                                _logCallback?.Invoke("[OAUTH-POPUP] login-authorized loaded; mimicking user CONTINUE click: " + curUrl);
+                                LogLine("[OAUTH-POPUP] login-authorized loaded; mimicking user CONTINUE click: " + curUrl);
 
                                 await Task.Delay(2500);
 
@@ -3101,24 +3134,24 @@ namespace DofusFarm.Engine
                                     // with "CONTINUE click failed" and no explanation.
                                     if (_webView == null || _webView.CoreWebView2 == null)
                                     {
-                                        _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE skipped: the popup closed first");
+                                        LogLine("[OAUTH-POPUP] CONTINUE skipped: the popup closed first");
                                     }
                                     else
                                     {
                                         string clickRes = await _webView.CoreWebView2.ExecuteScriptAsync(clickJs);
-                                        _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click result: " + clickRes);
+                                        LogLine("[OAUTH-POPUP] CONTINUE click result: " + clickRes);
                                     }
                                 }
                                 catch (Exception cex)
                                 {
-                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click failed: " + cex.Message);
+                                    LogLine("[OAUTH-POPUP] CONTINUE click failed: " + cex.Message);
                                 }
 
                                 await Task.Delay(4000);
 
                                 if (!_deepLinkDispatched)
                                 {
-                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE produced no deep link; dispatching directly: " + curUrl);
+                                    LogLine("[OAUTH-POPUP] CONTINUE produced no deep link; dispatching directly: " + curUrl);
                                     await CopyAuthCookiesToParentAsync();
                                     _parentForm.HandleDeepLinkUri(curUrl);
                                     this.Close();
@@ -3131,7 +3164,7 @@ namespace DofusFarm.Engine
                                 string txt = await _webView.CoreWebView2.ExecuteScriptAsync("(document.body && document.body.innerText ? document.body.innerText : '').replace(/\\s+/g, ' ').slice(0, 220)");
                                 if (!string.IsNullOrEmpty(txt) && txt != "\"\"")
                                 {
-                                    _logCallback?.Invoke("[OAUTH-POPUP] Page text: " + txt);
+                                    LogLine("[OAUTH-POPUP] Page text: " + txt);
                                 }
                             }
                         }
@@ -3152,7 +3185,7 @@ namespace DofusFarm.Engine
                                 string fullUrl = evR.Request.Uri;
                                 string u = fullUrl;
                                 if (u.Length > 110) u = u.Substring(0, 110) + "...";
-                                _logCallback?.Invoke("[OAUTH-POPUP] [AUTH-NET] " + evR.Request.Method + " " + u + " -> " + st);
+                                LogLine("[OAUTH-POPUP] [AUTH-NET] " + evR.Request.Method + " " + u + " -> " + st);
                                 if (st == 403)
                                 {
                                     ReportCloudFrontBlockFromResponse(fullUrl, evR.Response.Headers);
@@ -3166,7 +3199,7 @@ namespace DofusFarm.Engine
                                 // a blank window. The response itself is the evidence.
                                 _wafSeen202 = true;
                                 if (string.IsNullOrEmpty(_wafUrl)) _wafUrl = evR.Request.Uri;
-                                _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] CloudFront answered 202 "
+                                LogLine("[OAUTH-POPUP] [WAF-CHALLENGE] CloudFront answered 202 "
                                     + "(x-amzn-waf-action: " + WafActionHeader(evR.Response.Headers) + ") on "
                                     + WafHostOf(evR.Request.Uri));
                             }
@@ -3186,7 +3219,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke("[OAUTH-POPUP] Error initializing dialog: " + ex.Message);
+                LogLine("[OAUTH-POPUP] Error initializing dialog: " + ex.Message);
             }
         }
 
@@ -3271,7 +3304,7 @@ namespace DofusFarm.Engine
                 if (!_wafGaveUp)
                 {
                     _wafGaveUp = true;
-                    _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] Ankama's challenge did not "
+                    LogLine("[OAUTH-POPUP] [WAF-CHALLENGE] Ankama's challenge did not "
                         + "complete after " + _wafAttempts.ToString() + " attempts on "
                         + WafHostOf(_wafUrl) + ". The guest grant cannot be issued from this "
                         + "browser profile. Google sign-in is unaffected; for a guest account, "
@@ -3288,7 +3321,7 @@ namespace DofusFarm.Engine
                 + "/" + MaxWafAttempts.ToString() + ")";
             _lblTitle.ForeColor = Color.FromArgb(250, 204, 21);
 
-            _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] attempt " + _wafAttempts.ToString()
+            LogLine("[OAUTH-POPUP] [WAF-CHALLENGE] attempt " + _wafAttempts.ToString()
                 + "/" + MaxWafAttempts.ToString() + " on " + WafHostOf(_wafUrl)
                 + "; re-requesting after the challenge cookie lands");
 
@@ -3365,7 +3398,7 @@ namespace DofusFarm.Engine
                 if (!_cloudFrontBlockLogged)
                 {
                     _cloudFrontBlockLogged = true;
-                    _logCallback?.Invoke("[OAUTH-POPUP] [OAUTH-BLOCKED] " +
+                    LogLine("[OAUTH-POPUP] [OAUTH-BLOCKED] " +
                         WebView2ClientForm.CloudFrontBlockAdvice(requestId, url));
                 }
 
@@ -3425,7 +3458,7 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke("[OAUTH-POPUP] CloudFront block probe failed: " + ex.Message);
+                LogLine("[OAUTH-POPUP] CloudFront block probe failed: " + ex.Message);
                 return false;
             }
         }
@@ -3444,7 +3477,7 @@ namespace DofusFarm.Engine
             if (!block) return;
             _cloudFrontBlockLogged = true;
             string requestId = WebView2ClientForm.SafeHeader(headers, "x-amz-cf-id");
-            _logCallback?.Invoke("[OAUTH-POPUP] [OAUTH-BLOCKED] " +
+            LogLine("[OAUTH-POPUP] [OAUTH-BLOCKED] " +
                 WebView2ClientForm.CloudFrontBlockAdvice(requestId, url));
         }
 
@@ -3468,18 +3501,18 @@ namespace DofusFarm.Engine
                         try
                         {
                             if (!c.IsSession && c.Expires < DateTime.Now) continue;
-                            _logCallback?.Invoke("[OAUTH-POPUP] Cookie copy: " + c.Name + " @" + c.Domain + c.Path + " sameSite=" + c.SameSite);
+                            LogLine("[OAUTH-POPUP] Cookie copy: " + c.Name + " @" + c.Domain + c.Path + " sameSite=" + c.SameSite);
                             dst.AddOrUpdateCookie(dst.CopyCookie(c));
                             copied++;
                         }
                         catch { }
                     }
                 }
-                _logCallback?.Invoke("[OAUTH-POPUP] Copied " + copied + " auth cookies into the game session");
+                LogLine("[OAUTH-POPUP] Copied " + copied + " auth cookies into the game session");
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke("[OAUTH-POPUP] Auth cookie copy failed: " + ex.Message);
+                LogLine("[OAUTH-POPUP] Auth cookie copy failed: " + ex.Message);
             }
         }
 
@@ -3490,7 +3523,7 @@ namespace DofusFarm.Engine
                 Match codeMatch = Regex.Match(interceptedUri, "[?&]code=([A-Za-z0-9_\\-]+)");
                 if (!codeMatch.Success)
                 {
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: no code in intercepted uri");
+                    LogLine("[OAUTH-POPUP] exchange probe: no code in intercepted uri");
                     return;
                 }
                 string code = codeMatch.Groups[1].Value;
@@ -3504,7 +3537,7 @@ namespace DofusFarm.Engine
                 catch { }
                 if (webAuthType != "guest")
                 {
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: skipped (WEBAUTH_TYPE=" + webAuthType + ")");
+                    LogLine("[OAUTH-POPUP] exchange probe: skipped (WEBAUTH_TYPE=" + webAuthType + ")");
                     return;
                 }
 
@@ -3519,16 +3552,16 @@ namespace DofusFarm.Engine
                 }
                 catch (Exception ex)
                 {
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: verifier read failed: " + ex.Message);
+                    LogLine("[OAUTH-POPUP] exchange probe: verifier read failed: " + ex.Message);
                 }
 
                 if (string.IsNullOrEmpty(verifier))
                 {
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: verifier empty; aborting probe (code len " + code.Length + ")");
+                    LogLine("[OAUTH-POPUP] exchange probe: verifier empty; aborting probe (code len " + code.Length + ")");
                     return;
                 }
 
-                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: guest exchange starting (code len=" + code.Length + " verifier len=" + verifier.Length + ")");
+                LogLine("[OAUTH-POPUP] exchange probe: guest exchange starting (code len=" + code.Length + " verifier len=" + verifier.Length + ")");
 
                 string body = "grant_type=authorization_code&client_id=18&code=" + code + "&code_verifier=" + verifier + "&redirect_uri=dofustouch://authorized";
 
@@ -3559,12 +3592,12 @@ namespace DofusFarm.Engine
                     string popupBody = string.IsNullOrEmpty(bJson) ? "" : Regex.Unescape(bJson.Trim('"'));
                     bool popupOk = popupStatus == "200" && popupBody.Length > 0;
                     string popupSnippet = popupBody.Length > 300 ? popupBody.Substring(0, 300) : popupBody;
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (popup ctx): " + popupStatus + " " + (popupOk ? TokenSummary(popupBody) : popupSnippet));
+                    LogLine("[OAUTH-POPUP] exchange probe (popup ctx): " + popupStatus + " " + (popupOk ? TokenSummary(popupBody) : popupSnippet));
                     if (popupOk) rawTokens = popupBody;
                 }
                 catch (Exception ex)
                 {
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (popup ctx) failed: " + ex.Message);
+                    LogLine("[OAUTH-POPUP] exchange probe (popup ctx) failed: " + ex.Message);
                 }
 
                 // Test B variants: host-side exchange. Native requests can send the
@@ -3596,12 +3629,12 @@ namespace DofusFarm.Engine
                 if (rawTokens != null)
                 {
                     _parentForm.SetGuestExchangeResult(code, rawTokens);
-                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: SUCCESS - guest tokens pre-exchanged and stored for host delivery");
+                    LogLine("[OAUTH-POPUP] exchange probe: SUCCESS - guest tokens pre-exchanged and stored for host delivery");
                 }
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe error: " + ex.Message);
+                LogLine("[OAUTH-POPUP] exchange probe error: " + ex.Message);
             }
         }
 
@@ -3660,12 +3693,12 @@ namespace DofusFarm.Engine
                 bool ok = status == 200 && !string.IsNullOrEmpty(respBody);
                 string snippet = respBody ?? "";
                 if (snippet.Length > 300) snippet = snippet.Substring(0, 300);
-                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (" + label + "): " + status + " " + (ok ? TokenSummary(respBody) : snippet));
+                LogLine("[OAUTH-POPUP] exchange probe (" + label + "): " + status + " " + (ok ? TokenSummary(respBody) : snippet));
                 return ok ? respBody : null;
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (" + label + ") failed: " + ex.Message);
+                LogLine("[OAUTH-POPUP] exchange probe (" + label + ") failed: " + ex.Message);
                 return null;
             }
         }

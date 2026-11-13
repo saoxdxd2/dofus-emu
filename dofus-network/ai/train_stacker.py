@@ -41,6 +41,7 @@ from agent.ensemble import (BASE_FEATURES, DEFAULT_MODEL, KIND, VERSION,  # noqa
                             fit_listwise, fit_tree, gbdt_predict,
                             kmeans_distances, soft_targets, tree_predict)
 from agent.foresight import load as load_foresight  # noqa: E402
+from storage.rows import iter_dicts  # noqa: E402
 
 DEFAULT_CORPUS = REPO_ROOT / "data" / "tool_sft_v3" / "val.jsonl"
 DEFAULT_CLUSTER_CORPUS = REPO_ROOT / "data" / "tool_sft_v3" / "train.jsonl"
@@ -59,15 +60,17 @@ def _digest(path: Path) -> Dict[str, Any]:
 
 
 def load_rows(path: Path) -> List[Dict[str, Any]]:
+    """Every corpus row, whatever storage form the path names.
+
+    `storage.rows.iter_dicts` reads .jsonl (torn tail tolerated), the SQLite WAL
+    store and compressed shards, so a corpus can move to the store without this
+    function changing again -- and a slice of a shard costs the records asked for,
+    not the whole file.
+    """
     rows: List[Dict[str, Any]] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            if isinstance(row.get("x"), list) and isinstance(row.get("gains"), dict):
-                rows.append(row)
+    for row in iter_dicts(Path(path)):
+        if isinstance(row, dict) and isinstance(row.get("x"), list) and isinstance(row.get("gains"), dict):
+            rows.append(row)
     return rows
 
 

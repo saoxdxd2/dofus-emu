@@ -15,13 +15,15 @@ namespace DofusBuild
         //   1. Preferred: modern Roslyn csc.dll from any installed .NET SDK
         //      (dotnet.exe found on PATH or %ProgramFiles%\dotnet; the "sdk"
         //      folder is scanned by wildcard and the newest version wins).
-        //      Required because the desktop sources use C# 6+ syntax.
-        //   2. Fallback: legacy .NET Framework 4.x csc.exe (C# 5 only).
-        static string DotNetHost;   // dotnet.exe when Roslyn is used, else null
-        static string CscDll;       // Roslyn csc.dll when used, else null
-        static string Csc;           // legacy csc.exe (FrameworkDir\csc.exe)
+        //      Required because the desktop sources use C# 6+ syntax, and it is the
+        //      only accepted compiler: Main refuses to start without it, so a machine
+        //      missing the SDK fails here instead of in a wall of CS1003s.
+        static string DotNetHost;   // dotnet.exe hosting csc.dll
+        static string CscDll;       // Roslyn csc.dll
         static string FrameworkDir;  // folder holding mscorlib.dll, System.dll, ...
         static string RepoRoot;
+        static bool Force;
+        static Dictionary<string, string> BuildCache;
 
         static int Main(string[] args)
         {
@@ -32,17 +34,47 @@ namespace DofusBuild
             Console.WriteLine("==========================================================");
             Console.ResetColor();
 
-            ResolveCompiler();
-            if (DotNetHost == null && (Csc == null || !File.Exists(Csc)))
+            // --force / -Force / DOFUS_BUILD_FORCE=1 rebuilds every layer even when the
+            // cache says nothing changed. No other flag exists: a build either has a
+            // C# 6-capable compiler or it stops here.
+            if (args != null)
             {
+                foreach (string a in args)
+                {
+                    if (a.Equals("--force", StringComparison.OrdinalIgnoreCase) ||
+                        a.Equals("-Force", StringComparison.OrdinalIgnoreCase) ||
+                        a.Equals("--rebuild", StringComparison.OrdinalIgnoreCase))
+                        Force = true;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("DOFUS_BUILD_FORCE") == "1") Force = true;
+
+            ResolveCompiler();
+            if (DotNetHost == null || CscDll == null)
+            {
+                // The old builder fell back to .NET Framework csc.exe, which is C# 5.
+                // desktop/ uses C# 6 syntax (null-conditional, string interpolation in
+                // generated contracts), so that fallback could only ever produce a wall
+                // of "invalid expression term" errors a hundred lines into the compile.
+                // Failing here, with the fix in the message, is the whole point.
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[ERROR] No C# compiler found (no .NET SDK Roslyn csc.dll, no .NET Framework csc.exe).");
+                Console.WriteLine("[ERROR] No C# 6-capable Roslyn compiler found.");
+                Console.WriteLine("        desktop/ requires C# 6+; the .NET Framework csc.exe");
+                Console.WriteLine("        fallback (C# 5) was removed on purpose.");
+                Console.WriteLine("");
+                Console.WriteLine("        Install the .NET SDK, then run compile.bat again:");
+                Console.WriteLine("            winget install Microsoft.DotNet.SDK.8");
+                Console.WriteLine("        or https://dotnet.microsoft.com/download");
+                Console.WriteLine("");
+                Console.WriteLine("        Looked for: dotnet.exe on PATH, %ProgramFiles%\\dotnet\\dotnet.exe,");
+                Console.WriteLine("        and <dotnet>\\sdk\\*\\Roslyn\\bincore\\csc.dll");
                 Console.ResetColor();
-                return 1;
+                return 2;
             }
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            if (DotNetHost != null) Console.WriteLine("Compiler: Roslyn csc.dll ({0})", CscDll);
-            else Console.WriteLine("Compiler: legacy Framework csc.exe (C# 5 only - install a .NET SDK for modern syntax)");
+            Console.WriteLine("Compiler: Roslyn csc.dll ({0})", CscDll);
+            Console.WriteLine("SDK:      {0}", Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(CscDll)))));
+            if (Force) Console.WriteLine("Cache:    disabled (--force)");
             Console.ResetColor();
 
             RepoRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
@@ -62,10 +94,18 @@ namespace DofusBuild
             string outUninstall = Path.Combine(RepoRoot, "uninstall.exe");
             string outSetup = Path.Combine(RepoRoot, "setup.exe");
 
+            BuildCache = ReadCache();
             PreBuildClean(RepoRoot);
 
+            // The contract sources are generated from schema/*.schema.json. Regenerating
+            // here means a schema edit can never ship a stale validator; if Python is
+            // absent the checked-in output is used, but a *missing* output is fatal.
+            if (!RunCodegen()) return 3;
+
             // 0. Compile Go Network Proxy if go.exe is available
-            TryBuildGoProxy();
+            // The relay is part of the release: a failed `go build` used to print its
+            // errors and carry on, producing a setup.exe whose proxy is missing.
+            if (!TryBuildGoProxy()) return 4;
 
             // 0b. Apply client bundle patches (anti-detection, telemetry silencing, and engine stability)
             TryApplyClientPatches();
@@ -84,6 +124,10 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                 Path.Combine(desktopDir, "IClientBackend.cs"),
                 Path.Combine(desktopDir, "localsecret.cs"),
+                Path.Combine(desktopDir, "AccountIsolation.cs"),
+                Path.Combine(desktopDir, "jsontext.cs"),
+                Path.Combine(desktopDir, "uidispatcher.cs"),
+                Path.Combine(desktopDir, "generated", "contracts.cs"),
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
                 Path.Combine(desktopDir, "clientbundle.cs"),
@@ -112,16 +156,24 @@ namespace DofusBuild
                 "/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\"",
                 iconArg, outFarm, RefArgs(), string.Join("\" \"", farmSources));
 
-            if (RunCsc(farmArgs) != 0)
+            if (NeedsBuild("DofusFarm.exe", farmSources, new string[] { ico }))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Failed to compile DofusFarm.exe");
+                if (RunCsc(farmArgs) != 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Failed to compile DofusFarm.exe");
+                    Console.ResetColor();
+                    return 1;
+                }
+                MarkBuilt("DofusFarm.exe", SourceSignature(farmSources, new string[] { ico }));
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("  [OK] DofusFarm.exe compiled ({0:N0} bytes)", new FileInfo(outFarm).Length);
                 Console.ResetColor();
-                return 1;
             }
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("  [OK] DofusFarm.exe compiled ({0:N0} bytes)", new FileInfo(outFarm).Length);
-            Console.ResetColor();
+            else
+            {
+                Console.WriteLine("  [cached] DofusFarm.exe is unchanged ({0:N0} bytes)", new FileInfo(outFarm).Length);
+            }
 
             // 2. Compile uninstall.exe
             Console.ForegroundColor = ConsoleColor.Cyan;
@@ -133,16 +185,27 @@ namespace DofusBuild
             string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\" \"{4}\"",
                 setupIconArg, outUninstall, RefArgs(), uninstallerCs, progressCs);
 
-            if (RunCsc(uninstArgs) != 0)
+            List<string> uninstallSources = new List<string>();
+            uninstallSources.Add(uninstallerCs);
+            uninstallSources.Add(progressCs);
+            if (NeedsBuild("uninstall.exe", uninstallSources, new string[] { setupIco }))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Failed to compile uninstall.exe");
+                if (RunCsc(uninstArgs) != 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Failed to compile uninstall.exe");
+                    Console.ResetColor();
+                    return 1;
+                }
+                MarkBuilt("uninstall.exe", SourceSignature(uninstallSources, new string[] { setupIco }));
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
                 Console.ResetColor();
-                return 1;
             }
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
-            Console.ResetColor();
+            else
+            {
+                Console.WriteLine("  [cached] uninstall.exe is unchanged ({0:N0} bytes)", new FileInfo(outUninstall).Length);
+            }
 
             // 3. Compile standalone setup.exe (by default standalone WebView2; legacy emulator excluded)
             bool includeLegacyEmulator = false;
@@ -170,6 +233,7 @@ namespace DofusBuild
                 return 1;
             }
 
+            WriteManifest();
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("\n==========================================================");
             Console.WriteLine("   BUILD COMPLETE: STANDALONE RELEASE SUITE READY!        ");
@@ -178,10 +242,10 @@ namespace DofusBuild
             return 0;
         }
 
-        static void TryBuildGoProxy()
+        static bool TryBuildGoProxy()
         {
             string proxySrc = Path.Combine(RepoRoot, @"scripts\dofus-net-proxy.go");
-            if (!File.Exists(proxySrc)) return;
+            if (!File.Exists(proxySrc)) return true;
 
             // Locate go.exe without hardcoded install paths:
             //   1. PATH (via where-like scan)
@@ -208,11 +272,32 @@ namespace DofusBuild
                 }
             }
 
-            if (!string.IsNullOrEmpty(goExe))
+            if (string.IsNullOrEmpty(goExe))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("  [WARN] go.exe not found; dofus-net-proxy.exe will not be rebuilt");
+                Console.ResetColor();
+                return true;
+            }
             {
                 string proxyOut = Path.Combine(RepoRoot, "dofus-net-proxy.exe");
-                Run(goExe, string.Format("build -ldflags=\"-s -w\" -o \"{0}\" \"{1}\"", proxyOut, proxySrc), RepoRoot);
+                // The telemetry document is generated into contracts_gen.go.
+                // Compiling only dofus-net-proxy.go leaves those symbols
+                // undefined; the release build must include both.
+                string contractsSrc = Path.Combine(RepoRoot, @"scripts\contracts_gen.go");
+                string inputs = File.Exists(contractsSrc)
+                    ? string.Format("\"{0}\" \"{1}\"", proxySrc, contractsSrc)
+                    : string.Format("\"{0}\"", proxySrc);
+                int code = Run(goExe, string.Format("build -ldflags=\"-s -w\" -o \"{0}\" {1}", proxyOut, inputs), RepoRoot);
+                if (code != 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("[ERROR] go build failed (exit {0}); the release would ship without its relay", code);
+                    Console.ResetColor();
+                    return false;
+                }
             }
+            return true;
         }
 
         static void TryApplyClientPatches()
@@ -1052,14 +1137,32 @@ namespace DofusBuild
                     "{3}\"/out:{4}\" \"{5}\"",
                     setupIconArg, manifestFile, resourceArgs.ToString(), RefArgs(true), outSetup, string.Join("\" \"", setupSources));
 
-                int sec = RunCsc(setupArgs);
+                List<string> setupInputs = new List<string>(setupSources);
+                setupInputs.Add(Path.Combine(RepoRoot, "runtimes"));
+                setupInputs.Add(Path.Combine(RepoRoot, "desktop", "client", "www"));
+                string setupSignature = SourceSignature(setupInputs, new string[] { setupIco });
+                bool setupBuilt = NeedsBuild("setup.exe", setupInputs, new string[] { setupIco });
+                int sec = 0;
+                if (setupBuilt)
+                {
+                    sec = RunCsc(setupArgs);
+                    if (sec == 0) MarkBuilt("setup.exe", setupSignature);
+                }
+                else
+                {
+                    Console.WriteLine("  [cached] setup.exe payload is unchanged ({0:F1} MB)",
+                        new FileInfo(outSetup).Length / (1024.0 * 1024.0));
+                }
                 try { File.Delete(manifestFile); } catch { }
 
                 if (sec == 0)
                 {
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine("  [OK] setup.exe compiled ({0:F1} MB)", new FileInfo(outSetup).Length / (1024.0 * 1024.0));
-                    Console.ResetColor();
+                    if (setupBuilt)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine("  [OK] setup.exe compiled ({0:F1} MB)", new FileInfo(outSetup).Length / (1024.0 * 1024.0));
+                        Console.ResetColor();
+                    }
                     return true;
                 }
                 else
@@ -1106,21 +1209,7 @@ namespace DofusBuild
                 }
             }
 
-            // --- Fallback: legacy .NET Framework csc.exe (highest version found) ---
-            if (DotNetHost == null)
-            {
-                string fwRoot = FrameworkCandidatesRoot();
-                if (fwRoot != null)
-                {
-                    string best = null;
-                    foreach (string v in Directory.GetDirectories(fwRoot))
-                    {
-                        if (!File.Exists(Path.Combine(v, "csc.exe"))) continue;
-                        if (best == null || string.CompareOrdinal(v, best) > 0) best = v;
-                    }
-                    if (best != null) Csc = Path.Combine(best, "csc.exe");
-                }
-            }
+                // No legacy fallback: see the fail-fast block in Main.
             FrameworkDir = FindFrameworkDir();
         }
 
@@ -1180,22 +1269,13 @@ namespace DofusBuild
             if (needMicrosoftCSharp) names.Add("Microsoft.CSharp.dll");
 
             List<string> parts = new List<string>();
-            if (DotNetHost != null)
+            // Roslyn: reference the .NET Framework runtime assemblies explicitly
+            // so the produced binaries still target .NET Framework 4.x.
+            parts.Add("/nostdlib+");
+            foreach (string n in names)
             {
-                // Roslyn: reference the .NET Framework runtime assemblies explicitly
-                // so the produced binaries still target .NET Framework 4.x.
-                parts.Add("/nostdlib+");
-                foreach (string n in names)
-                {
-                    string p = ResolveFrameworkAssembly(n);
-                    if (p != null) parts.Add(string.Format("\"/r:{0}\"", p));
-                }
-            }
-            else
-            {
-                // Legacy csc: framework dir is already on the default search path.
-                foreach (string n in names)
-                    parts.Add(string.Format("/r:{0}", n));
+                string p = ResolveFrameworkAssembly(n);
+                if (p != null) parts.Add(string.Format("\"/r:{0}\"", p));
             }
 
             // Reference WebView2 assemblies
@@ -1237,9 +1317,8 @@ namespace DofusBuild
         // Route a compile through whichever compiler was resolved.
         static int RunCsc(string args)
         {
-            if (DotNetHost != null)
-                return Run(DotNetHost, string.Format("\"{0}\" {1}", CscDll, args));
-            return Run(Csc, args);
+            // Roslyn is the only path here; Main refused to start without it.
+            return Run(DotNetHost, string.Format("\"{0}\" {1}", CscDll, args));
         }
 
         static int Run(string exe, string args, string workingDir = null)
@@ -1271,6 +1350,310 @@ namespace DofusBuild
                 }
                 return p.ExitCode;
             }
+        }
+
+
+        // -- incremental cache -------------------------------------------------
+
+        // A layer is rebuilt only when its *inputs* changed. The signature is built
+        // from (path, length, last-write ticks) rather than a content hash because the
+        // embedded runtime is thousands of files and hashing it on every compile would
+        // cost more than the compile it is trying to skip. The manifest records the
+        // content hashes; this records whether the work is necessary.
+        static string SourceSignature(IEnumerable<string> sources, IEnumerable<string> extras)
+        {
+            List<string> parts = new List<string>();
+            if (DotNetHost != null) parts.Add("csc:" + CscDll + ":" + StampOf(CscDll));
+            if (sources != null)
+            {
+                foreach (string source in sources)
+                {
+                    if (Directory.Exists(source)) parts.Add(TreeSignature(source));
+                    else parts.Add(FileStamp(source));
+                }
+            }
+            if (extras != null)
+            {
+                foreach (string extra in extras) parts.Add(FileStamp(extra));
+            }
+            parts.Sort(StringComparer.Ordinal);
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", parts.ToArray())));
+                return BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        static string FileStamp(string path)
+        {
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                if (!info.Exists) return "missing:" + path;
+                return path.Replace('\\', '/') + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+            }
+            catch
+            {
+                return "error:" + path;
+            }
+        }
+
+        static string StampOf(string path)
+        {
+            return FileStamp(path);
+        }
+
+        static string TreeSignature(string directory)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("tree:").Append(directory.Replace('\\', '/')).Append("\n");
+            try
+            {
+                List<string> files = new List<string>(Directory.GetFiles(directory, "*", SearchOption.AllDirectories));
+                files.Sort(StringComparer.Ordinal);
+                foreach (string file in files)
+                {
+                    if (IsCacheNoise(file)) continue;
+                    sb.Append(file.Substring(directory.Length).Replace('\\', '/')).Append('|')
+                      .Append(StampOf(file)).Append('\n');
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.Append("error:").Append(ex.GetType().Name).Append('\n');
+            }
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()));
+                return BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        static bool IsCacheNoise(string path)
+        {
+            string p = path.Replace('\\', '/');
+            return p.IndexOf("/__pycache__/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/.pytest_cache/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/.venv/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase)
+                || p.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+                || p.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        static string CachePath { get { return Path.Combine(RepoRoot, ".build-cache.txt"); } }
+
+        static Dictionary<string, string> ReadCache()
+        {
+            Dictionary<string, string> cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!File.Exists(CachePath)) return cache;
+                foreach (string line in File.ReadAllLines(CachePath))
+                {
+                    int bar = line.IndexOf('|');
+                    if (bar > 0) cache[line.Substring(0, bar)] = line.Substring(bar + 1);
+                }
+            }
+            catch { }
+            return cache;
+        }
+
+        static void WriteCache()
+        {
+            if (BuildCache == null) return;
+            List<string> lines = new List<string>();
+            foreach (KeyValuePair<string, string> pair in BuildCache) lines.Add(pair.Key + "|" + pair.Value);
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            try { File.WriteAllLines(CachePath, lines.ToArray()); } catch { }
+        }
+
+        static string OutputStamp(string output)
+        {
+            string path = Path.Combine(RepoRoot, output);
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                if (!info.Exists) return "missing";
+                return info.Length + ":" + info.LastWriteTimeUtc.Ticks;
+            }
+            catch { return "missing"; }
+        }
+
+        static bool NeedsBuild(string output, IList<string> sources, IList<string> extras)
+        {
+            if (Force) return true;
+            string path = Path.Combine(RepoRoot, output);
+            if (!File.Exists(path)) return true;
+            string previous;
+            if (BuildCache == null || !BuildCache.TryGetValue(output, out previous)) return true;
+            string[] pieces = previous.Split('|');
+            if (pieces.Length != 2) return true;
+            if (!string.Equals(pieces[0], SourceSignature(sources, extras), StringComparison.Ordinal)) return true;
+            // The output must still be the file the cache recorded: a cleaned or
+            // half-written binary is not a cache hit even when the sources match.
+            return !string.Equals(pieces[1], OutputStamp(output), StringComparison.Ordinal);
+        }
+
+        static void MarkBuilt(string output, string signature)
+        {
+            if (BuildCache == null) BuildCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            BuildCache[output] = signature + "|" + OutputStamp(output);
+            WriteCache();
+        }
+
+        // -- reproducible manifest --------------------------------------------
+
+        // What actually left this machine, as hashes. `build-manifest.json` is written
+        // last and is deterministic: sorted keys, invariant formatting, no timestamps,
+        // so two builds of the same tree produce the same document.
+        static void WriteManifest()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{\n  \"version\": 1,\n");
+            sb.Append("  \"compiler\": {\"host\": ").Append(JsonQuoteText(DotNetHost ?? ""))
+              .Append(", \"csc\": ").Append(JsonQuoteText(CscDll ?? ""))
+              .Append(", \"csc_sha256\": ").Append(JsonQuoteText(Sha256Of(CscDll)))
+              .Append("},\n");
+            sb.Append("  \"binaries\": {\n");
+            string[] binaries = new string[] { "DofusFarm.exe", "uninstall.exe", "setup.exe", "dofus-net-proxy.exe" };
+            for (int i = 0; i < binaries.Length; i++)
+            {
+                string file = Path.Combine(RepoRoot, binaries[i]);
+                sb.Append("    ").Append(JsonQuoteText(binaries[i])).Append(": {\"sha256\": ")
+                  .Append(JsonQuoteText(Sha256Of(file)))
+                  .Append(", \"bytes\": ").Append(File.Exists(file) ? new FileInfo(file).Length.ToString() : "0")
+                  .Append("}").Append(i + 1 < binaries.Length ? "," : "").Append("\n");
+            }
+            sb.Append("  },\n  \"layers\": {\n");
+            string[] layers = new string[] { "runtimes/python", "desktop/client/www" };
+            for (int i = 0; i < layers.Length; i++)
+            {
+                string dir = Path.Combine(RepoRoot, layers[i].Replace('/', Path.DirectorySeparatorChar));
+                long files, bytes;
+                string digest = TreeDigest(dir, out files, out bytes);
+                sb.Append("    ").Append(JsonQuoteText(layers[i])).Append(": {\"sha256\": ")
+                  .Append(JsonQuoteText(digest)).Append(", \"files\": ").Append(files)
+                  .Append(", \"bytes\": ").Append(bytes).Append("}")
+                  .Append(i + 1 < layers.Length ? "," : "").Append("\n");
+            }
+            sb.Append("  }\n}\n");
+            string body = sb.ToString();
+            string root = Sha256Text(body);
+            string withRoot = body.Substring(0, body.Length - 2) + ",\n  \"root\": "
+                + JsonQuoteText(root) + "\n}\n";
+            string target = Path.Combine(RepoRoot, "builder", "build-manifest.json");
+            try
+            {
+                File.WriteAllText(target, withRoot, new UTF8Encoding(false));
+                Console.WriteLine("  [OK] build manifest: builder/build-manifest.json (root {0})", root.Substring(0, 16));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("  [WARN] could not write the build manifest: " + ex.Message);
+            }
+        }
+
+        static string TreeDigest(string directory, out long files, out long bytes)
+        {
+            files = 0;
+            bytes = 0;
+            List<string> lines = new List<string>();
+            try
+            {
+                if (Directory.Exists(directory))
+                {
+                    List<string> found = new List<string>(Directory.GetFiles(directory, "*", SearchOption.AllDirectories));
+                    found.Sort(StringComparer.Ordinal);
+                    foreach (string file in found)
+                    {
+                        if (IsCacheNoise(file)) continue;
+                        FileInfo info = new FileInfo(file);
+                        lines.Add(file.Substring(directory.Length).Replace('\\', '/') + "|"
+                            + info.Length + "|" + Sha256Of(file));
+                        files++;
+                        bytes += info.Length;
+                    }
+                }
+            }
+            catch { }
+            return Sha256Text(string.Join("\n", lines.ToArray()));
+        }
+
+        static string Sha256Of(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "";
+                using (SHA256 sha = SHA256.Create())
+                using (FileStream stream = File.OpenRead(path))
+                {
+                    return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                }
+            }
+            catch { return ""; }
+        }
+
+        static string Sha256Text(string text)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        static string JsonQuoteText(string text)
+        {
+            if (text == null) return "\"\"";
+            StringBuilder sb = new StringBuilder(text.Length + 2);
+            sb.Append('"');
+            foreach (char c in text)
+            {
+                if (c == '"' || c == '\\') { sb.Append('\\'); sb.Append(c); }
+                else if (c == '\n') sb.Append("\\n");
+                else if (c == '\r') sb.Append("\\r");
+                else if (c == '\t') sb.Append("\\t");
+                else if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
+        // -- schema codegen ----------------------------------------------------
+
+        static bool RunCodegen()
+        {
+            string script = Path.Combine(RepoRoot, "tools", "codegen_schemas.py");
+            string generated = Path.Combine(RepoRoot, "desktop", "generated", "contracts.cs");
+            if (!File.Exists(script))
+            {
+                return File.Exists(generated);
+            }
+            string python = FindOnPath("python.exe");
+            if (python == null) python = FindOnPath("python3.exe");
+            if (python == null)
+            {
+                if (File.Exists(generated))
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("  [WARN] python.exe not found; using the checked-in generated contracts");
+                    Console.ResetColor();
+                    return true;
+                }
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[ERROR] no Python interpreter for tools/codegen_schemas.py and no generated contracts");
+                Console.ResetColor();
+                return false;
+            }
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("\n[0/3] Regenerating cross-language contracts (tools/codegen_schemas.py)...");
+            Console.ResetColor();
+            int code = Run(python, string.Format("\"{0}\"", script), RepoRoot);
+            if (code == 0) return true;
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("[ERROR] contract codegen failed (exit {0})", code);
+            Console.ResetColor();
+            return false;
         }
 
         static void PreBuildClean(string repoRoot)

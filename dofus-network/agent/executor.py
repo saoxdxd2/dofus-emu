@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.bridge import directive_url as bridge_directive_url, local_headers, opener_for
+from generated.contracts import BridgeDirective
 from agent.jsonio import dumps_bytes, iter_array, loads
 from agent.observe import redact_packet_secrets
 from agent.recorder import TrajectoryRecorder
@@ -2014,16 +2015,18 @@ class ToolExecutor:
 
     def _directive(self, directive: str, tool: str, args: Dict[str, Any], source: str,
                    instance: Optional[str] = None) -> ToolResult:
-        payload = {
-            "id": uuid.uuid4().hex,
-            "ts": round(time.time(), 3),
-            "directive": directive,
-            "tool": tool,
-            "args": args,
-            "source": source,
-        }
-        if instance and instance != "default":
-            payload["target_instance"] = instance
+        # Built through the generated contract, not a literal dict. The host parses
+        # this document with the same schema, so a renamed field fails here instead
+        # of being silently ignored on the other side of the socket.
+        payload = BridgeDirective(
+            id=uuid.uuid4().hex,
+            ts=round(time.time(), 3),
+            directive=directive,
+            tool=tool,
+            args=args,
+            source=source,
+            target_instance=instance if instance and instance != "default" else None,
+        ).to_dict()
         now = time.monotonic()
         if now < self._bridge_open_until:
             return ToolResult(

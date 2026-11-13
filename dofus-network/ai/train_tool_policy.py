@@ -38,6 +38,25 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+# Descriptor-scored head: the action space is data, not output neurons. The
+# capability descriptor encoder lives beside this file (``capability_head.py``)
+# and is imported rather than duplicated, so training and serving cannot drift.
+# On a Kaggle kernel, upload both files next to each other.
+try:  # ``python ai/train_tool_policy.py``
+    from capability_head import (
+        descriptor_manifest,
+        descriptor_table,
+        load_capability_records,
+        merged_tool_order,
+    )
+except ImportError:  # ``python -m ai.train_tool_policy``
+    from ai.capability_head import (  # type: ignore
+        descriptor_manifest,
+        descriptor_table,
+        load_capability_records,
+        merged_tool_order,
+    )
+
 # The learned label order. This used to be an 18-entry copy of the live action
 # space; `fight.state`, `fight.plan` and `fight.estimate` were added to the
 # registry later and never here, so a regenerated corpus produced labels the
@@ -221,6 +240,25 @@ def class_weights(labels: np.ndarray, mode: str) -> Optional[np.ndarray]:
     return w.astype("float32")
 
 
+def _forward(model: Any, features: Any, head: str, descriptors: Any) -> Any:
+    if head == "capability":
+        return model(features, descriptors)
+    return model(features)
+
+
+def _label_logits(logits: Any, head: str, label_rows: Any) -> Any:
+    """Restrict the dynamic score matrix to the labels the corpus knows.
+
+    The head scores every registry capability, but the corpus only labels the
+    learned subset. The loss must not teach "this untrained tool is wrong" on
+    every row; it should simply have no opinion about it yet. Restricting the
+    softmax to the labelled rows does exactly that.
+    """
+    if head == "capability":
+        return logits.index_select(1, label_rows)
+    return logits
+
+
 def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
               x: np.ndarray, y: np.ndarray, weight: np.ndarray,
               vx: np.ndarray, vy: np.ndarray, vteacher: np.ndarray,
@@ -230,21 +268,39 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
               vgains: Optional[np.ndarray] = None,
               dropout: float = 0.0, weight_decay: float = 1e-4,
               cw: Optional[np.ndarray] = None,
-              select: str = "gain") -> Dict[str, Any]:
+              select: str = "gain", head: str = "capability",
+              descriptors: Optional[np.ndarray] = None,
+              label_rows: Optional[np.ndarray] = None,
+              d_model: int = 128) -> Dict[str, Any]:
     import torch
     import torch.nn as nn
 
     torch.manual_seed(seed)
     width = x.shape[1]
-    layers: List[Any] = []
-    dims = [width] + [hidden] * depth + [len(DEFAULT_TOOLS)]
-    for i in range(len(dims) - 1):
-        layers.append(nn.Linear(dims[i], dims[i + 1]))
-        if i < len(dims) - 2:
-            layers.append(nn.GELU())
-            if dropout > 0:
-                layers.append(nn.Dropout(dropout))
-    model = nn.Sequential(*layers).to(device)
+    if head == "capability":
+        if descriptors is None or label_rows is None:
+            raise ValueError("capability head needs descriptors and label_rows")
+        try:
+            from capability_torch import build_head
+        except ImportError:
+            from ai.capability_torch import build_head  # type: ignore
+        model = build_head(width, hidden=hidden, depth=depth,
+                           descriptor_dim=int(descriptors.shape[1]),
+                           d_model=d_model, dropout=dropout).to(device)
+        descriptor_tensor = torch.from_numpy(descriptors).to(device)
+        label_tensor = torch.from_numpy(label_rows).to(device)
+    else:
+        layers: List[Any] = []
+        dims = [width] + [hidden] * depth + [len(DEFAULT_TOOLS)]
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            if i < len(dims) - 2:
+                layers.append(nn.GELU())
+                if dropout > 0:
+                    layers.append(nn.Dropout(dropout))
+        model = nn.Sequential(*layers).to(device)
+        descriptor_tensor = None
+        label_tensor = None
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     tx = torch.from_numpy(x).to(device)
@@ -274,7 +330,9 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
             if len(idx) == 0:
                 continue
             opt.zero_grad()
-            logits = model(tx[idx])
+            logits = _label_logits(
+                _forward(model, tx[idx], head, descriptor_tensor),
+                head, label_tensor)
             if ttarget is not None:
                 # Soft targets: cross-entropy against the fork's own distribution.
                 logp = torch.log_softmax(logits, dim=1)
@@ -294,7 +352,8 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
 
         model.eval()
         with torch.no_grad():
-            logits = model(vxt)
+            logits = _label_logits(
+                _forward(model, vxt, head, descriptor_tensor), head, label_tensor)
             vacc = float((logits.argmax(1) == vyt).float().mean())
             vgain = 0.0
             if vgt is not None:
@@ -319,8 +378,12 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
         model.load_state_dict(best["state"])
     model.eval()
     with torch.no_grad():
-        probs = torch.softmax(model(vxt), dim=1).cpu().numpy()
-        train_acc = float((model(tx).argmax(1) == ty).float().mean())
+        probs = torch.softmax(
+            _label_logits(_forward(model, vxt, head, descriptor_tensor),
+                          head, label_tensor), dim=1).cpu().numpy()
+        train_acc = float((
+            _label_logits(_forward(model, tx, head, descriptor_tensor),
+                          head, label_tensor).argmax(1) == ty).float().mean())
 
     pred = probs.argmax(1)
     acc = float((pred == vy).mean())
@@ -357,6 +420,8 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
         "lr": lr, "batch": batch, "dropout": dropout,
         "weight_decay": weight_decay, "class_weight": "none" if cw is None else "custom",
         "select": select,
+        "head": head, "d_model": d_model,
+        "descriptors": descriptors, "label_rows": label_rows,
         "per_class": table, "confusion_top": top_confusions(probs, vy, DEFAULT_TOOLS),
         "decision": decision,
         "model": model, "probs": probs,
@@ -393,6 +458,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                          "+0.0003 decision gain and costs 0.16 ECE, so it is off by "
                          "default and kept only to make that comparison reproducible")
     ap.add_argument("--temperature", type=float, default=0.08)
+    ap.add_argument("--head", choices=("capability", "mlp"), default="capability",
+                    help="capability scores state against registry descriptors; mlp is "
+                         "the legacy fixed-width classifier kept for reproducing old runs")
+    ap.add_argument("--d-model", type=int, default=128,
+                    help="shared state/descriptor projection width for the capability head")
+    ap.add_argument("--capabilities", type=Path, default=None,
+                    help="capability registry JSON (default: data/capabilities.json)")
     args = ap.parse_args(argv)
 
     import torch
@@ -402,6 +474,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     device = args.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    records = load_capability_records(args.capabilities)
+    capability_order = merged_tool_order(DEFAULT_TOOLS, records)
+    capability_names, descriptor_matrix = descriptor_table(capability_order, records)
+    label_rows = np.asarray([capability_names.index(name) for name in DEFAULT_TOOLS],
+                            dtype="int64")
+    if args.head == "capability":
+        print("capability head: %d descriptors (%d learned, %d registry-only), dim %d"
+              % (len(capability_names), len(DEFAULT_TOOLS),
+                 len(capability_names) - len(DEFAULT_TOOLS), descriptor_matrix.shape[1]))
+    else:
+        descriptor_matrix = None
+        label_rows = None
 
     train_path = args.data / "train.jsonl"
     val_path = args.data / "val.jsonl"
@@ -445,7 +530,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                       x, y, weight, vx, vy, vteacher, device, args.seed,
                       quiet=args.sweep, target=target, gains=gains, vgains=vgains,
                       dropout=args.dropout, weight_decay=args.weight_decay,
-                      cw=cw, select=args.select)
+                      cw=cw, select=args.select, head=args.head,
+                      descriptors=descriptor_matrix, label_rows=label_rows,
+                      d_model=args.d_model)
         results.append(r)
         print("   val_acc %.4f  teacher %.4f  lift %+.4f  macroF1 %.4f  ECE %.4f  params %d"
               % (r["val_accuracy"], r["teacher_agreement_on_val"],
@@ -468,8 +555,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("  best-to-worst spread: %+.4f"
               % (rank(best) - rank(results[0])))
 
-    report = {k: v for k, v in best.items() if k not in ("model", "probs")}
-    report["sweep"] = [{k: v for k, v in r.items() if k not in ("model", "probs", "per_class", "confusion_top")}
+    report = {k: v for k, v in best.items()
+              if k not in ("model", "probs", "descriptors", "label_rows")}
+    report["sweep"] = [{k: v for k, v in r.items()
+                        if k not in ("model", "probs", "per_class", "confusion_top",
+                                     "descriptors", "label_rows")}
                        for r in results]
     print("\n" + json.dumps({k: v for k, v in report.items()
                              if k not in ("per_class", "confusion_top", "sweep")}, indent=1))
@@ -481,11 +571,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     out = args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     model = best["model"]
-    torch.onnx.export(model, torch.zeros(1, width, device=device), str(out),
-                      input_names=["features"], output_names=["logits"],
-                      opset_version=17, dynamo=False,
-                      dynamic_axes={"features": {0: "batch"}, "logits": {0: "batch"}})
+    if best["head"] == "capability":
+        descriptor_tensor = torch.from_numpy(best["descriptors"]).to(device)
+        torch.onnx.export(model,
+                          (torch.zeros(1, width, device=device), descriptor_tensor),
+                          str(out),
+                          input_names=["features", "descriptors"],
+                          output_names=["logits"], opset_version=17, dynamo=False,
+                          dynamic_axes={"features": {0: "batch"},
+                                        "descriptors": {0: "tools"},
+                                        "logits": {0: "batch", 1: "tools"}})
+    else:
+        torch.onnx.export(model, torch.zeros(1, width, device=device), str(out),
+                          input_names=["features"], output_names=["logits"],
+                          opset_version=17, dynamo=False,
+                          dynamic_axes={"features": {0: "batch"}, "logits": {0: "batch"}})
     meta = {"kind": "tool-policy", "tools": DEFAULT_TOOLS, "features": int(width),
+            "head": best["head"],
             "val_accuracy": report["val_accuracy"],
             "teacher_agreement": report["teacher_agreement_on_val"],
             "ece": report["ece"], "params": report["params"],
@@ -496,6 +598,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             "data": str(args.data), "train_rows": int(len(y)),
             "val_rows": int(len(vy)), "val_split": "whole episodes",
             "rows": int(len(y) + len(vy))}
+    if best["head"] == "capability":
+        # Serving rebuilds the same matrix from the live registry, so a
+        # capability appended after this checkpoint is scored without touching
+        # a weight. The copy here is a fallback for a runtime with no registry.
+        meta.update(descriptor_manifest(capability_order, records))
+        meta["trained_tools"] = list(DEFAULT_TOOLS)
+        meta["trained_rows"] = [int(value) for value in best["label_rows"]]
+        meta["d_model"] = int(args.d_model)
+        meta["untrained_penalty"] = 2.0
     out.with_suffix(".json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     (out.parent / "tool_policy_report.json").write_text(
         json.dumps(report, indent=1), encoding="utf-8")

@@ -6,6 +6,17 @@ echo    DOFUS TOUCH FARM 1-CLICK COMPILER
 echo ==========================================================
 echo.
 
+REM desktop\ requires C# 6+. Build.exe refuses to run without a Roslyn compiler, but
+REM the climb to that point spans three csc invocations; checking here turns a cryptic
+REM late failure into one line before anything is built.
+where dotnet >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] No .NET SDK found on PATH. desktop\ requires C# 6+ Roslyn.
+    echo         Install it with:  winget install Microsoft.DotNet.SDK.8
+    echo         or from https://dotnet.microsoft.com/download
+    exit /b 2
+)
+
 set CSC="C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if not exist %CSC% (
     set CSC="C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -25,7 +36,7 @@ if errorlevel 1 (
 ) else (
     echo [1/3] Building dofus-net-proxy.exe from scripts\dofus-net-proxy.go...
     pushd scripts
-    go build -ldflags "-s -w" -o ..\dofus-net-proxy.exe dofus-net-proxy.go
+    go build -ldflags "-s -w" -o ..\dofus-net-proxy.exe dofus-net-proxy.go contracts_gen.go
     REM `if errorlevel` is evaluated at run time; `%ERRORLEVEL%` inside a block is expanded when
     REM the block is parsed, so it would test the value from before go ran.
     if errorlevel 1 (

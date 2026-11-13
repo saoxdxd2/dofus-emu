@@ -6,11 +6,7 @@ import (
 	"cmp"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,7 +14,6 @@ import (
 	"io"
 	"log"
 	"maps"
-	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -40,6 +35,12 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
+
+	npcache "github.com/dofus-emu/dofus-net-proxy/netproxy/cache"
+	npdns "github.com/dofus-emu/dofus-net-proxy/netproxy/dns"
+	nppatch "github.com/dofus-emu/dofus-net-proxy/netproxy/patcher"
+	npprefetch "github.com/dofus-emu/dofus-net-proxy/netproxy/prefetch"
+	nptunnel "github.com/dofus-emu/dofus-net-proxy/netproxy/tunnel"
 )
 
 var (
@@ -102,123 +103,17 @@ func headerSet(keys ...string) map[string]struct{} {
 	return m
 }
 
-type closeWriter interface{ CloseWrite() error }
+type closeWriter = nptunnel.CloseWriter
 
-type bufferedConn struct {
-	io.Reader
-	net.Conn
-}
+type bufferedConn = nptunnel.BufferedConn
 
-func (b *bufferedConn) Read(p []byte) (int, error) { return b.Reader.Read(p) }
+type connDialer = nptunnel.ConnDialer
 
-type connDialer struct{ net.Conn }
+type DNSCacheEntry = npdns.CacheEntry
 
-func (d connDialer) Dial(_, _ string) (net.Conn, error) { return d.Conn, nil }
+type FastDNSResolver = npdns.Resolver
 
-type DNSCacheEntry struct {
-	IPs       []net.IP
-	ExpiresAt time.Time
-}
-
-type dnsLookupCall struct {
-	wg  sync.WaitGroup
-	ips []net.IP
-	err error
-}
-
-type FastDNSResolver struct {
-	mu         sync.RWMutex
-	cache      map[string]DNSCacheEntry
-	inflight   map[string]*dnsLookupCall
-	sf         singleflight.Group
-	rr         uint64
-	ttl        time.Duration
-	customDNS  string
-	netResolve *net.Resolver
-}
-
-func NewFastDNSResolver(customDNS string, ttl time.Duration) *FastDNSResolver {
-	r := &FastDNSResolver{
-		cache:      make(map[string]DNSCacheEntry, 128),
-		inflight:   make(map[string]*dnsLookupCall),
-		ttl:        ttl,
-		customDNS:  customDNS,
-		netResolve: net.DefaultResolver,
-	}
-	if customDNS != "" {
-		customDNS = ensureHostPort(customDNS, "53")
-		d := net.Dialer{Timeout: 3 * time.Second}
-		r.netResolve = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return d.DialContext(ctx, "udp", customDNS)
-			},
-		}
-	}
-	return r
-}
-
-func (r *FastDNSResolver) pickIP(ips []net.IP) []net.IP {
-	if len(ips) <= 1 {
-		return slices.Clone(ips)
-	}
-	r.mu.Lock()
-	idx := r.rr % uint64(len(ips))
-	r.rr++
-	r.mu.Unlock()
-	return []net.IP{ips[idx]}
-}
-
-func (r *FastDNSResolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return []net.IP{ip}, nil
-	}
-	now := time.Now()
-	r.mu.RLock()
-	entry, found := r.cache[host]
-	r.mu.RUnlock()
-	if found && now.Before(entry.ExpiresAt) {
-		return r.pickIP(entry.IPs), nil
-	}
-	v, err, _ := r.sf.Do(host, func() (any, error) {
-		ips, err := r.netResolve.LookupIP(ctx, "ip4", host)
-		if err != nil && r.netResolve != net.DefaultResolver {
-			ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", host)
-		}
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if len(r.cache) >= 1024 {
-			maps.DeleteFunc(r.cache, func(_ string, e DNSCacheEntry) bool { return now.After(e.ExpiresAt) })
-			if len(r.cache) >= 1024 {
-				clear(r.cache)
-			}
-		}
-		if err == nil {
-			r.cache[host] = DNSCacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl)}
-		}
-		return ips, err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return r.pickIP(v.([]net.IP)), nil
-}
-
-func (r *FastDNSResolver) resolveAddr(ctx context.Context, addr, defPort string) string {
-	host, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		host, portStr = addr, defPort
-	}
-	if r != nil {
-		if ips, err := r.Lookup(ctx, host); err == nil && len(ips) > 0 {
-			return net.JoinHostPort(ips[0].String(), portStr)
-		}
-	}
-	return addr
-}
+var NewFastDNSResolver = npdns.NewResolver
 
 func stripWebViewTokens(ua string) string {
 	var b strings.Builder
@@ -322,26 +217,10 @@ func watchUpstream(u *url.URL, raw string) {
 	}
 }
 
-func socksAuth(u *url.URL) *xproxy.Auth {
-	if u == nil || u.User == nil {
-		return nil
-	}
-	pass, _ := u.User.Password()
-	return &xproxy.Auth{User: u.User.Username(), Password: pass}
-}
+func socksAuth(u *url.URL) *xproxy.Auth { return nptunnel.SocksAuth(u) }
 
 func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
-	base := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
-	dialer, err := xproxy.SOCKS5("tcp", ensureHostPort(proxyURL.Host, "1080"), socksAuth(proxyURL), base)
-	if err != nil {
-		return nil, err
-	}
-	if cd, ok := dialer.(xproxy.ContextDialer); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		return cd.DialContext(ctx, "tcp", targetHostPort)
-	}
-	return dialer.Dial("tcp", targetHostPort)
+	return nptunnel.DialSocks5(proxyURL, targetHostPort, timeout)
 }
 
 type ProxyTelemetry struct {
@@ -415,31 +294,9 @@ type hopProbe struct {
 	checked time.Time
 }
 
-type prefetchJob struct {
-	target string
-	id     int64
-	depth  int
-}
+type modPatchOp = nppatch.PatchOp
 
-type negEntry struct {
-	status int
-	at     time.Time
-}
-
-type modPatchOp struct {
-	Op    string `json:"op"`
-	Path  string `json:"path"`
-	Value any    `json:"value"`
-}
-
-type modRule struct {
-	Match       string       `json:"match"`
-	Action      string       `json:"action"`
-	Status      int          `json:"status"`
-	File        string       `json:"file"`
-	ContentType string       `json:"contentType"`
-	Patch       []modPatchOp `json:"patch"`
-}
+type modRule = nppatch.Rule
 
 type ProxyServer struct {
 	resolver                                    *FastDNSResolver
@@ -464,7 +321,7 @@ type ProxyServer struct {
 	// move when none does, or a dead egress leaves the client on a login screen forever.
 	gameMu                                              sync.Mutex
 	gameConns                                           map[*gameTunnel]struct{}
-	prefetchMu, prefetchLogMu, mirrorMu, negMu, modsMu  sync.Mutex
+	prefetchMu, prefetchLogMu, mirrorMu, modsMu  sync.Mutex
 	exitBlockedUntil, modsChecked, modsRulesMod         time.Time
 	cacheHits, cacheMisses                              uint64
 	ticks, port                                         int
@@ -476,18 +333,20 @@ type ProxyServer struct {
 	maxTextureSize, referer, refererRoot                string
 	hopDirty, quiet, allowDirect, prefetch, mirrorBuilt bool
 	dests                                               []string
-	disguiseOnce, prefetchOnce                          sync.Once
+	disguiseOnce                                        sync.Once
 	cachedDisguise                                      string
 	disguiseBytes                                       []byte
 	client                                              *http.Client
 	telemetry                                           ProxyTelemetry
-	prefetchQ                                           chan prefetchJob
+	prefetchPool                                        *npprefetch.Pool
 	prefetchSeen                                        map[int64]time.Time
 	reqLogFile, prefetchLogFile                         *os.File
 	reqLogSize, reqLogRotateAt, clientInflight          int64
 	mirrorIndex                                         map[string]struct{}
 	warmSF                                              singleflight.Group
-	negCache                                            map[string]negEntry
+	cacheBudget                                         *npcache.Budget
+	cachePool                                           *npcache.BufferPool
+	neg                                                 *npcache.NegativeCache
 	modsRules                                           []modRule
 	modsRes                                             []*regexp.Regexp
 }
@@ -526,7 +385,7 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 			if isSocks {
 				return dialUpstreamSocks5(upstreamPrimary, addr, 6*time.Second)
 			}
-			return dialer.DialContext(ctx, network, resolver.resolveAddr(ctx, addr, "80"))
+			return dialer.DialContext(ctx, network, resolver.ResolveAddr(ctx, addr, "80"))
 		},
 	}
 	if upstreamPrimary != nil && !isSocks {
@@ -536,6 +395,9 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		hopIdx:         make(map[string]hopProbe),
 		resolver:       resolver,
 		cacheDir:       cacheDir,
+		cacheBudget:    npcache.NewBudget(npcache.DefaultBudget),
+		cachePool:      npcache.NewBufferPool(npcache.BufferSize),
+		neg:            npcache.NewNegativeCache(prefetchNegativeTTL),
 		quiet:          quiet,
 		port:           port,
 		authToken:      authToken,
@@ -720,69 +582,14 @@ func parseUpstreamList(raw string) []*url.URL {
 	return out
 }
 
-func readConnectResponse(conn net.Conn) error {
-	var buf [1]byte
-	var cur []byte
-	for total := 0; total <= 8192; {
-		if _, err := conn.Read(buf[:]); err != nil {
-			return err
-		}
-		total++
-		switch buf[0] {
-		case '\r':
-		case '\n':
-			if len(cur) == 0 {
-				return nil
-			}
-			if s := string(cur); strings.HasPrefix(s, "HTTP/") {
-				if f := strings.Fields(s); len(f) >= 2 && f[1] != "200" {
-					return fmt.Errorf("proxy answered %s", s)
-				}
-			}
-			cur = cur[:0]
-		default:
-			cur = append(cur, buf[0])
-		}
-	}
-	return errors.New("CONNECT reply too long")
-}
+func readConnectResponse(conn net.Conn) error { return nptunnel.ReadConnectResponse(conn) }
 
 func httpConnect(conn net.Conn, dest, userinfo, ua string, timeout time.Duration) error {
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-		return err
-	}
-	defer func() { _ = conn.SetDeadline(time.Time{}) }()
-	auth := ""
-	if userinfo != "" {
-		auth = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(userinfo)) + "\r\n"
-	}
-	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n%s\r\n", dest, dest, ua, auth)
-	if _, err := io.WriteString(conn, req); err != nil {
-		return err
-	}
-	return readConnectResponse(conn)
+	return nptunnel.HTTPConnect(conn, dest, userinfo, ua, timeout)
 }
 
 func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua string) error {
-	dest := net.JoinHostPort(host, strconv.Itoa(port))
-	if strings.HasPrefix(strings.ToLower(scheme), "socks5") {
-		if err := conn.SetDeadline(time.Now().Add(6 * time.Second)); err != nil {
-			return err
-		}
-		defer func() { _ = conn.SetDeadline(time.Time{}) }()
-		var auth *xproxy.Auth
-		if userinfo != "" {
-			user, pass, _ := strings.Cut(userinfo, ":")
-			auth = &xproxy.Auth{User: user, Password: pass}
-		}
-		d, err := xproxy.SOCKS5("tcp", "0.0.0.0:0", auth, connDialer{conn})
-		if err != nil {
-			return err
-		}
-		_, err = d.Dial("tcp", dest)
-		return err
-	}
-	return httpConnect(conn, dest, userinfo, ua, 6*time.Second)
+	return nptunnel.ConnectThrough(conn, scheme, host, port, userinfo, ua)
 }
 
 func (p *ProxyServer) rememberDest(dest string) {
@@ -1091,39 +898,12 @@ func (p *ProxyServer) pinRecentlyDead(u *url.URL) bool {
 }
 
 // gameTunnel is one game connection's last sign of life.
-type gameTunnel struct {
-	lastActivity atomic.Int64
-	lastReceived atomic.Int64
-}
-
-func (g *gameTunnel) touch() {
-	g.lastActivity.Store(time.Now().UnixNano())
-}
-
-// touchReceived records bytes that actually came back from the server. A
-// half-open login socket can accept the client's TLS hello and then go silent;
-// that write must not make the pinned exit look alive.
-func (g *gameTunnel) touchReceived() {
-	now := time.Now().UnixNano()
-	g.lastActivity.Store(now)
-	g.lastReceived.Store(now)
-}
+type gameTunnel = nptunnel.GameTunnel
 
 // activityWriter marks the session alive only when the peer accepted bytes. Reading from the
 // client into a dead upstream never reaches this, which is exactly the distinction the pin needs:
 // a half-open socket must not look like a session worth preserving.
-type activityWriter struct {
-	w     io.Writer
-	touch func()
-}
-
-func (a activityWriter) Write(b []byte) (int, error) {
-	n, err := a.w.Write(b)
-	if n > 0 {
-		a.touch()
-	}
-	return n, err
-}
+type activityWriter = nptunnel.ActivityWriter
 
 // registerGameTunnelFor registers only the actual game socket, not the login
 // page's own HTTPS traffic to Ankama. Both share the pinned exit, but a page
@@ -1166,7 +946,7 @@ func (p *ProxyServer) liveGameSessions(window time.Duration) int {
 	defer p.gameMu.Unlock()
 	live := 0
 	for t := range p.gameConns {
-		if t.lastReceived.Load() >= cutoff {
+		if t.ReceivedSince(cutoff) {
 			live++
 		}
 	}
@@ -1308,7 +1088,7 @@ func (p *ProxyServer) recoverPin(ctx context.Context, dest, socksTarget string, 
 }
 
 func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
-	socksTarget := p.resolver.resolveAddr(ctx, dest, "443")
+	socksTarget := p.resolver.ResolveAddr(ctx, dest, "443")
 	p.upstreamMu.Lock()
 	preferred := p.lastGood
 	p.upstreamMu.Unlock()
@@ -1444,7 +1224,7 @@ func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (ne
 }
 
 func (p *ProxyServer) dialDirect(ctx context.Context, dest string) (net.Conn, error) {
-	target := p.resolver.resolveAddr(ctx, dest, "443")
+	target := p.resolver.ResolveAddr(ctx, dest, "443")
 	return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", target)
 }
 
@@ -1555,8 +1335,29 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			s := p.telemetry.snapshot()
-			_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s","rtt_ms":%.2f,"rtt_avg_ms":%.2f,"sent_bytes":%d,"recv_bytes":%d,"conns_total":%d,"conns_failed":%d,"conns_active":%d,"timestamp":%d}`,
-				p.port, p.model, s.lastRTTMs, s.avgRTTMs, s.bytesSent, s.bytesRecv, s.connsTotal, s.connsFailed, s.connsActive, time.Now().Unix())
+			// One encoder for the wire document. `model` is user-supplied and used to
+			// be interpolated into a %s inside a JSON template: one quote in a model
+			// name produced an unparseable response. json.Marshal escapes it, and the
+			// schema in schema/proxy_telemetry.schema.json is what every reader checks.
+			document := ProxyTelemetryDocument{
+				Status:      "ok",
+				Port:        int64(p.port),
+				Model:       p.model,
+				RttMs:       s.lastRTTMs,
+				RttAvgMs:    s.avgRTTMs,
+				SentBytes:   int64(s.bytesSent),
+				RecvBytes:   int64(s.bytesRecv),
+				ConnsTotal:  int64(s.connsTotal),
+				ConnsFailed: int64(s.connsFailed),
+				ConnsActive: s.connsActive,
+				Timestamp:   time.Now().Unix(),
+			}
+			encoded, err := EncodeProxyTelemetryDocument(&document)
+			if err != nil {
+				http.Error(w, "telemetry encode failed", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write(encoded)
 			return
 		}
 	}
@@ -1609,7 +1410,10 @@ func (p *ProxyServer) auditOutboundIP() []byte {
 		return errResp(err.Error(), "LOOKUP_OFFLINE")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return errResp(err.Error(), "LOOKUP_READ_ERROR")
+	}
 	var info struct {
 		Status, Query, ISP, Org, AS, Country, City, Message string
 		Mobile, Proxy, Hosting                              bool
@@ -1635,29 +1439,13 @@ func (p *ProxyServer) auditOutboundIP() []byte {
 	return res
 }
 
-func tuneTCPConn(c net.Conn) {
-	_ = c.SetDeadline(time.Time{})
-	if tc, ok := c.(*net.TCPConn); ok {
-		_ = tc.SetKeepAlive(true)
-		_ = tc.SetKeepAlivePeriod(30 * time.Second)
-		_ = tc.SetNoDelay(true)
-	}
-}
+func tuneTCPConn(c net.Conn) { nptunnel.TuneTCPConn(c) }
 
-func halfCloseOrClose(c net.Conn) {
-	if cw, ok := c.(closeWriter); ok {
-		_ = cw.CloseWrite()
-	} else {
-		_ = c.Close()
-	}
-}
+func halfCloseOrClose(c net.Conn) { nptunnel.HalfCloseOrClose(c) }
 
 // tunnelPrelude carries the bytes the first-byte proof moved before full piping began.
 // They are written to their destinations first so no byte of the stream is lost.
-type tunnelPrelude struct {
-	toServer []byte
-	toClient []byte
-}
+type tunnelPrelude = nptunnel.Prelude
 
 func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel, pre *tunnelPrelude) {
 	tuneTCPConn(clientConn)
@@ -1667,7 +1455,7 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 	copyDir := func(dst, src net.Conn, counter *int64, lead []byte, buffered *bufio.ReadWriter, touch func()) {
 		out := io.Writer(dst)
 		if tunnel != nil && touch != nil {
-			out = activityWriter{w: dst, touch: touch}
+			out = activityWriter{W: dst, Touch: touch}
 		}
 		if len(lead) > 0 {
 			n, _ := out.Write(lead)
@@ -1684,12 +1472,12 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 		halfCloseOrClose(dst)
 		done <- struct{}{}
 	}
-	var toServer, toClient []byte
+	var leadServer, leadClient []byte
 	if pre != nil {
-		toServer, toClient = pre.toServer, pre.toClient
+		leadServer, leadClient = pre.ToServer, pre.ToClient
 	}
-	go copyDir(destConn, clientConn, &sentBytes, toServer, clientBuf, tunnel.touch)
-	go copyDir(clientConn, destConn, &recvBytes, toClient, nil, tunnel.touchReceived)
+	go copyDir(destConn, clientConn, &sentBytes, leadServer, clientBuf, tunnel.Touch)
+	go copyDir(clientConn, destConn, &recvBytes, leadClient, nil, tunnel.TouchReceived)
 	<-done
 	drainTimer := time.NewTimer(4 * time.Second)
 	select {
@@ -1736,53 +1524,14 @@ func (p *ProxyServer) dialChainRoute(ctx context.Context, dest string) (net.Conn
 // after the first read, finish the record so the proof waits for an answer that can
 // actually come instead of timing out on a half-delivered handshake.
 func readClientPrelude(c net.Conn, clientBuf *bufio.ReadWriter) []byte {
-	var out []byte
-	if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
-		n := clientBuf.Reader.Buffered()
-		b := make([]byte, n)
-		if _, err := io.ReadFull(clientBuf, b); err == nil {
-			out = b
-		}
-	}
-	if len(out) == 0 {
-		_ = c.SetReadDeadline(time.Now().Add(firstClientPayloadWait))
-		b := make([]byte, 8192)
-		n, _ := c.Read(b)
-		_ = c.SetReadDeadline(time.Time{})
-		if n > 0 {
-			out = b[:n]
-		}
-	}
-	if len(out) >= 5 && out[0] == 0x16 {
-		if need := 5 + int(binary.BigEndian.Uint16(out[3:5])); need > len(out) && need <= 5+18432 {
-			rest := make([]byte, need-len(out))
-			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-			n, _ := io.ReadFull(c, rest)
-			_ = c.SetReadDeadline(time.Time{})
-			if n > 0 {
-				out = append(out, rest[:n]...)
-			}
-		}
-	}
-	return out
+	return nptunnel.ReadClientPrelude(c, clientBuf, firstClientPayloadWait)
 }
 
 // proveRoute sends the client's opening bytes down an established tunnel and waits for
 // the first byte back. A CONNECT that only reached the proxy's front door looks the same
 // as a working one until this read: the proxy accepts, then forwards nothing.
 func proveRoute(destConn net.Conn, payload []byte) ([]byte, bool) {
-	_ = destConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	if _, err := destConn.Write(payload); err != nil {
-		return nil, false
-	}
-	_ = destConn.SetDeadline(time.Now().Add(firstByteProveTimeout))
-	buf := make([]byte, 8192)
-	n, _ := destConn.Read(buf)
-	_ = destConn.SetDeadline(time.Time{})
-	if n > 0 {
-		return buf[:n], true
-	}
-	return nil, false
+	return nptunnel.ProveRoute(destConn, payload, firstByteProveTimeout)
 }
 
 // proveGameUpstream gates the session on a byte from the far side.
@@ -1795,18 +1544,18 @@ func proveRoute(destConn net.Conn, payload []byte) ([]byte, bool) {
 // changing the hop cannot split a session; after it, the pin is never touched.
 func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, routed *url.URL, dest string) (net.Conn, *url.URL, *tunnelPrelude) {
 	first := readClientPrelude(clientConn, clientBuf)
-	pre := &tunnelPrelude{toServer: first}
+	pre := &tunnelPrelude{ToServer: first}
 	if len(first) == 0 {
 		// The client has not spoken yet; there is nothing to prove and nothing to replay.
 		return destConn, routed, nil
 	}
 	if answer, ok := proveRoute(destConn, first); ok {
-		pre.toClient = answer
+		pre.ToClient = answer
 		return destConn, routed, pre
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
-		socksTarget := p.resolver.resolveAddr(ctx, dest, "443")
+		socksTarget := p.resolver.ResolveAddr(ctx, dest, "443")
 		next, winner, moved, err := p.recoverPin(ctx, dest, socksTarget, 6*time.Second, routed)
 		cancel()
 		if !moved {
@@ -1823,7 +1572,7 @@ func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.Re
 		log.Printf("[UPSTREAM] %s swallowed the game handshake for %s; moving to %s before any byte was delivered", routed.Redacted(), dest, winner.Redacted())
 		destConn, routed = next, winner
 		if answer, ok := proveRoute(destConn, first); ok {
-			pre.toClient = answer
+			pre.ToClient = answer
 			return destConn, routed, pre
 		}
 		p.markPinDead(routed)
@@ -1913,35 +1662,9 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, nil)
 }
 
-func atomicReplaceFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		time.Sleep(20 * time.Millisecond)
-		_ = os.Remove(dst)
-		if err = os.Rename(src, dst); err == nil {
-			return nil
-		}
-	}
-	oldPath := dst + ".old." + strconv.FormatInt(time.Now().UnixNano(), 10)
-	if os.Rename(dst, oldPath) == nil {
-		_ = os.Remove(oldPath)
-		if os.Rename(src, dst) == nil {
-			return nil
-		}
-	}
-	return err
-}
+func atomicReplaceFile(src, dst string) error { return npcache.AtomicReplaceFile(src, dst) }
 
-func detectMimeType(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
-	if m, ok := extMimeMap[ext]; ok {
-		return m
-	}
-	return cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
-}
+func detectMimeType(path string) string { return npcache.DetectMimeType(path) }
 
 func (p *ProxyServer) getDisguiseContent() string {
 	p.disguiseOnce.Do(func() {
@@ -2249,8 +1972,7 @@ func (p *ProxyServer) applyHotlinkHeaders(h http.Header, host string) {
 }
 
 func (p *ProxyServer) assetCachePath(target string) string {
-	sum := sha256.Sum256([]byte(target))
-	return filepath.Join(p.cacheDir, hex.EncodeToString(sum[:16]))
+	return npcache.AssetPath(p.cacheDir, target)
 }
 
 func setLongAssetCacheHeaders(h http.Header) {
@@ -2325,9 +2047,7 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 	tf, err := os.Create(tmpPath)
 	if err != nil {
 		if dst != nil {
-			buf := bufPool.Get().([]byte)
-			_, _ = io.CopyBuffer(dst, r, buf)
-			bufPool.Put(buf)
+			_, _ = npcache.CopyBounded(dst, r, p.cacheBudget, p.cachePool, expectedLen)
 		}
 		return err
 	}
@@ -2335,9 +2055,7 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 	if dst != nil {
 		w = io.MultiWriter(dst, tf)
 	}
-	buf := bufPool.Get().([]byte)
-	written, copyErr := io.CopyBuffer(w, r, buf)
-	bufPool.Put(buf)
+	written, copyErr := npcache.CopyBounded(w, r, p.cacheBudget, p.cachePool, expectedLen)
 	_ = tf.Close()
 	if copyErr != nil || (dst == nil && written == 0) || (expectedLen > 0 && written < expectedLen) {
 		_ = os.Remove(tmpPath)
@@ -2359,27 +2077,10 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 	return nil
 }
 
-func mirrorRelPath(target string) string {
-	u, err := url.Parse(target)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return ""
-	}
-	host := strings.ToLower(u.Hostname())
-	if host == "" || strings.ContainsAny(host, `<>:"|?*\`) || u.Path == "" || u.Path == "/" ||
-		strings.Contains(u.Path, "..") || strings.ContainsAny(u.Path, `<>:"|*\`) {
-		return ""
-	}
-	return host + u.Path
-}
+func mirrorRelPath(target string) string { return npcache.MirrorRelPath(target) }
 
 func (p *ProxyServer) mirrorPathFor(target string) string {
-	if p.cacheDir == "" {
-		return ""
-	}
-	if rel := mirrorRelPath(target); rel != "" {
-		return filepath.Join(p.cacheDir, "files", filepath.FromSlash(rel))
-	}
-	return ""
+	return npcache.MirrorPathFor(p.cacheDir, target)
 }
 
 func (p *ProxyServer) mirrorCachedFile(target, cacheFilePath string) {
@@ -2407,7 +2108,7 @@ func (p *ProxyServer) mirrorCachedFile(target, cacheFilePath string) {
 	if err != nil {
 		return
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := npcache.CopyBounded(out, in, p.cacheBudget, p.cachePool, 0); err != nil {
 		_ = out.Close()
 		_ = os.Remove(mirror)
 		return
@@ -2638,14 +2339,43 @@ func (p *ProxyServer) serveModOverride(w http.ResponseWriter, r *http.Request, r
 }
 
 func (p *ProxyServer) serveModPatched(w http.ResponseWriter, r *http.Request, rule modRule, targetStr string) bool {
-	body, ct, ok := p.patchedAssetBody(r.Context(), targetStr, rule)
-	if !ok {
-		return false
+	cacheFilePath := p.assetCachePath(targetStr)
+	if _, err := os.Stat(cacheFilePath); err != nil {
+		if ok, _, status, errText := p.warmAssetCacheDetail(r.Context(), targetStr); !ok {
+			p.prefetchLog("[MODS] patch base fetch failed status=%d err=%q %s", status, errText, targetStr)
+			return false
+		}
 	}
 	h := w.Header()
 	setCORSHeaders(h, r, "GET, HEAD, OPTIONS")
 	setLongAssetCacheHeaders(h)
-	h.Set("Content-Type", cmp.Or(rule.ContentType, ct, "application/json"))
+	metaBytes, _ := os.ReadFile(cacheFilePath + ".meta")
+	baseCT := strings.TrimSpace(string(metaBytes))
+
+	// "replace" streams the cached file through a bounded find/replace window:
+	// multi-megabyte bundles never have to be materialized just to swap a token.
+	if rule.Action == "replace" && rule.Find != "" {
+		h.Set("Content-Type", cmp.Or(rule.ContentType, baseCT, "application/octet-stream"))
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodHead {
+			return true
+		}
+		f, err := os.Open(cacheFilePath)
+		if err != nil {
+			p.prefetchLog("[MODREPLACE] open %s: %v", targetStr, err)
+			return false
+		}
+		defer f.Close()
+		n, err := nppatch.StreamReplace(w, f, rule.Find, rule.Replace, nppatch.MaxJSONPatchBytes)
+		p.prefetchLog("[MODREPLACE] %s wrote=%d bytes err=%v", targetStr, n, err)
+		return err == nil
+	}
+
+	body, ct, ok := p.patchedAssetBody(r.Context(), targetStr, rule)
+	if !ok {
+		return false
+	}
+	h.Set("Content-Type", cmp.Or(rule.ContentType, ct, baseCT, "application/json"))
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
@@ -2656,12 +2386,7 @@ func (p *ProxyServer) serveModPatched(w http.ResponseWriter, r *http.Request, ru
 }
 
 func readFileLimited(path string, maxBytes int64) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, maxBytes))
+	return npcache.ReadFileLimited(path, maxBytes)
 }
 
 func (p *ProxyServer) patchedAssetBody(ctx context.Context, targetStr string, rule modRule) ([]byte, string, bool) {
@@ -2672,131 +2397,21 @@ func (p *ProxyServer) patchedAssetBody(ctx context.Context, targetStr string, ru
 			return nil, "", false
 		}
 	}
-	raw, err := readFileLimited(cacheFilePath, 64<<20)
+	// JSON documents are parsed as a tree only under a hard byte cap; oversized
+	// assets are rejected rather than parsed unbounded.
+	raw, err := readFileLimited(cacheFilePath, nppatch.MaxJSONPatchBytes)
 	if err != nil {
 		return nil, "", false
 	}
 	metaBytes, _ := os.ReadFile(cacheFilePath + ".meta")
 	ct := strings.TrimSpace(string(metaBytes))
-	var doc any
-	if json.Unmarshal(raw, &doc) != nil {
-		return nil, "", false
-	}
-	for _, op := range rule.Patch {
-		switch strings.ToLower(strings.TrimSpace(op.Op)) {
-		case "set":
-			doc, _ = jsonPointerSet(doc, op.Path, op.Value)
-		case "remove", "delete":
-			doc, _ = jsonPointerRemove(doc, op.Path)
-		}
-	}
-	out, err := json.Marshal(doc)
+	out, err := nppatch.ApplyJSONPatch(raw, rule.Patch)
 	if err != nil {
+		p.prefetchLog("[MODS] patch apply failed %s: %v", targetStr, err)
 		return nil, "", false
 	}
 	return out, ct, true
 }
-
-func jsonPointerTokens(pointer string) []string {
-	pointer = strings.TrimPrefix(pointer, "/")
-	if pointer == "" {
-		return nil
-	}
-	parts := strings.Split(pointer, "/")
-	for i, s := range parts {
-		parts[i] = strings.ReplaceAll(strings.ReplaceAll(s, "~1", "/"), "~0", "~")
-	}
-	return parts
-}
-
-func jsonPointerSet(doc any, pointer string, value any) (any, bool) {
-	tokens := jsonPointerTokens(pointer)
-	if len(tokens) == 0 {
-		return value, true
-	}
-	return pointerSetWalk(doc, tokens, value, 0)
-}
-
-func pointerSetWalk(node any, tokens []string, value any, idx int) (any, bool) {
-	tok, last := tokens[idx], idx == len(tokens)-1
-	switch cur := node.(type) {
-	case map[string]any:
-		if last {
-			cur[tok] = value
-			return cur, true
-		}
-		child := cur[tok]
-		if child == nil {
-			child = map[string]any{}
-		}
-		v, ok := pointerSetWalk(child, tokens, value, idx+1)
-		if ok {
-			cur[tok] = v
-		}
-		return cur, ok
-	case []any:
-		if last && tok == "-" {
-			return append(cur, value), true
-		}
-		n, err := strconv.Atoi(tok)
-		if err != nil || n < 0 || n >= len(cur) {
-			return cur, false
-		}
-		if last {
-			cur[n] = value
-			return cur, true
-		}
-		v, ok := pointerSetWalk(cur[n], tokens, value, idx+1)
-		if ok {
-			cur[n] = v
-		}
-		return cur, ok
-	}
-	return node, false
-}
-
-func jsonPointerRemove(doc any, pointer string) (any, bool) {
-	tokens := jsonPointerTokens(pointer)
-	if len(tokens) == 0 {
-		return doc, false
-	}
-	return pointerRemoveWalk(doc, tokens, 0)
-}
-
-func pointerRemoveWalk(node any, tokens []string, idx int) (any, bool) {
-	tok, last := tokens[idx], idx == len(tokens)-1
-	switch cur := node.(type) {
-	case map[string]any:
-		child, ok := cur[tok]
-		if !ok {
-			return cur, false
-		}
-		if last {
-			delete(cur, tok)
-			return cur, true
-		}
-		v, ok := pointerRemoveWalk(child, tokens, idx+1)
-		if ok {
-			cur[tok] = v
-		}
-		return cur, ok
-	case []any:
-		n, err := strconv.Atoi(tok)
-		if err != nil || n < 0 || n >= len(cur) {
-			return cur, false
-		}
-		if last {
-			return slices.Delete(cur, n, n+1), true
-		}
-		v, ok := pointerRemoveWalk(cur[n], tokens, idx+1)
-		if ok {
-			cur[n] = v
-		}
-		return cur, ok
-	}
-	return node, false
-}
-
 func (p *ProxyServer) newCDNRequest(ctx context.Context, method, targetStr string, src http.Header) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetStr, nil)
 	if err != nil {
@@ -2873,7 +2488,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if status, bad := p.negCacheHit(targetStr); bad {
+	if status, bad := p.neg.Hit(targetStr); bad {
 		setCORSHeaders(w.Header(), r, "GET, HEAD, OPTIONS")
 		w.WriteHeader(status)
 		p.requestLog("%d 0ms negative-cache %s", status, targetStr)
@@ -2900,9 +2515,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 		setLongAssetCacheHeaders(wh)
-		p.negCacheClear(targetStr)
+		p.neg.Clear(targetStr)
 	case http.StatusForbidden, http.StatusNotFound:
-		p.negCacheStore(targetStr, resp.StatusCode)
+		p.neg.Store(targetStr, resp.StatusCode)
 	}
 	if !p.quiet {
 		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
@@ -2936,8 +2551,8 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 		_ = os.Remove(cacheFilePath)
 		_ = os.Remove(cacheFilePath + ".meta")
 	}
-	if status, bad := p.negCacheHit(target); bad {
-		return false, false, status, "negative-cached (recent upstream 4xx)"
+	if st, bad := p.neg.Hit(target); bad {
+		return false, false, st, "negative-cached (recent upstream 4xx)"
 	}
 	type warmRes struct {
 		claimed atomic.Bool
@@ -2961,10 +2576,10 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			p.negCacheStore(target, resp.StatusCode)
+			p.neg.Store(target, resp.StatusCode)
 			return &warmRes{ok: false, status: resp.StatusCode}, nil
 		}
-		p.negCacheClear(target)
+		p.neg.Clear(target)
 		if err := p.storeCacheEntry(target, "", cacheFilePath, resp.Header.Get("Content-Type"), io.LimitReader(resp.Body, 64<<20), resp.ContentLength, nil); err != nil {
 			return &warmRes{ok: false, status: resp.StatusCode, errTxt: err.Error()}, nil
 		}
@@ -3087,50 +2702,12 @@ func (p *ProxyServer) requestLog(format string, args ...any) {
 	p.reqLogSize += int64(n)
 }
 
-func (p *ProxyServer) negCacheHit(target string) (int, bool) {
-	p.negMu.Lock()
-	defer p.negMu.Unlock()
-	e, ok := p.negCache[target]
-	if !ok {
-		return 0, false
-	}
-	if time.Since(e.at) > prefetchNegativeTTL {
-		delete(p.negCache, target)
-		return 0, false
-	}
-	return e.status, true
-}
-
-func (p *ProxyServer) negCacheStore(target string, status int) {
-	if status != http.StatusForbidden && status != http.StatusNotFound {
-		return
-	}
-	now := time.Now()
-	p.negMu.Lock()
-	defer p.negMu.Unlock()
-	if p.negCache == nil {
-		p.negCache = make(map[string]negEntry)
-	}
-	if len(p.negCache) > 4096 {
-		maps.DeleteFunc(p.negCache, func(_ string, v negEntry) bool { return now.Sub(v.at) > prefetchNegativeTTL })
-		if len(p.negCache) > 4096 {
-			clear(p.negCache)
-		}
-	}
-	p.negCache[target] = negEntry{status: status, at: now}
-}
-
-func (p *ProxyServer) negCacheClear(target string) {
-	p.negMu.Lock()
-	delete(p.negCache, target)
-	p.negMu.Unlock()
-}
 
 func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
 	if !p.prefetch || p.cacheDir == "" || id <= 0 {
 		return
 	}
-	if _, bad := p.negCacheHit(target); bad {
+	if _, bad := p.neg.Hit(target); bad {
 		return
 	}
 	p.prefetchMu.Lock()
@@ -3148,29 +2725,12 @@ func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
 	p.prefetchSeen[id] = time.Now()
 	p.prefetchMu.Unlock()
 
-	p.prefetchOnce.Do(p.startPrefetchWorkers)
-	select {
-	case p.prefetchQ <- prefetchJob{target: target, id: id, depth: 0}:
-	default:
-	}
+	// Drop the job when the pool queue is full: the data plane never blocks on warming.
+	_ = p.prefetchPool.Submit(npprefetch.Job{Target: target, ID: id, Depth: 0})
 }
 
-func (p *ProxyServer) startPrefetchWorkers() {
-	p.prefetchQ = make(chan prefetchJob, prefetchQueueSize)
-	for i := 0; i < max(p.prefetchWorkers, 1); i++ {
-		go p.prefetchWorker()
-	}
-}
-
-func (p *ProxyServer) prefetchWorker() {
-	ctx := context.Background()
-	for job := range p.prefetchQ {
-		p.processPrefetchJob(ctx, job)
-	}
-}
-
-func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
-	mapURL := job.target
+func (p *ProxyServer) processPrefetchJob(ctx context.Context, job npprefetch.Job) {
+	mapURL := job.Target
 	cacheFilePath := p.assetCachePath(mapURL)
 	if _, err := os.Stat(cacheFilePath); err != nil {
 		if ok, _, status, errText := p.warmAssetCacheDetail(ctx, mapURL); !ok {
@@ -3180,9 +2740,9 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 			// missing key instead of 404, so a neighbour id that is not shipped looks like an
 			// error in the log and like a wall in a browser.
 			if status == http.StatusForbidden || status == http.StatusNotFound {
-				p.prefetchLog("[PREFETCH] map %d not present upstream (status=%d)", job.id, status)
+				p.prefetchLog("[PREFETCH] map %d not present upstream (status=%d)", job.ID, status)
 			} else {
-				p.prefetchLog("[PREFETCH] map %d json fetch failed status=%d err=%q", job.id, status, errText)
+				p.prefetchLog("[PREFETCH] map %d json fetch failed status=%d err=%q", job.ID, status, errText)
 			}
 			return
 		}
@@ -3191,10 +2751,10 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 	if err != nil || len(body) == 0 {
 		return
 	}
-	prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(job.id, 10)+".json")
+	prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(job.ID, 10)+".json")
 	neighbours := mapJSONNeighbours(body)
 	newTiles, cachedTiles, totalTiles := 0, 0, 0
-	if job.depth <= p.prefetchTilesDepth {
+	if job.Depth <= p.prefetchTilesDepth {
 		for _, tileURL := range mapTileURLs(body, prefix) {
 			totalTiles++
 			if ok, already := p.warmAssetCache(ctx, tileURL); already {
@@ -3205,8 +2765,8 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 		}
 	}
 	p.prefetchLog("[PREFETCH] map %d d%d neighbours=%d tiles new=%d cached=%d total=%d",
-		job.id, job.depth, len(neighbours), newTiles, cachedTiles, totalTiles)
-	if job.depth >= p.prefetchRadius {
+		job.ID, job.Depth, len(neighbours), newTiles, cachedTiles, totalTiles)
+	if job.Depth >= p.prefetchRadius {
 		return
 	}
 	for _, nid := range neighbours {
@@ -3218,10 +2778,8 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 		}
 		p.prefetchMu.Unlock()
 		if !skip {
-			select {
-			case p.prefetchQ <- prefetchJob{target: prefix + "/maps/" + strconv.FormatInt(nid, 10) + ".json", id: nid, depth: job.depth + 1}:
-			default:
-			}
+			// Drop the job when the pool queue is full.
+			_ = p.prefetchPool.Submit(npprefetch.Job{Target: prefix + "maps/" + strconv.FormatInt(nid, 10) + ".json", ID: nid, Depth: job.Depth + 1})
 		}
 	}
 }
@@ -3477,7 +3035,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if isHTML {
 		wh.Del("Content-Security-Policy")
 		wh.Del("Content-Security-Policy-Report-Only")
-		if bodyBytes, readErr := io.ReadAll(bodyReader); readErr == nil {
+		if bodyBytes, readErr := io.ReadAll(io.LimitReader(bodyReader, 16<<20)); readErr == nil {
 			if !bytes.Contains(bodyBytes, []byte("mobile-disguise.js")) && !bytes.Contains(bodyBytes, []byte("__disguise.js")) {
 				bodyBytes = p.injectDisguise(bodyBytes)
 			}
@@ -3716,6 +3274,9 @@ func main() {
 	proxy.prefetchRadius = max(*prefetchRadius, 1)
 	proxy.prefetchTilesDepth = max(*prefetchTilesDepth, 0)
 	proxy.prefetchWorkers = min(max(*prefetchWorkers, 1), 16)
+	proxy.prefetchPool = npprefetch.New(proxy.prefetchWorkers, prefetchQueueSize, 8, func(ctx context.Context, j npprefetch.Job) {
+		proxy.processPrefetchJob(ctx, j)
+	})
 	if proxy.prefetch && proxy.cacheDir != "" {
 		log.Printf("[PREFETCH] Neighbour prefetch enabled (radius=%d tiles-depth=%d workers=%d)",
 			proxy.prefetchRadius, proxy.prefetchTilesDepth, proxy.prefetchWorkers)

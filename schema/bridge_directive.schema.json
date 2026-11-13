@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "bridge_directive",
+  "title": "AgentDirectiveBridge directive request",
+  "description": "One POST /directive body. The host forwards it verbatim to window.__agentDirective and returns the client's envelope. `args` is free-form: the tool contract validates it, not this envelope.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "ts": { "type": "number", "minimum": 0 },
+    "directive": { "type": "string" },
+    "tool": { "type": "string" },
+    "args": { "type": "object", "additionalProperties": true },
+    "source": { "type": "string" },
+    "target_instance": { "type": "string" },
+    "target_slot": { "type": "integer", "minimum": 0 }
+  }
+}

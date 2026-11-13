@@ -78,6 +78,7 @@ from agent.recorder import _redact
 from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
                                   load_command_model, shadow_row)
 from agent.jsonio import dumps_bytes as _fast_dumps
+from planning.machine import CycleDetector
 from combat.fight_estimate import FightAdvisor, FightOutcomeLog
 from combat.brain_service import ensure_brain
 
@@ -605,6 +606,11 @@ class Autopilot:
         self._command_shadow_status: Dict[str, Any] = {}
         self._command_shadow_rows = 0
         self.log_path = Path(log_path)
+        # Rolling (map, cell, action) window. The counters below bound how long the
+        # loop waits; this names what it keeps doing, which is the question a log of
+        # 1,200 `noop` rows could not answer.
+        self._cycle = CycleDetector(window=12, repeat_limit=3)
+        self._cycle_signature = ""
         self.stop_file = Path(stop_file)
         self.max_steps = max_steps
         self.session = uuid.uuid4().hex[:8]
@@ -994,6 +1000,23 @@ class Autopilot:
                 self._promise_counts.get(step.promise, 0) + 1)
         self._source_counts[step.source] = (
             self._source_counts.get(step.source, 0) + 1)
+        if getattr(self, "_cycle", None) is not None:
+            cycle = self._cycle.observe(step.observation_map, step.observation_cell,
+                                        {"tool": step.tool, "args": step.args})
+            if cycle.stuck and cycle.signature != self._cycle_signature:
+                # One row per distinct cycle: a forty-minute loop is one line, not 1,200.
+                self._cycle_signature = cycle.signature
+                self._append_log_line(_fast_dumps({
+                    "kind": "cycle",
+                    "session": self.session,
+                    "signature": cycle.signature,
+                    "repeats": cycle.repeats,
+                    "window": cycle.window,
+                    "map_id": cycle.map_id,
+                    "cell_id": cycle.cell_id,
+                    "tool": step.tool,
+                    "at": time.time(),
+                }) + b"\n")
         self.steps.append(step)
         if len(self.steps) > self.step_history:
             del self.steps[:len(self.steps) - self.step_history]

@@ -20,6 +20,8 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from generated.contracts import validate_bridge_health
+
 DEFAULT_PORT = 8893
 
 # A direct opener, for every call to this machine.
@@ -185,7 +187,14 @@ def client_count(host: str = "127.0.0.1", timeout: float = 2.0) -> Optional[int]
             payload = json.loads(response.read().decode("utf-8", "replace"))
     except Exception:   # noqa: BLE001 - any failure means "unknown", never "zero"
         return None
-    if not isinstance(payload, dict) or payload.get("status") != "ok":
+    if not isinstance(payload, dict):
+        return None
+    # Same schema the host encodes with. Field drift used to look like "no client
+    # window", which the loop reports as an operational fact rather than a bug.
+    errors = validate_bridge_health(payload)
+    if errors:
+        return None
+    if payload.get("status") != "ok":
         return None
     count = payload.get("instances")
     return count if isinstance(count, int) and count >= 0 else None

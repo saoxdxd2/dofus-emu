@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -73,12 +74,16 @@ class ScheduleManager:
         ranker=None,
         graph: Optional[DecisionGraph] = None,
         traces: Optional[TraceLog] = None,
+        cache=None,
     ) -> None:
         self.planner = planner
         self.economy = economy
         self.ranker = ranker
         self.graph = graph if graph is not None else DecisionGraph()
         self.traces = traces if traces is not None else TraceLog()
+        # Optional: the structure cache the planner reasons through. Held here only so
+        # the persist points can flush it; the planner owns the read path.
+        self.cache = cache if cache is not None else getattr(planner, "cache", None)
         self.plan_id = ""
         self.goal_text = ""
         self.reasoning_ms = 0.0
@@ -140,6 +145,16 @@ class ScheduleManager:
                 for s in self.history
             ],
         }, indent=2), encoding="utf-8")
+
+    def _save_cache(self) -> None:
+        """Flush the structure cache. A cache that is never written is just a slower
+        in-memory dict, and the recipe closures it exists to avoid cost 3,000 nodes."""
+        if self.cache is None:
+            return
+        try:
+            self.cache.save()
+        except OSError:
+            pass   # a read-only data dir must not fail a step that already succeeded
 
     # -- execution -----------------------------------------------------------
 
@@ -242,6 +257,7 @@ class ScheduleManager:
         self.economy.save()
         self.traces.flush()
         self.graph.save()
+        self._save_cache()
         self._persist()
         return {
             "status": status,
@@ -330,6 +346,7 @@ class ScheduleManager:
         self.economy.save()
         self.traces.flush()
         self.graph.save()
+        self._save_cache()
         return {
             "signal": outcome["signal"],
             "updates": outcome["updates"],
@@ -478,7 +495,7 @@ class ScheduleManager:
 
 
 def build_schedule_stack(kb=None, *, experience=None, state_file: Path = STATE_FILE,
-                         ranker=None, graph=None, traces=None):
+                         ranker=None, graph=None, traces=None, cache="default"):
     """The one place that knows how the planning stack is assembled.
 
     This exists because the assembly was wrong in two places at once and nobody noticed: the live
@@ -491,6 +508,11 @@ def build_schedule_stack(kb=None, *, experience=None, state_file: Path = STATE_F
     needs the economy's *store* (the same object, not a second one), and the planner needs all
     three. Handing the ranker a different store would fork the learning state in two.
 
+    ``cache`` defaults to a real :class:`ThinkingCache` because the alternative was measured:
+    every call to ``plan()`` re-ran the full AND/OR search, and a 40-ingredient recipe closure
+    explores up to 3,000 nodes. Pass ``None`` for an uncached planner (deterministic tests),
+    or a ``Path`` to place the cache file somewhere other than ``data/kb``.
+
     Returns the manager. Callers that need the pieces can read them off it: ``manager.planner``,
     ``manager.economy``, ``manager.economy.experience``.
     """
@@ -498,12 +520,17 @@ def build_schedule_stack(kb=None, *, experience=None, state_file: Path = STATE_F
     from planning.economy import CostModel, Economy
     from planning.kb import KnowledgeBase
     from planning.planner import Planner
+    from planning.thinking_cache import ThinkingCache
 
     knowledge = kb if kb is not None else KnowledgeBase()
     cost = CostModel(knowledge, experience=experience)
     economy = Economy(cost, experience=experience, state_file=state_file)
     store = economy.experience
     ranker = ranker if ranker is not None else StrategyRanker(store)
-    planner = Planner(knowledge, cost, economy, ranker=ranker, graph=graph)
+    if cache == "default":
+        cache = None if os.environ.get("DOFUS_THINKING_CACHE", "1") == "0" else ThinkingCache()
+    elif cache is not None and not isinstance(cache, ThinkingCache):
+        cache = ThinkingCache(Path(cache))
+    planner = Planner(knowledge, cost, economy, ranker=ranker, graph=graph, cache=cache)
     return ScheduleManager(planner, economy, state_file=state_file, ranker=ranker,
-                           graph=graph, traces=traces)
+                           graph=graph, traces=traces, cache=cache)

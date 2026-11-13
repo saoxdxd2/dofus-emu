@@ -57,6 +57,24 @@ namespace DofusFarm.Engine
         }
     }
 
+    /// <summary>Per-egress RTT/loss forecast state (Kalman level+drift + EWMA loss).</summary>
+    private sealed class EgressForecastState
+    {
+        // Kalman RTT: state is (level ms, drift ms per probe).
+        public double Level;
+        public double Drift;
+        public double Pll = 9.0;
+        public double Pld;
+        public double Pdd = 1.0;
+        public bool Initialized;
+        // EWMA loss.
+        public double LossEma;
+        public double LossTrend;
+        public double PrevLossEma;
+        public DateTime UpdatedUtc = DateTime.MinValue;
+        public int Probes;
+    }
+
     public sealed class ProxySupervisor
     {
         public static readonly ProxySupervisor Instance = new ProxySupervisor();
@@ -91,6 +109,17 @@ namespace DofusFarm.Engine
 
         private List<string> _rankOrder;
         private DateTime _rankLoadedUtc = DateTime.MinValue;
+
+        // Proactive failover: per-egress RTT/loss forecast used to bail before an
+        // egress actually dies. Keyed by candidate URL. A forecast that says the
+        // current egress is degrading triggers a switch to a healthy backup *before*
+        // probes start failing, so sessions avoid the dead window entirely.
+        private Dictionary<string, EgressForecastState> _forecasts = new Dictionary<string, EgressForecastState>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _forecastGate = new object();
+        /// <summary>Degradation probability at or above this triggers proactive failover.</summary>
+        public double ProactiveDegradationThreshold = 0.55;
+        /// <summary>Max age of a forecast we trust for proactive switching.</summary>
+        public int ProactiveForecastMaxAgeSeconds = 30;
 
         private string _pinnedUrl;
         private string _pinnedExitIp;
@@ -640,6 +669,7 @@ namespace DofusFarm.Engine
                     c.Note = c.Healthy ? "socks5 carried a CONNECT" : "listener up, no CONNECT";
                 }
                 c.LatencyMs = (int)(DateTime.UtcNow - t0).TotalMilliseconds;
+                RecordProbe(c.Url, c.Healthy ? c.LatencyMs : -1.0, !c.Healthy);
                 return c;
             }
 
@@ -650,11 +680,13 @@ namespace DofusFarm.Engine
             {
                 c.Healthy = false;
                 c.Note = string.IsNullOrEmpty(why) ? "no answer" : why;
+                RecordProbe(c.Url, -1.0, true);
                 return c;
             }
             c.Healthy = true;
             c.ExitIp = ip;
             c.Note = "ok";
+            RecordProbe(c.Url, c.LatencyMs, false);
             return c;
         }
 

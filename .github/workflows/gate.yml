@@ -62,6 +62,9 @@ jobs:
       - name: Casing audit (git index vs source literals)
         run: python tools/check_case.py
 
+      - name: Kaggle toolkit drift check
+        run: python dofus-network/tools/sync_kaggle_toolkit.py --check
+
       - name: Gate (test suites only)
         run: |
           python dofus-network/tools/gate.py \
@@ -157,3 +160,83 @@ jobs:
           python dofus-network/combat/test_effect_id_hardcodes.py
           echo "effect_id_hardcodes exit: $?"
           exit 0
+
+  relay:
+    # The Go relay is the product's only egress and nothing in CI compiled it until now:
+    # `scripts/dofus_net_proxy_equiv_test.go` has been run by hand and by the local gate's
+    # `test_go_relay_suites`, which SKIPS when `go` is not on PATH -- so a Linux runner
+    # without the toolchain reported green for a suite that never ran.
+    #
+    # The invocation is the gate's own, not `go test ./...`: every `scripts/*.go` is its own
+    # `package main`, so a package-wide test collides the many `main()` declarations and
+    # fails to build. Naming the relay file plus the test files is the only form that works.
+    name: Go relay (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: scripts/go.sum
+
+      - name: Relay equivalence tests
+        working-directory: scripts
+        run: |
+          set -e
+          go vet dofus-net-proxy.go || true
+          go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
+
+  host:
+    # The C# host is what the operator actually runs, and CI has never compiled it: the
+    # existing jobs are ubuntu-only, where `test_csharp_compile` finds no compiler and
+    # skips. `desktop/lib/webview2/*.dll` is tracked, so a clean clone can build.
+    #
+    # Informational until it has run green twice on main -- the same rule the
+    # upgrade-readiness job below already follows. Flip `continue-on-error` to false then.
+    name: Host build (Windows, informational)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gate.txt
+
+      - name: Install the gate tier
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-gate.txt
+
+      # --only regression is the only selector that reaches test_csharp_compile; there is no
+      # standalone "compile the host" step to call.
+      - name: Gate (agent.regression, Windows)
+        run: |
+          python dofus-network/tools/gate.py `
+            --strict `
+            --only regression `
+            --regression-timeout 1800 `
+            --json gate-windows.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-windows
+          path: gate-windows.json
+          if-no-files-found: ignore

@@ -31,11 +31,14 @@ foreground; when that one was cut off by its own timeout it had already verified
 cannot watch it, use `MUT_PLAN=1` first: it prints the count and exits without touching anything.
 """
 import base64
+import concurrent.futures
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 CTRL = ROOT / "agent" / "controller.py"
@@ -52,6 +55,16 @@ BRAIN = ROOT / "combat" / "brain_service.py"
 # The board model and its payload form: `to_fight_state()` is the seam the live policy is
 # measured through offline (§L.19), so a silently dropped key is a wrong measurement.
 BSOLVER = ROOT / "combat" / "battle_solver.py"
+# The structure cache the planner reasons through. It spent a while as 184 lines
+# nothing constructed, so the sweep had nothing to mutate; now that `build_schedule_stack`
+# attaches it, its three invalidation rules are load-bearing and each one is silent when
+# broken -- a stale plan served as fresh is a wrong conclusion, not a crash.
+TCACHE = ROOT / "planning" / "thinking_cache.py"
+# The map from the foresight move logit to a probability that `planner_nn` cuts on at 0.20
+# and 0.25. Three ways to break it silently, all of them caught only by the invariants: a
+# fit worse than the identity it replaces, a negative slope (which reverses a ranking and
+# makes the planner prefer the candidate it is sure will fail), and a non-monotone map.
+CALIB = ROOT / "agent" / "calibration.py"
 LPOL = ROOT / "combat" / "live_policy.py"
 # §L.34 moved the live path onto `contract_from_board` / `board_block` / `live_view`. The decision
 # reads only the contract's two booleans, so a wrong contract is a silently different refusal rate on
@@ -290,6 +303,13 @@ SNIPPET = ("import agent.regression as r\n"
            # arms inside combat/encounter/env.py read MISSED across a full 595-arm pass
            # because no check the snippet runs could reach env.py at all.
            "    r.test_env_scatter_and_mask_are_witnessed,\n"
+           # The structure cache's version/TTL/eviction rules, in-process and with no
+           # knowledge base behind them (~10 ms), which is what makes it affordable
+           # here. The planner and stack halves of that suite are in the delegated
+           # module run instead -- two cold plans at 136 ms each would put a minute on
+           # every mutation in this list.
+           "    r.test_thinking_cache_semantics,\n"
+           "    r.test_move_calibration_semantics,\n"
            "    r.test_the_search_borders_are_bounded,\n"
            # The brain has to say which code wrote a row: the page stamp never
            # moved, so a landed fix was invisible in the log (#101).
@@ -3181,6 +3201,29 @@ MUTATIONS = [
     ("guest: Google's UA is changed while fixing the guest one", CWEB2,
      "                        s.UserAgent = mobileUa;",
      "                        s.UserAgent = cleanUa;"),
+    # -- the structure cache: three invalidation rules, each silent when broken --
+    ("cache: a structure reasoned under a rebuilt knowledge base is served as fresh", TCACHE,
+     "        if entry.version != self.version:",
+     "        if False:"),
+    ("cache: an expired structure is served past its TTL", TCACHE,
+     "        if self.ttl_seconds and time.time() - entry.created > self.ttl_seconds:",
+     "        if False:"),
+    ("cache: the entry cap stops evicting and the file grows without bound", TCACHE,
+     "        if len(self.entries) > self.max_entries:",
+     "        if False:"),
+    # -- the move-probability calibrator: three invariants, each silent when broken --
+    ("calibration: the slope constraint is dropped and an anti-correlated fit reverses the rank",
+     CALIB,
+     "            if math.isfinite(na) and math.isfinite(nb) and na >= MIN_SLOPE:",
+     "            if math.isfinite(na) and math.isfinite(nb):"),
+    ("calibration: the line search accepts any step, so the fit can lose to the identity",
+     CALIB,
+     "                if candidate <= current:",
+     "                if True:"),
+    ("calibration: the map is applied with the wrong sign, inverting every score",
+     CALIB,
+     "        return sigmoid(self.a * z + self.b)",
+     "        return sigmoid(-self.a * z + self.b)"),
 ]
 
 
@@ -3216,7 +3259,115 @@ def _recover_journal() -> bool:
     return True
 
 
-def run_sections():
+HOOK_CODE = '''import os, sys, linecache, pathlib, builtins, subprocess
+
+_TARGET = os.environ.get("MUT_SHADOW_TARGET")
+_SHADOW = os.environ.get("MUT_SHADOW_FILE")
+
+if _TARGET and _SHADOW and os.path.exists(_SHADOW):
+    _target_norm = os.path.normcase(os.path.abspath(_TARGET))
+    _shadow_content = open(_SHADOW, "rb").read()
+    _shadow_text = _shadow_content.decode("utf-8", "replace")
+
+    # 1. linecache hook (for inspect.getsource)
+    linecache.cache[_TARGET] = (len(_shadow_text), None, [_l + "\\n" for _l in _shadow_text.splitlines()], _TARGET)
+    linecache.cache[_target_norm] = linecache.cache[_TARGET]
+
+    # 2. open() hook
+    _real_open = builtins.open
+    def _hooked_open(file, *args, **kwargs):
+        try:
+            p = os.path.normcase(os.path.abspath(str(file)))
+            if p == _target_norm:
+                return _real_open(_SHADOW, *args, **kwargs)
+        except Exception:
+            pass
+        return _real_open(file, *args, **kwargs)
+    builtins.open = _hooked_open
+
+    # 3. Path read hooks
+    _real_read_text = pathlib.Path.read_text
+    def _hooked_read_text(self, *args, **kwargs):
+        try:
+            if os.path.normcase(str(self.resolve())) == _target_norm:
+                return _shadow_text
+        except Exception:
+            pass
+        return _real_read_text(self, *args, **kwargs)
+    pathlib.Path.read_text = _hooked_read_text
+
+    _real_read_bytes = pathlib.Path.read_bytes
+    def _hooked_read_bytes(self, *args, **kwargs):
+        try:
+            if os.path.normcase(str(self.resolve())) == _target_norm:
+                return _shadow_content
+        except Exception:
+            pass
+        return _real_read_bytes(self, *args, **kwargs)
+    pathlib.Path.read_bytes = _hooked_read_bytes
+
+    # 4. subprocess hook (for node, csc, git, etc.)
+    _real_run = subprocess.run
+    def _hooked_run(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)):
+            new_cmd = []
+            for arg in cmd:
+                try:
+                    if os.path.normcase(os.path.abspath(str(arg))) == _target_norm:
+                        new_cmd.append(_SHADOW)
+                        continue
+                except Exception:
+                    pass
+                new_cmd.append(arg)
+            cmd = new_cmd
+        return _real_run(cmd, *args, **kwargs)
+    subprocess.run = _hooked_run
+
+    _real_popen = subprocess.Popen
+    def _hooked_popen(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)):
+            new_cmd = []
+            for arg in cmd:
+                try:
+                    if os.path.normcase(os.path.abspath(str(arg))) == _target_norm:
+                        new_cmd.append(_SHADOW)
+                        continue
+                except Exception:
+                    pass
+                new_cmd.append(arg)
+            cmd = new_cmd
+        return _real_popen(cmd, *args, **kwargs)
+    subprocess.Popen = _hooked_popen
+
+    # 5. importlib loader hook for python modules
+    import importlib.abc, importlib.machinery
+    class ShadowMetaFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            for finder in sys.meta_path:
+                if finder is self:
+                    continue
+                if hasattr(finder, "find_spec"):
+                    spec = finder.find_spec(fullname, path, target)
+                    if spec and spec.origin:
+                        try:
+                            if os.path.normcase(os.path.abspath(spec.origin)) == _target_norm:
+                                s = importlib.machinery.ModuleSpec(
+                                    fullname,
+                                    importlib.machinery.SourceFileLoader(fullname, _SHADOW),
+                                    origin=spec.origin
+                                )
+                                s.has_location = True
+                                return s
+                        except Exception:
+                            pass
+                    if spec:
+                        return spec
+            return None
+    sys.meta_path.insert(0, ShadowMetaFinder())
+'''
+
+
+def run_sections(target: Optional[Path] = None, shadow_file: Optional[Path] = None):
     # The child runs deliberately broken code, so its output is a traceback nobody planned for.
     # Reading it as strict UTF-8 (`text=True`) killed the sweep on 2026-11-03: a mutated
     # route check made the child write 0xe9, Python's reader thread raised UnicodeDecodeError,
@@ -3224,8 +3375,14 @@ def run_sections():
     # instrument that dies exactly when the code under test misbehaves is worst when it matters.
     # Capture bytes, decode tolerantly, and ask the child for UTF-8 with a replace fallback.
     env = dict(os.environ, PYTHONIOENCODING="utf-8:replace", PYTHONUTF8="1")
+    if target and shadow_file and shadow_file.is_file():
+        env["MUT_SHADOW_TARGET"] = str(target.resolve())
+        env["MUT_SHADOW_FILE"] = str(shadow_file.resolve())
+        script = HOOK_CODE + "\n" + SNIPPET
+    else:
+        script = SNIPPET
     try:
-        proc = subprocess.run([sys.executable, "-c", SNIPPET], cwd=str(ROOT),
+        proc = subprocess.run([sys.executable, "-c", script], cwd=str(ROOT),
                               capture_output=True, timeout=240, env=env)
     except subprocess.TimeoutExpired:
         # A hang is a red gate too: an unattended run would park there.
@@ -3238,111 +3395,165 @@ def run_sections():
     return labels, proc.returncode, out
 
 
-if __name__ != "__main__":
+def eval_one_mutation(item, in_place: bool = False):
+    name, path, old, new = item
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return name, False, True, ["cannot read %s: %s" % (path.name, exc)], 1, "", path.name
+    if old not in original:
+        return name, False, True, ["anchor not found in %s" % path.name], 0, "", path.name
+
+    if in_place:
+        raw = path.read_bytes()
+        JOURNAL.write_text(json.dumps({
+            "path": str(path),
+            "original_b64": base64.b64encode(raw).decode("ascii")}), encoding="utf-8")
+        try:
+            path.write_text(original.replace(old, new, 1), encoding="utf-8")
+            labels, code, out = run_sections()
+        finally:
+            path.write_bytes(raw)
+            JOURNAL.unlink(missing_ok=True)
+        caught = bool(labels) or code != 0
+        return name, caught, False, labels, code, out, path.name
+    else:
+        suffix = path.suffix or ".txt"
+        mutated = original.replace(old, new, 1)
+        fd, temp_path = tempfile.mkstemp(prefix="mut_shadow_", suffix=suffix)
+        os.close(fd)
+        shadow = Path(temp_path)
+        try:
+            shadow.write_text(mutated, encoding="utf-8")
+            labels, code, out = run_sections(target=path, shadow_file=shadow)
+            caught = bool(labels) or code != 0
+            return name, caught, False, labels, code, out, path.name
+        finally:
+            try:
+                shadow.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def main():
+    if "--recover" in sys.argv:
+        # Repair-only mode: touch nothing else, run no gate section. This is what a caller
+        # uses after an interrupted sweep, and what the regression gate exercises.
+        _recover_journal()
+        raise SystemExit(0)
+
+    _recover_journal()
+
+    bad = []
+    # `MUT_ONLY=substring` runs one batch of mutations.
+    only = [token.strip() for token in str(os.environ.get("MUT_ONLY") or "").split(",")
+            if token.strip()]
+    selected = [(index, item) for index, item in enumerate(MUTATIONS)
+                if not only or any(token in item[0] for token in only)]
+    # `MUT_FILES=session_close.py,jsonio.py` selects by the file a mutation edits.
+    files = [token.strip() for token in str(os.environ.get("MUT_FILES") or "").split(",")
+             if token.strip()]
+    if files:
+        selected = [(index, item) for index, item in selected
+                    if Path(str(item[1])).name in files]
+    # `MUT_SHARD=i/n` splits a sweep across isolated copies; each mutation keeps its
+    # global index, so the shard verdicts can be merged without rerunning anything.
+    shard = str(os.environ.get("MUT_SHARD") or "").strip()
+    if shard:
+        index, _, total = shard.partition("/")
+        index, total = int(index), int(total)
+        selected = [(at, item) for at, item in selected if at % total == index]
+    selected = [item for _, item in selected]
+    # `MUT_RESUME=logA,logB` skips the mutations already CAUGHT in those sweep logs.
+    resume_logs = [Path(item) for item in str(os.environ.get("MUT_RESUME") or "").split(",")
+                   if item.strip()]
+    done = set()
+    for log in resume_logs:
+        try:
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if line.startswith("CAUGHT "):
+                rest = line[len("CAUGHT "):].split(" failing check(s)")[0]
+                done.add(rest.rsplit(" ", 1)[0].strip())
+    if done:
+        selected = [item for item in selected if item[0] not in done]
+    print("%d of %d mutations selected (%d already caught in %d resume log(s))"
+          % (len(selected), len(MUTATIONS), len(done), len(resume_logs)))
+    if os.environ.get("MUT_PLAN"):
+        raise SystemExit(0)
+
+    base_labels, base_code, base_out = run_sections()
+    if base_labels or base_code != 0:
+        print("REFUSED: the clean tree already fails the snippet (%d failing check(s), "
+              "exit %d) -- nothing was mutated" % (len(base_labels), base_code))
+        for label in base_labels[:6]:
+            print("      %s" % label)
+        print(base_out[-1500:])
+        raise SystemExit(1)
+    print("clean tree runs the snippet: 0 failing checks, exit 0")
+
+    in_place_requested = "--in-place" in sys.argv or str(os.environ.get("MUT_IN_PLACE", "")).lower() in ("1", "true")
+    workers_env = os.environ.get("MUT_WORKERS", "").strip()
+    workers = 0
+    if workers_env:
+        try:
+            workers = int(workers_env)
+        except ValueError:
+            workers = 0
+    if "--parallel" in sys.argv:
+        workers = workers or min(8, os.cpu_count() or 4)
+
+    if workers > 1 and not in_place_requested:
+        print("running %d mutation(s) in parallel across %d worker(s) (zero-mutation shadow mode)"
+              % (len(selected), workers))
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(eval_one_mutation, item, False): item for item in selected}
+            for fut in concurrent.futures.as_completed(futures):
+                name, caught, skipped, labels, code, out, filename = fut.result()
+                if skipped:
+                    print("SKIP  %-52s %s" % (name, labels[0] if labels else "skipped"))
+                    bad.append(name)
+                    continue
+                print("%s %-52s %d failing check(s)%s"
+                      % ("CAUGHT " if caught else "MISSED ", name, len(labels),
+                         " (section crashed)" if code != 0 and not labels else ""))
+                for label in labels[:2]:
+                    print("      %s" % label)
+                if not caught:
+                    bad.append(name)
+    else:
+        mode_str = "in-place working tree mode" if in_place_requested else "zero-mutation shadow mode"
+        print("running %d mutation(s) sequentially (%s)" % (len(selected), mode_str))
+        for item in selected:
+            name, caught, skipped, labels, code, out, filename = eval_one_mutation(item, in_place=in_place_requested)
+            if skipped:
+                print("SKIP  %-52s %s" % (name, labels[0] if labels else "skipped"))
+                bad.append(name)
+                continue
+            print("%s %-52s %d failing check(s)%s"
+                  % ("CAUGHT " if caught else "MISSED ", name, len(labels),
+                     " (section crashed)" if code != 0 and not labels else ""))
+            for label in labels[:2]:
+                print("      %s" % label)
+            if not caught:
+                bad.append(name)
+
+    labels, code, out = run_sections()
+    print("\nrestored: %d failing checks, exit %d (must be 0/0)" % (len(labels), code))
+    if labels or code != 0:
+        print(out[-1500:])
+    print("mutations that no check noticed:", bad or "none")
+    raise SystemExit(1 if bad or labels or code else 0)
+
+
+if __name__ not in ("__main__", "__mp_main__"):
     # This file writes deliberately broken code into the working tree the moment it is
     # imported, so an accidental `import mutate_cause_gate` (or a spec loader in a
     # verification script) must stop here rather than run a sweep nobody asked for.
     raise SystemExit("mutate_cause_gate.py mutates the working tree; run it as a program, "
                      "do not import it")
 
-if "--recover" in sys.argv:
-    # Repair-only mode: touch nothing else, run no gate section. This is what a caller
-    # uses after an interrupted sweep, and what the regression gate exercises.
-    _recover_journal()
-    raise SystemExit(0)
-
-_recover_journal()
-
-bad = []
-# `MUT_ONLY=substring` runs one batch of mutations. The driver writes broken code into
-# the working tree, so a targeted run is also the safe run while anything else is
-# looking at the tree; the full sweep is for a quiet one.
-only = [token.strip() for token in str(os.environ.get("MUT_ONLY") or "").split(",")
-        if token.strip()]
-selected = [(index, item) for index, item in enumerate(MUTATIONS)
-            if not only or any(token in item[0] for token in only)]
-# `MUT_FILES=session_close.py,jsonio.py` selects by the file a mutation edits, which is
-# how a change to one module is re-verified without guessing at label substrings: labels
-# are prose, targets are the thing that moved.
-files = [token.strip() for token in str(os.environ.get("MUT_FILES") or "").split(",")
-         if token.strip()]
-if files:
-    selected = [(index, item) for index, item in selected
-                if Path(str(item[1])).name in files]
-# `MUT_SHARD=i/n` splits a sweep across isolated copies; each mutation keeps its
-# global index, so the shard verdicts can be merged without rerunning anything.
-shard = str(os.environ.get("MUT_SHARD") or "").strip()
-if shard:
-    index, _, total = shard.partition("/")
-    index, total = int(index), int(total)
-    selected = [(at, item) for at, item in selected if at % total == index]
-selected = [item for _, item in selected]
-# `MUT_RESUME=logA,logB` skips the mutations already CAUGHT in those sweep logs.
-# MISSED and SKIP never count as done: both need a rerun on the current tree.
-resume_logs = [Path(item) for item in str(os.environ.get("MUT_RESUME") or "").split(",")
-               if item.strip()]
-done = set()
-for log in resume_logs:
-    try:
-        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        continue
-    for line in lines:
-        if line.startswith("CAUGHT "):
-            # `CAUGHT  <label padded to 52> <n> failing check(s)`. A label at or over
-            # 52 chars is followed by a single space, so split on the suffix, then
-            # drop the count -- splitting on double spaces lost every long label.
-            rest = line[len("CAUGHT "):].split(" failing check(s)")[0]
-            done.add(rest.rsplit(" ", 1)[0].strip())
-if done:
-    selected = [item for item in selected if item[0] not in done]
-print("%d of %d mutations selected (%d already caught in %d resume log(s))"
-      % (len(selected), len(MUTATIONS), len(done), len(resume_logs)))
-if os.environ.get("MUT_PLAN"):
-    raise SystemExit(0)
-# A sweep only reads CAUGHT when the mutated code turns a check red. If the snippet
-# cannot run at all -- the wrong interpreter (an embedded one whose path file ignores
-# the working directory cannot `import agent`), or a tree an interrupted sweep left
-# broken -- then `code != 0` is true for every mutation and the batch manufactures a
-# wall of CAUGHT lines out of its own inability to measure. Refuse to start, and pay
-# one pass to prove the clean tree is green first.
-base_labels, base_code, base_out = run_sections()
-if base_labels or base_code != 0:
-    print("REFUSED: the clean tree already fails the snippet (%d failing check(s), "
-          "exit %d) -- nothing was mutated" % (len(base_labels), base_code))
-    for label in base_labels[:6]:
-        print("      %s" % label)
-    print(base_out[-1500:])
-    raise SystemExit(1)
-print("clean tree runs the snippet: 0 failing checks, exit 0")
-for name, path, old, new in selected:
-    original = path.read_text(encoding="utf-8")
-    if old not in original:
-        print("SKIP  %-52s anchor not found in %s" % (name, path.name))
-        bad.append(name)
-        continue
-    raw = path.read_bytes()
-    JOURNAL.write_text(json.dumps({
-        "path": str(path),
-        "original_b64": base64.b64encode(raw).decode("ascii")}), encoding="utf-8")
-    try:
-        path.write_text(original.replace(old, new, 1), encoding="utf-8")
-        labels, code, out = run_sections()
-    finally:
-        path.write_bytes(raw)
-        JOURNAL.unlink(missing_ok=True)
-    caught = bool(labels) or code != 0
-    print("%s %-52s %d failing check(s)%s"
-          % ("CAUGHT " if caught else "MISSED ", name, len(labels),
-             " (section crashed)" if code != 0 and not labels else ""))
-    for label in labels[:2]:
-        print("      %s" % label)
-    if not caught:
-        bad.append(name)
-
-labels, code, out = run_sections()
-print("\nrestored: %d failing checks, exit %d (must be 0/0)" % (len(labels), code))
-if labels or code != 0:
-    print(out[-1500:])
-print("mutations that no check noticed:", bad or "none")
-raise SystemExit(1 if bad or labels or code else 0)
+if __name__ == "__main__":
+    main()

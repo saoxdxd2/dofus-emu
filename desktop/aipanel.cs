@@ -2560,9 +2560,18 @@ namespace DofusFarm.UI
         public void Append(string line)
         {
             if (line == null) return;
+            // One dispatcher frame can carry a whole batch, newline-joined. Split it so
+            // every line keeps its own timestamp and the host-log mirror stays one
+            // record per line.
+            if (line.IndexOf('\n') >= 0)
+            {
+                foreach (string part in line.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                    Append(part);
+                return;
+            }
             if (InvokeRequired)
             {
-                try { BeginInvoke((MethodInvoker)delegate { Append(line); }); } catch { }
+                UiDispatcher.Instance.Post(delegate { Append(line); });
                 return;
             }
             _output.AppendText(DateTime.Now.ToString("HH:mm:ss") + " " + line + Environment.NewLine);

@@ -199,12 +199,20 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--plan-layers", type=int, default=grid_model.DEFAULT_PLAN_LAYERS)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--min-top1", type=float, default=None,
+                        help="override the corpus's uniform-guess floor for the verification check")
+    parser.add_argument("--allow-below-floor", action="store_true",
+                        help="write the checkpoint even when top-1 does not beat the floor")
     args = parser.parse_args(argv)
     train = _load(args.data / "train.npz", args.limit)
     val = _load(args.data / "val.npz", args.limit)
     test = _load(args.data / "test.npz", args.limit)
     if not train["labels"].shape[0]:
-        print("no training rows; run combat.grid_synth first")
+        # The recorded corpus is pass-only, so this is the expected state of a
+        # fresh checkout. Point at the generator that produces actionable rows
+        # instead of at the empty directory.
+        print("no training rows. Build the synthetic curriculum first:\n"
+              "  python -m combat.grid_synth --curriculum 200 --out %s" % args.data)
         return 2
     params = grid_model.init_params(
         jax.random.PRNGKey(args.seed), hidden=args.hidden,
@@ -240,6 +248,28 @@ def main(argv: Optional[list] = None) -> int:
     if test["labels"].shape[0]:
         metrics["test"] = evaluate(params, test, args.batch)
         print("test", json.dumps(metrics["test"], sort_keys=True))
+
+    # Verification before live boards: the corpus manifest records the
+    # uniform-guess floor over its own winning sets. A ranker that cannot beat
+    # "pick a winner at random" has not learned the board, and shipping it is
+    # worse than shipping nothing -- it replaces the solver's ranking with noise.
+    floor = None
+    manifest_path = args.data / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            floor = float(json.loads(manifest_path.read_text(encoding="utf-8"))
+                          .get("uniform_guess_floor") or 0.0)
+        except (ValueError, OSError):
+            floor = None
+    evaluated = metrics.get("test") or (history[-1].get("val") if history else None)
+    verified = True
+    if floor is not None and evaluated and evaluated.get("rows"):
+        threshold = args.min_top1 if args.min_top1 is not None else floor
+        passed = float(evaluated["top1"]) > float(threshold)
+        metrics["verification"] = {"top1": evaluated["top1"], "floor": floor,
+                                  "threshold": threshold, "passed": passed}
+        print("verification", json.dumps(metrics["verification"], sort_keys=True))
+        verified = passed or args.allow_below_floor
     args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / "model.pkl").open("wb") as handle:
         pickle.dump({"params": jax.tree_util.tree_map(np.asarray, params),
@@ -247,6 +277,10 @@ def main(argv: Optional[list] = None) -> int:
     (args.out / "metrics.json").write_text(
         json.dumps(metrics, indent=1, sort_keys=True), encoding="utf-8")
     print("wrote", args.out)
+    if not verified:
+        print("checkpoint written but verification FAILED: top-1 does not beat the "
+              "uniform-guess floor; pass --allow-below-floor to accept it deliberately")
+        return 1
     return 0
 
 

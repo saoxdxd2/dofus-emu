@@ -55,6 +55,42 @@ class TacticalStateEncoder:
         ]
         return torch.tensor(vec, dtype=torch.float32).unsqueeze(0)  # [1, 24]
 
+    @staticmethod
+    def encode_numpy(state: CombatState, breed_id: int = 8, is_boss: bool = False):
+        import numpy as np
+        res = getattr(state, "target_resists", {}) or {}
+        vec = [
+            breed_id / 12.0,
+            float(getattr(state, "char_hp_percent", 1.0)),
+            min(1.0, getattr(state, "action_points", 6) / 12.0),
+            min(1.0, getattr(state, "movement_points", 3) / 6.0),
+            min(1.0, getattr(state, "strength", 0) / 800.0),
+            min(1.0, getattr(state, "intelligence", 0) / 800.0),
+            min(1.0, getattr(state, "chance", 0) / 800.0),
+            min(1.0, getattr(state, "agility", 0) / 800.0),
+            min(1.0, getattr(state, "power", 0) / 400.0),
+            min(1.0, getattr(state, "flat_damage", 0) / 100.0),
+            1.0 if "power" in getattr(state, "active_buffs", []) else 0.0,
+            1.0 if "divine" in getattr(state, "active_buffs", []) else 0.0,
+            1.0 if "shield" in getattr(state, "active_buffs", []) else 0.0,
+            min(1.0, getattr(state, "target_hp", 0) / 1500.0),
+            min(1.0, getattr(state, "target_hp_percent", 1.0)),
+            min(1.0, getattr(state, "distance_cells", 1) / 10.0),
+            max(-1.0, min(1.0, res.get("neutral", 0) / 100.0)),
+            max(-1.0, min(1.0, res.get("earth", 0) / 100.0)),
+            max(-1.0, min(1.0, res.get("fire", 0) / 100.0)),
+            max(-1.0, min(1.0, res.get("water", 0) / 100.0)),
+            max(-1.0, min(1.0, res.get("air", 0) / 100.0)),
+            1.0 if is_boss else 0.0,
+            1.0 if getattr(state, "char_hp_percent", 1.0) < 0.35 else 0.0,
+            1.0 if getattr(state, "target_hp", 0) < 180 else 0.0,
+        ]
+        arr = np.asarray(vec, dtype=np.float32)
+        norm = np.linalg.norm(arr)
+        if norm > 1e-9:
+            arr /= norm
+        return arr
+
 
 @dataclass
 class RecursiveDecision:

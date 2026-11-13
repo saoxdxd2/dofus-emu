@@ -97,6 +97,9 @@ def _origin_allowed(origin: str) -> bool:
     return (parsed.hostname or "").lower() in _ALLOWED_ORIGIN_HOSTS
 
 
+#: How often the SSE health stream emits a snapshot.
+STREAM_INTERVAL_S = 1.0
+
 def _host_allowed(host: str, port: int) -> bool:
     if not host:
         return True
@@ -457,42 +460,90 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _health_payload(self, include_token: bool = False) -> Dict[str, Any]:
+        checkpoint = str(POLICY.checkpoint) if POLICY is not None else None
+        cfg = POLICY.cfg.__dict__ if POLICY is not None else None
+        identity = dict(RUNTIME)
+        if include_token:
+            identity["token"] = local_secret()
+        return {
+            "status": "ok" if POLICY is not None else "loading",
+            "model": "encounter_ppo_pbt_actor",
+            "checkpoint": checkpoint,
+            "config": cfg,
+            # Not a label: a health endpoint has to name the array library the process is
+            # actually computing with, and the fallback is a real backend now, not a lack of
+            # one. Only when no policy loaded at all is the answer "solver-only".
+            "backend": _policy_backend() if POLICY is not None
+                       else "solver-only (no array backend installed)",
+            # What the live learner has picked up so far. Reported here rather
+            # than behind a separate endpoint because "is it learning?" is the
+            # first question asked of a brain that is supposed to improve, and a
+            # number nobody looks at is a number that stays wrong.
+            "learning": _learning_report(),
+            # The per-monster half of the same question. The solver reads
+            # this table to price a cell, so a run where it stays at zero
+            # rows is a run where every cell is still priced by the level
+            # prior -- which is exactly what "he walks into the enemy"
+            # looks like from the inside.
+            "threat": _threat_report(),
+            # Who is answering. A socket that replies only proves *a* server exists; on
+            # 2026-11-04 the server answering :8891 was started 50 minutes and three app
+            # restarts earlier, on the dev interpreter instead of the shipped one. The run
+            # token, pid, interpreter and checkpoint hash are what let the manager tell its
+            # own brain from a leftover one -- and the leftover is the one that must die.
+            # The token is only included for a caller that already proved it belongs here.
+            "identity": identity,
+        }
+
+    def _stream_health(self) -> None:
+        """Server-sent events: one health snapshot per second until the reader leaves.
+
+        The panel used to poll `/brain/status` on a one-second timer, so every status
+        it showed was up to a second old and every poll opened a new socket against a
+        daemon that is CPU-bound under the GIL. An event stream makes the update and
+        the read the same operation, and the `server_ms` it carries lets the reader
+        report a real transport latency instead of guessing from its own clock.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
+        self.end_headers()
+        self.close_connection = True
+        # Flushed once, before the first event, so a proxy or a client that waits
+        # for the body to start does not sit on a buffer until the socket closes.
+        try:
+            self.wfile.write(b": stream\n\n")
+            self.wfile.flush()
+        except OSError:
+            return
+        while True:
+            payload = self._health_payload(include_token=True)
+            payload["server_ms"] = int(time.time() * 1000)
+            try:
+                self.wfile.write(b"data: " + dumps_bytes(payload) + b"\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
+            time.sleep(STREAM_INTERVAL_S)
+
     def do_GET(self):
         if self.path == "/health":
-            checkpoint = str(POLICY.checkpoint) if POLICY is not None else None
-            cfg = POLICY.cfg.__dict__ if POLICY is not None else None
-            identity = dict(RUNTIME)
-            if self._authorized(require_token=True):
-                identity["token"] = local_secret()
-            self._reply({
-                "status": "ok" if POLICY is not None else "loading",
-                "model": "encounter_ppo_pbt_actor",
-                "checkpoint": checkpoint,
-                "config": cfg,
-                # Not a label: a health endpoint has to name the array library the process is
-                # actually computing with, and the fallback is a real backend now, not a lack of
-                # one. Only when no policy loaded at all is the answer "solver-only".
-                "backend": _policy_backend() if POLICY is not None
-                           else "solver-only (no array backend installed)",
-                # What the live learner has picked up so far. Reported here rather
-                # than behind a separate endpoint because "is it learning?" is the
-                # first question asked of a brain that is supposed to improve, and a
-                # number nobody looks at is a number that stays wrong.
-                "learning": _learning_report(),
-                # The per-monster half of the same question. The solver reads
-                # this table to price a cell, so a run where it stays at zero
-                # rows is a run where every cell is still priced by the level
-                # prior -- which is exactly what "he walks into the enemy"
-                # looks like from the inside.
-                "threat": _threat_report(),
-                # Who is answering. A socket that replies only proves *a* server exists; on
-                # 2026-11-04 the server answering :8891 was started 50 minutes and three app
-                # restarts earlier, on the dev interpreter instead of the shipped one. The run
-                # token, pid, interpreter and checkpoint hash are what let the manager tell its
-                # own brain from a leftover one -- and the leftover is the one that must die.
-                # The token is only included for a caller that already proved it belongs here.
-                "identity": identity,
-            })
+            self._reply(self._health_payload(include_token=self._authorized(require_token=True)))
+            return
+        if self.path == "/health/stream":
+            # Same authorisation as /health: the identity block includes the run
+            # token, so an unauthenticated reader must not receive the stream.
+            if not self._authorized(require_token=True):
+                self._reply({"ok": False, "error": "forbidden"}, 403)
+                return
+            self._stream_health()
             return
         self._reply({"ok": False, "error": "not found"}, 404)
 

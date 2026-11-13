@@ -3381,14 +3381,21 @@
             } catch (e) {}
             return false;
         };
+        var _popupScanDebounce = null;
+        var _schedPopupScan = function () {
+            if (_popupScanDebounce) return;
+            _popupScanDebounce = setTimeout(function () {
+                _popupScanDebounce = null;
+                try { _popupScan(); } catch (e) {}
+            }, 250);
+        };
         try {
             if (window.MutationObserver && document.documentElement) {
-                var _popupObserver = new MutationObserver(function () { _popupScan(); });
+                var _popupObserver = new MutationObserver(_schedPopupScan);
                 _popupObserver.observe(document.documentElement,
                                        { childList: true, subtree: true });
             }
         } catch (e) {}
-        try { setInterval(function () { try { _popupScan(); } catch (e) {} }, 5000); } catch (e) {}
         var _loginCooldown = function() {
             var nowMs = Date.now();
             var kept = _pruneLoginFails(nowMs), lastFail = 0;
@@ -3593,9 +3600,11 @@
         var _guardTimer = setInterval(function() {
             try { if (_guardLoginScreen()) clearInterval(_guardTimer); } catch (e) {}
         }, 150);
-        // A wrapped screen that is replaced by a re-render must not lose the guard;
-        // the flag lives on the screen object, so a new one is wrapped again.
-        setInterval(function() { try { _guardLoginScreen(); } catch (e) {} }, 5000);
+        // Shared 5s maintenance tick: re-guard screen on re-render and scan background popups.
+        setInterval(function() {
+            try { _guardLoginScreen(); } catch (e) {}
+            try { _popupScan(); } catch (e2) {}
+        }, 5000);
 
         // Guest *registration*, not just guest playback.
         //
@@ -12377,6 +12386,15 @@
             try {
                 if (typeof payload === 'string') payload = JSON.parse(payload);
                 payload = payload || {};
+                // Validate against the generated contract when the host injected it.
+                // Optional on purpose: the page must still work when only this script
+                // was loaded, and the host already refuses a malformed envelope.
+                if (window.DofusContracts && typeof window.DofusContracts.validateBridgeDirective === 'function') {
+                    var contractErrors = window.DofusContracts.validateBridgeDirective(payload);
+                    if (contractErrors.length) {
+                        return _agentResult(false, null, 'invalid directive: ' + contractErrors.join('; '));
+                    }
+                }
                 var key = payload.tool ? String(payload.tool).toLowerCase() : '';
                 if (!key && payload.directive) {
                     key = _agentDirectiveAliases[String(payload.directive).toUpperCase()] || '';

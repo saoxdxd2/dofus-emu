@@ -35,6 +35,155 @@ logger = __import__("logging").getLogger("dofus.ai.guard_policy")
 
 CACHE_DIR = REPO_ROOT / "data" / "cache"
 
+
+# -- legality masking -------------------------------------------------------
+# A tool head scores every capability it knows, including the ones that cannot
+# be used in the current state: joining a fight while already in one, opening
+# the market mid-combat, stopping a farm that is not running. Masking the
+# *probabilities* after the softmax only renormalises them -- an illegal tool
+# can still win when the mask is misapplied, and the logits the controller
+# consumes keep the illegal mass. The mask belongs on the logits, before the
+# softmax, so both the decision and the confidence are conditioned on legality.
+
+_FIGHT_ONLY = frozenset({"fight.pass", "fight.state", "fight.plan"})
+_NEVER_IN_FIGHT = frozenset({
+    "nav.goto", "nav.follow", "farm.start", "hdv.scan", "hdv.list", "hdv.buy",
+    "hdv.prices", "inv.sell", "tap.interactive", "shop.buy", "quest.advance",
+})
+_ALWAYS_LEGAL = frozenset({
+    "knowledge.search", "knowledge.remember", "knowledge.forget", "chat.say",
+    "state.snapshot", "safe.stop", "inv.list", "ui.tap", "ui.icons",
+})
+
+
+def _fight_state(observation: Optional[Dict[str, Any]]) -> Optional[bool]:
+    """True/False when the observation states it, None when it is silent.
+
+    Silence must stay distinguishable from "not in a fight": a state vector
+    without a fight block is not evidence that combat is impossible, and
+    masking on it would remove the only legal action in a fight.
+    """
+    if not isinstance(observation, dict):
+        return None
+    for key in ("in_fight", "in_combat", "fighting"):
+        if key in observation:
+            return bool(observation.get(key))
+    fight = observation.get("fight")
+    if isinstance(fight, dict):
+        if fight.get("active") is False:
+            return False
+        return True
+    if observation.get("combat") is not None:
+        return True
+    return None
+
+
+def _visible_groups(observation: Optional[Dict[str, Any]]) -> Optional[List[Any]]:
+    if not isinstance(observation, dict):
+        return None
+    for container in (observation, observation.get("map") or {}):
+        if isinstance(container, dict) and isinstance(container.get("groups"), list):
+            return container["groups"]
+    return None
+
+
+def _farm_active(observation: Optional[Dict[str, Any]]) -> Optional[bool]:
+    if not isinstance(observation, dict):
+        return None
+    for key in ("farm_running", "farming"):
+        if key in observation:
+            return bool(observation.get(key))
+    farm = observation.get("farm")
+    if isinstance(farm, dict):
+        return bool(farm.get("running") or farm.get("active") or farm.get("session_id"))
+    return None
+
+
+def tool_is_legal(name: str, observation: Optional[Dict[str, Any]] = None,
+                  tools: Optional[Sequence[str]] = None) -> bool:
+    """Whether ``name`` may be emitted in ``observation``.
+
+    Unknown capabilities default to legal: a registry addition must not be
+    silently unreachable until this table learns about it. The rules below are
+    only the cases where the state positively proves illegality.
+    """
+    if tools is not None and name not in tools:
+        return False
+    if name in _ALWAYS_LEGAL:
+        return True
+    fight = _fight_state(observation)
+    if name in _FIGHT_ONLY:
+        return fight is not False
+    if fight is True and name in _NEVER_IN_FIGHT:
+        return False
+    if name in ("fight.join", "fight.estimate"):
+        if fight is True:
+            return False
+        groups = _visible_groups(observation)
+        if groups is not None and not groups:
+            return False
+        return True
+    if name == "farm.stop":
+        active = _farm_active(observation)
+        return active is not False
+    if name == "farm.start":
+        active = _farm_active(observation)
+        return active is not True
+    if name == "shop.buy":
+        if isinstance(observation, dict):
+            tutorial = observation.get("tutorial")
+            shop = observation.get("shop")
+            if tutorial is None and shop is None:
+                # No tutorial/shop block at all: the caller may be outside the
+                # observation schema. Do not invent an illegality.
+                return True
+            if isinstance(tutorial, dict) and tutorial.get("active") is False:
+                return False
+            if isinstance(shop, dict) and shop.get("open") is False:
+                return False
+        return True
+    return True
+
+
+def legality_mask(logits: Any, tools: Sequence[str],
+                  observation: Optional[Dict[str, Any]] = None,
+                  mask_value: float = -1e9) -> Any:
+    """Copy ``logits`` with illegal tool columns set to ``mask_value``.
+
+    Accepts a 1-D score vector or a 2-D ``[batch, tools]`` matrix. Fails open
+    when the mask would leave no legal tool: a state this table misreads must
+    not turn into an arbitrary pick or an all ``-inf`` softmax.
+    """
+    import numpy as np
+
+    scores = np.array(logits, dtype=np.float32, copy=True)
+    legal = np.asarray([tool_is_legal(name, observation, tools) for name in tools],
+                       dtype=bool)
+    if not legal.any():
+        return scores
+    if scores.ndim == 1:
+        scores[~legal] = mask_value
+    elif scores.ndim == 2:
+        scores[:, ~legal] = mask_value
+    else:
+        raise ValueError("logits must be 1-D or 2-D, got shape %r" % (scores.shape,))
+    return scores
+
+
+def masked_softmax(logits: Any, tools: Sequence[str],
+                   observation: Optional[Dict[str, Any]] = None,
+                   temperature: float = 1.0) -> Any:
+    """Softmax over legal tools only. The illegal entries get exactly zero."""
+    import numpy as np
+
+    scores = legality_mask(logits, tools, observation)
+    scores = np.asarray(scores, dtype=np.float64) / max(float(temperature), 1e-6)
+    shifted = scores - np.max(scores, axis=-1, keepdims=True)
+    exponent = np.exp(shifted)
+    total = exponent.sum(axis=-1, keepdims=True)
+    return exponent / np.maximum(total, 1e-12)
+
+
 _ENTITY_FILES = {
     "item": ("items_full.json",),
     "monster": ("monsters_full.json",),
@@ -533,6 +682,47 @@ class GuardPolicy:
     def __init__(self, use_guards: bool = True) -> None:
         self.use_guards = use_guards
         self.last: Dict[str, Any] = {}
+        # Optional split-conformal calibration (``ai/conformal.py``). None means "no
+        # gate", which is exactly the previous behaviour: `choose_from_logits` returns
+        # the argmax and nothing else. Set with `set_conformal()` to make the head
+        # abstain instead of guessing when its prediction set is not a singleton.
+        self.conformal: Any = None
+
+    def set_conformal(self, calibration: Any) -> None:
+        """Attach a fitted calibration. Passing None removes the gate again."""
+        self.conformal = calibration
+
+    def gate_choice(self, tool: Optional[str], tools: Sequence[str],
+                    probs: Any) -> Any:
+        """Is the head's own answer safe to act on?
+
+        Returns an ``ai.conformal.Decision``. With no calibration attached this is
+        unconditionally ``accepted``, so the deterministic guards and the learned head
+        behave exactly as before.
+        """
+        from ai.conformal import gate
+
+        decision = gate(tool, tools, probs, self.conformal)
+        self.last["conformal"] = decision.as_dict()
+        return decision
+
+    def choose_gated(
+        self,
+        scores: Any,
+        tools: Sequence[str],
+        observation: Optional[Dict[str, Any]] = None,
+        temperature: float = 1.0,
+    ) -> Tuple[Optional[str], Any, Any]:
+        """``choose_from_logits`` plus the abstention gate.
+
+        Returns ``(tool, probs, decision)`` where ``tool`` is ``None`` when the gate
+        abstained. Callers that want the old behaviour call ``choose_from_logits``
+        directly; this exists so the escalation to the deterministic planner is a
+        decision the gate makes, not a guess the head makes.
+        """
+        tool, probs = self.choose_from_logits(scores, tools, observation, temperature)
+        decision = self.gate_choice(tool, tools, probs)
+        return (tool if decision.accepted else None), probs, decision
 
     def choose(
         self,
@@ -554,7 +744,7 @@ class GuardPolicy:
             return ToolCall("quest.advance", {"quest_id": objective["quest_id"]}, goal)
         started = time.perf_counter()
         name = _guard_tool(goal) if self.use_guards else None
-        if tools and name not in tools:
+        if name is not None and not tool_is_legal(name, observation, tools):
             name = None
         if name is None:
             self.last = {
@@ -579,6 +769,34 @@ class GuardPolicy:
             "source": "guard",
         }
         return ToolCall(name, coerced, goal)
+
+    def choose_from_logits(
+        self,
+        scores: Any,
+        tools: Sequence[str],
+        observation: Optional[Dict[str, Any]] = None,
+        temperature: float = 1.0,
+    ) -> Tuple[Optional[str], Any]:
+        """Apply the legality mask before the softmax and return the argmax.
+
+        This is the bridge the learned head uses: it produces one score per
+        capability, and this method decides. Keeping it here means the rule
+        path and the learned path share one definition of legality instead of
+        two tables that drift.
+        """
+        import numpy as np
+
+        if not tools:
+            return None, None
+        row = np.asarray(scores, dtype=np.float32)
+        if row.ndim == 2:
+            row = row[0]
+        if row.shape[0] != len(tools):
+            raise ValueError("scores have %d entries for %d tools"
+                             % (row.shape[0], len(tools)))
+        probs = masked_softmax(row, tools, observation, temperature)
+        index = int(np.argmax(probs))
+        return str(tools[index]), probs
 
     def _arguments(self, tool: str, goal: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         if tool == "knowledge.search":
