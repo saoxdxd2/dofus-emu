@@ -435,6 +435,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.min_support != MIN_VETO_SUPPORT:
         rep["veto_candidates"] = veto_candidates(rows, min_support=args.min_support)
     if args.json:
+        from agent.jsonio import utf8_console
+        utf8_console()
         print(json.dumps(rep, indent=1, ensure_ascii=False))
     else:
         _print_report(rep)
