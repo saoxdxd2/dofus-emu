@@ -1,10 +1,10 @@
 {
   "generator": "tools/codegen_schemas.py",
   "inputs": {
-    "bridge_directive.schema.json": "1bc24ee129a7553aa9651fcf116303fd1b8f1993bac0929665e3220535067e2a",
-    "bridge_health.schema.json": "63ca099a0a6b3d5893a4a2016fb51f373dda3e82986e97baff1f1cbc2b63e0ca",
-    "proxy_telemetry.schema.json": "c15bf1acb88452ea3958eb6ea2586bf069258ffb297f298685b94eabbb8a2546",
-    "tool_call.schema.json": "27a591b0f42310a6284cbac67d560470bdef2b038cb8f85a8f8ec80c1810a08e"
+    "bridge_directive.schema.json": "1761ffa25eacd294d7fe509a165fa00731d3f6fb5b4ae0e33309468570842c4c",
+    "bridge_health.schema.json": "e03049b21d0913dd0d984e85a7abb9d1888612dbed864c2c0e03bcc6b1955a55",
+    "proxy_telemetry.schema.json": "4564179c89f0b2d9c30326b8b2d3fc8fe3c7b33dc1a2566510a0f275aa9e156a",
+    "tool_call.schema.json": "e0080f1806df7aae50bd22639a74d704b335b124f824968f2ff0fa5b65910872"
   },
   "outputs": {
     "csharp": "f36f9a0052c32dcfd5718a9cdfca68292a0b1340f1fa1a3e14d47bb546cce3eb",

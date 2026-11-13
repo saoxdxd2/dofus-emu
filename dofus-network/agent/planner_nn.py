@@ -31,6 +31,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "models" / "tool_policy.onnx"))
 
 
+def apply_tool_bias(scores: list, tools: list, bias: Dict[str, float]) -> list:
+    """Subtract the fitted per-tool cost from the policy's logits.
+
+    ``tools/fit_tool_bias.py`` fits its vector on the *exported graph's* logits,
+    which already carry the calibration scale (`logit_scale` = 1/T; 4.0 for the
+    shipped 0.25). The bias is therefore in post-scale logit units, and applying
+    it to the graph's own output -- exactly what this does -- is the only
+    matching application. Scaling it by 1/T again would apply it four times too
+    strongly, and any consumer that rescales logits before calling this has
+    changed the units out from under the fit.
+
+    Kept as a function rather than a loop inside `_choose_tool` so a test can
+    check the arithmetic without a model session.
+    """
+    adjusted = list(scores)
+    if not bias:
+        return adjusted
+    index = {name: position for position, name in enumerate(tools)}
+    for name, cost in bias.items():
+        position = index.get(name)
+        if position is not None:
+            adjusted[position] = float(adjusted[position]) - float(cost)
+    return adjusted
+
+
 class NNPlanner(QuestPlanner):
     head: str = "mlp"
     capability_tools: List[str] = []
@@ -77,7 +102,11 @@ class NNPlanner(QuestPlanner):
         # nav.goto burns up to three steps in a world where travel is charged, while a
         # spurious farm.start burns one. Subtracting the cost before the argmax is the
         # decision-theoretic choice, and it is measurable.
+        # An explicit argument wins over the artifact: a caller passing a dict is
+        # experimenting, and a sidecar must not overwrite the experiment.
         self.tool_penalty = dict(tool_penalty or {})
+        self._penalty_given = bool(tool_penalty)
+        self.tool_bias_note = "no fitted tool bias"
         self.stack_mode = stack_mode if stack_mode in ("off", "shadow", "act") else "shadow"
         self.stack_path = Path(stack_path) if stack_path else None
         self.stack = None
@@ -135,12 +164,50 @@ class NNPlanner(QuestPlanner):
                 self.history_obs = (
                     int((payload.get("history") or {}).get("token") or 0)
                     == HISTORY_TOKEN_OBS)
+                self._load_sidecar_bias(payload)
             self.note = "tool policy %s (%d tools%s%s)" % (
                 path.name, len(self.tools),
                 ", +history" if self.history_steps else "",
                 ", capability head" if self.head == "capability" else "")
+            if self.tool_penalty:
+                self.note += ", bias %d tools" % len(self.tool_penalty)
         except Exception as exc:  # noqa: BLE001
             self.note = "model unusable (%s); deterministic fallback" % exc
+
+    def _load_sidecar_bias(self, payload: Dict[str, Any]) -> None:
+        """Read the fitted bias `tools/fit_tool_bias.py --write` stored.
+
+        The block names its own units and the calibration scale it was fitted
+        through, because the failure this replaces was silent: the bias was fitted
+        and then never reached a decision. A sidecar written with a different
+        convention (`pre_scale`, from a graph without `logit_scale`) is ignored
+        rather than applied at the wrong strength.
+        """
+        if self._penalty_given:
+            self.tool_bias_note = "bias from the caller, sidecar ignored"
+            return
+        block = payload.get("tool_bias")
+        if not isinstance(block, dict):
+            return
+        units = str(block.get("units") or "")
+        if units != "post_scale":
+            self.tool_bias_note = ("fitted bias ignored: units=%r, this head needs "
+                                   "post_scale" % units)
+            return
+        clean: Dict[str, float] = {}
+        for name, value in (block.get("bias") or {}).items():
+            if name not in self.tools:
+                continue
+            try:
+                clean[str(name)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        if not clean:
+            self.tool_bias_note = "fitted bias block is empty"
+            return
+        self.tool_penalty = clean
+        self.tool_bias_note = "fitted bias on %d tools (post-scale, T=%s)" % (
+            len(clean), block.get("temperature"))
 
     # -- stacked choice ----------------------------------------------------
 
@@ -195,8 +262,11 @@ class NNPlanner(QuestPlanner):
             ranked = self.stack.rank(logits, cells, self.tools, context=context)
             if not ranked:
                 return None
-            for row in ranked:
-                row["score"] -= float(self.tool_penalty.get(row["tool"], 0.0))
+            # No tool bias here. `stack.rank` scores are the stack's own
+            # regression output, not logits, so subtracting a logit-unit bias from
+            # them mixed two scales -- and the bias is a coarse prior for the
+            # policy head, which is exactly what the stack already replaces when
+            # it is allowed to act.
             ranked.sort(key=lambda row: row["score"], reverse=True)
             chosen = ranked[0]
             streak = getattr(self.tracker, "streak", 0)
@@ -301,11 +371,7 @@ class NNPlanner(QuestPlanner):
                     self.last_value = 1.0 / (1.0 + math.exp(-raw))
                 except (TypeError, ValueError, OverflowError):
                     self.last_value = None
-            scores = list(logits)
-            if self.tool_penalty:
-                for name, cost in self.tool_penalty.items():
-                    if name in self.tools:
-                        scores[self.tools.index(name)] -= cost
+            scores = apply_tool_bias(logits, self.tools, self.tool_penalty)
             policy_tool = self.tools[int(max(range(len(scores)),
                                              key=lambda i: scores[i]))]
             stacked = self._stack_choice(x[0], logits)

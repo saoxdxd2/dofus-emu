@@ -331,7 +331,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
 
-        if path not in ("/sentinel/status", "/status", "/health") and not self._authorized():
+        # The status stream carries exactly what `/status` carries, so it takes the
+        # same authorisation: adding it to the protected side would mean a caller
+        # that may read the snapshot may not follow it.
+        if path not in ("/sentinel/status", "/status", "/health",
+                        "/sentinel/status/stream", "/status/stream") and not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
             return
 

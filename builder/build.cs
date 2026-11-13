@@ -1264,7 +1264,10 @@ namespace DofusBuild
             {
                 "mscorlib.dll", "System.dll", "System.Core.dll", "System.Drawing.dll",
                 "System.Windows.Forms.dll", "System.Management.dll",
-                "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"
+                "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll",
+                // The AI panel talks to the brain daemon through one shared HttpClient
+                // (desktop/aipanel.cs), which lives here rather than in System.dll.
+                "System.Net.Http.dll"
             };
             if (needMicrosoftCSharp) names.Add("Microsoft.CSharp.dll");
 

@@ -159,7 +159,7 @@ where the two disagree the dated section wins.
 | **10** | Combat AI |
 | **11** | Supporting packages |
 | **12** | Measured results (the numbers that matter) |
-| **13** | Open gaps (G1–G127<!--f:gaps_max-->) |
+| **13** | Open gaps (G1–G128<!--f:gaps_max-->) |
 | **14** | Current uncommitted work (working tree at snapshot) |
 | **15** | Build and release |
 | **16** | Configuration reference |
@@ -2954,10 +2954,10 @@ asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 
 ---
 
-## 13. Open gaps (G1–G127<!--f:gaps_max-->)
+## 13. Open gaps (G1–G128<!--f:gaps_max-->)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (8,060<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (8,127<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -4740,7 +4740,7 @@ four defects, and one new rule.
   - **§1 bridge port** — `CANDIDATE_PORTS` is `{8893…8899}`, `DEFAULT_PORT = 8893`
     (`agent/bridge.py:22`), and the live `bridge_port.txt` says **8896**; the doc no longer
     implies 8893 is the running port.
-  - **§4 release/blocker** — `setup.exe` **62,903,808<!--f:setup_bytes--> B = 214.0 MiB**, and the real
+  - **§4 release/blocker** — `setup.exe` **68,086,784<!--f:setup_bytes--> B = 214.0 MiB**, and the real
     `live_ready` verdict instead of a claim of readiness: **FAIL egress** (no
     `127.0.0.1:40000`, `fail_closed=1`), **WARN client** (host not running), **FAIL page
     build** (last client log is `2026-10-29bf`, the build is `2026-10-30b`).
@@ -5802,7 +5802,7 @@ four defects, and one new rule.
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
 | `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G127<!--f:gaps_max-->**) | **current** (2026-10-31), 8,060<!--f:known_gaps_lines--> lines |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G128<!--f:gaps_max-->**) | **current** (2026-10-31), 8,127<!--f:known_gaps_lines--> lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
 | `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |

@@ -6,6 +6,17 @@ Implements model-based planning and lookahead rollouts:
 3. Multi-turn tree search / lookahead rollouts before taking action in the real client
 4. Continuous reward evaluation:
        R = 15.0 * LethalKill + 1.2 * (Damage / AP) + 2.0 * BuffSynergyROI - 8.0 * LowHP - 0.2 * WastedAP
+
+READ THIS BEFORE OPTIMISING (G128, measured 2026-11-13)
+    Nothing in the tree constructs `DofusWorldModel` or calls `step`,
+    `simulate_rollout` or `calculate_reward`. The only references are the lazy
+    exports in `combat/__init__.py`. There are no rollouts to make faster.
+    The buff branch below is also unreachable with the shipped catalog: all 34
+    `BUILTIN_SPELLS` have a damage effect, and `is_buff` requires none.
+    `deepcopy` measured 37.3 us of an 83.0 us step; 100 rollouts x 6 steps is
+    49.8 ms. Wiring this into `LivePolicy` comes first; speed comes after.
+    `CombatState` *is* used (by `recursive_reasoner.py`), so this file is not dead
+    in its entirety -- only the simulator half is.
 """
 
 from __future__ import annotations

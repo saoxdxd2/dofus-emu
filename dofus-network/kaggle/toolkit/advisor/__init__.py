@@ -1,5 +1,9 @@
 """Read-only spell, stat, gear and market advisor."""
 
+from .combinatorial_optimizer import (
+    CombinatorialLoadoutOptimizer,
+    LoadoutCandidate,
+)
 from .elements import ElementDecision, choose_element, marginal_primary_damage
 from .gear import GearAdvisor
 from .market import MarketReport, analyze_market
@@ -19,8 +23,10 @@ __all__ = [
     "PRIMARY_STAT",
     "AdvisorReport",
     "CharacterSnapshot",
+    "CombinatorialLoadoutOptimizer",
     "ElementDecision",
     "GearAdvisor",
+    "LoadoutCandidate",
     "MarketReport",
     "MarketSnapshot",
     "Repository",

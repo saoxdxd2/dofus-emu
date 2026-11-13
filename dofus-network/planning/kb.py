@@ -174,18 +174,32 @@ def _trigram_csr(names: Sequence[str]) -> Dict[str, np.ndarray]:
 def _write_flat(path: Path, arrays: Dict[str, np.ndarray]) -> Dict[str, Any]:
     """One headerless binary file + a JSON offset table, so it can be mmapped."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    index: Dict[str, Any] = {"version": 1, "arrays": {}}
-    with path.open("wb") as handle:
-        offset = 0
-        for name in sorted(arrays):
-            array = np.ascontiguousarray(arrays[name])
-            handle.write(array.tobytes(order="C"))
-            index["arrays"][name] = {
-                "dtype": str(array.dtype),
-                "shape": [int(v) for v in array.shape],
-                "offset": int(offset),
-            }
-            offset += array.nbytes
+
+    def emit(target: Path) -> Dict[str, Any]:
+        index: Dict[str, Any] = {"version": 1, "file": target.name, "arrays": {}}
+        with target.open("wb") as handle:
+            offset = 0
+            for name in sorted(arrays):
+                array = np.ascontiguousarray(arrays[name])
+                handle.write(array.tobytes(order="C"))
+                index["arrays"][name] = {
+                    "dtype": str(array.dtype),
+                    "shape": [int(v) for v in array.shape],
+                    "offset": int(offset),
+                }
+                offset += array.nbytes
+        return index
+
+    try:
+        index = emit(path)
+    except OSError:
+        # A live daemon maps the canonical file read-only, and Windows refuses to
+        # truncate a file with an open mapping. Write the next generation beside it
+        # and point the index there: the running reader keeps its pages, the new
+        # reader gets this build, and the next rebuild overwrites the canonical
+        # file once nothing holds it.
+        alternative = path.with_name(path.stem + ".next" + path.suffix)
+        index = emit(alternative)
     path.with_suffix(".index.json").write_text(json.dumps(index, sort_keys=True),
                                                encoding="utf-8")
     return index
@@ -195,9 +209,12 @@ class _FlatArrays:
     """Read-only mmap views over the flat KB file, shared through the page cache."""
 
     def __init__(self, path: Path) -> None:
-        self._handle = open(path, "rb")
-        self._map = _mmap.mmap(self._handle.fileno(), 0, access=_mmap.ACCESS_READ)
         index = json.loads(path.with_suffix(".index.json").read_text(encoding="utf-8"))
+        # The index names the file it belongs to: a rebuild against a mapped
+        # canonical file writes `*.next.bin` instead of failing.
+        target = path.with_name(str(index.get("file") or path.name))
+        self._handle = open(target, "rb")
+        self._map = _mmap.mmap(self._handle.fileno(), 0, access=_mmap.ACCESS_READ)
         self.arrays: Dict[str, np.ndarray] = {}
         for name, spec in index["arrays"].items():
             dtype = np.dtype(spec["dtype"])
@@ -248,7 +265,7 @@ class KnowledgeBase:
     def __init__(self, path: Path = DEFAULT_KB, names_path: Path = DEFAULT_NAMES) -> None:
         flat = path.with_suffix(".bin")
         self._flat = None
-        if flat.is_file() and flat.with_suffix(".index.json").is_file():
+        if flat.with_suffix(".index.json").is_file():
             # One read-only mapping of the flat file: forty instances share the
             # same page-cache pages instead of decompressing forty private copies.
             self._flat = _FlatArrays(flat)

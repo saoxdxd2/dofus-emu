@@ -58,7 +58,7 @@ namespace DofusFarm.Engine
     }
 
     /// <summary>Per-egress RTT/loss forecast state (Kalman level+drift + EWMA loss).</summary>
-    private sealed class EgressForecastState
+    internal sealed class EgressForecastState
     {
         // Kalman RTT: state is (level ms, drift ms per probe).
         public double Level;
@@ -517,6 +517,15 @@ namespace DofusFarm.Engine
                 }
 
                 ProxyCandidate best = incumbent ?? (healthy.Count > 0 ? healthy[0] : null);
+                // Proactive failover: if the live egress is forecast to degrade, move to
+                // a healthy backup before probes start failing, avoiding the dead window.
+                if (_active != null && _active.Healthy && best != null)
+                {
+                    var proactive = ProactivePick(_active, healthy);
+                    if (proactive != null &&
+                        !string.Equals(proactive.Url, best.Url, StringComparison.OrdinalIgnoreCase))
+                        best = proactive;
+                }
                 bool changed;
                 lock (_gate)
                 {
@@ -742,6 +751,126 @@ namespace DofusFarm.Engine
             if (!proven && !tunnel) return 2;    // unproven proxy, still a better bet than WARP
             if (proven && tunnel) return 1;      // steady tunnel, but see below
             return 0;                            // unproven tunnel
+        }
+
+
+        /// <summary>Get or create the forecast state for an egress URL.</summary>
+        private EgressForecastState GetForecastState(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return null;
+            lock (_forecastGate)
+            {
+                EgressForecastState st;
+                if (!_forecasts.TryGetValue(url, out st))
+                {
+                    st = new EgressForecastState();
+                    _forecasts[url] = st;
+                }
+                return st;
+            }
+        }
+
+        /// <summary>
+        /// Record one probe result for an egress (Kalman RTT + EWMA loss) and
+        /// return the current degradation probability in [0, 1].
+        /// </summary>
+        public double RecordProbe(string url, double rttMs, bool lost)
+        {
+            var st = GetForecastState(url);
+            if (st == null) return 0.0;
+            lock (_forecastGate)
+            {
+                DateTime now = DateTime.UtcNow;
+                double dt = 1.0;
+                if (st.UpdatedUtc != DateTime.MinValue)
+                    dt = Math.Max(1.0, (now - st.UpdatedUtc).TotalSeconds);
+                st.UpdatedUtc = now;
+
+                // Kalman predict.
+                st.Level = st.Level + st.Drift * dt;
+                double pLL = st.Pll + 2.0 * dt * st.Pld + dt * dt * st.Pdd + 4.0;
+                double pLd = st.Pld + dt * st.Pdd;
+                double pDd = st.Pdd + 0.5;
+                st.Pll = pLL; st.Pld = pLd; st.Pdd = pDd;
+
+                // Kalman update when we have a real RTT sample.
+                if (rttMs >= 0.0)
+                {
+                    double y = rttMs - st.Level;
+                    double s = st.Pll + 25.0;
+                    if (s <= 0.0) s = 1e-6;
+                    double kLL = st.Pll / s;
+                    double kLd = st.Pld / s;
+                    st.Level = st.Level + kLL * y;
+                    st.Drift = st.Drift + kLd * y;
+                    st.Pll = (1.0 - kLL) * st.Pll;
+                    st.Pld = (1.0 - kLL) * st.Pld;
+                    st.Pdd = st.Pdd - kLd * st.Pld;
+                }
+                double std = Math.Sqrt(Math.Max(st.Pll, 0.0));
+
+                // EWMA loss.
+                double x = lost ? 1.0 : 0.0;
+                if (!st.Initialized)
+                {
+                    st.LossEma = x; st.LossTrend = 0.0; st.PrevLossEma = x; st.Initialized = true;
+                }
+                else
+                {
+                    st.LossEma = 0.3 * x + 0.7 * st.LossEma;
+                    double diff = st.LossEma - st.PrevLossEma;
+                    st.LossTrend = 0.2 * diff + 0.8 * st.LossTrend;
+                    st.PrevLossEma = st.LossEma;
+                }
+                st.Probes++;
+
+                double z = (std / 60.0) + Math.Max(st.LossTrend, 0.0) * 3.0 - 0.8;
+                double deg = 1.0 / (1.0 + Math.Exp(-z));
+                return Math.Min(Math.Max(deg, 0.0), 1.0);
+            }
+        }
+
+        /// <summary>Last degradation probability for an egress; 0 when stale or unprobed.</summary>
+        public double GetDegradation(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return 0.0;
+            lock (_forecastGate)
+            {
+                EgressForecastState st;
+                if (!_forecasts.TryGetValue(url, out st)) return 0.0;
+                double age = (DateTime.UtcNow - st.UpdatedUtc).TotalSeconds;
+                if (age > ProactiveForecastMaxAgeSeconds) return 0.0;
+                double std = Math.Sqrt(Math.Max(st.Pll, 0.0));
+                double z = (std / 60.0) + Math.Max(st.LossTrend, 0.0) * 3.0 - 0.8;
+                double deg = 1.0 / (1.0 + Math.Exp(-z));
+                return Math.Min(Math.Max(deg, 0.0), 1.0);
+            }
+        }
+
+        /// <summary>
+        /// Proactive failover: if the current egress is forecast to degrade and a
+        /// healthier backup exists, return the backup so we switch before failure.
+        /// Returns null when no proactive switch is warranted.
+        /// </summary>
+        private ProxyCandidate ProactivePick(ProxyCandidate current, List<ProxyCandidate> healthy)
+        {
+            if (current == null || healthy == null) return null;
+            double curDeg = GetDegradation(current.Url);
+            if (curDeg < ProactiveDegradationThreshold) return null;
+            ProxyCandidate bestBackup = null;
+            double bestDeg = curDeg;
+            foreach (ProxyCandidate c in healthy)
+            {
+                if (c == null || string.IsNullOrEmpty(c.Url)) continue;
+                if (string.Equals(c.Url, current.Url, StringComparison.OrdinalIgnoreCase)) continue;
+                double d = GetDegradation(c.Url);
+                if (d < bestDeg - 0.05 && c.Healthy)
+                {
+                    bestDeg = d;
+                    bestBackup = c;
+                }
+            }
+            return bestBackup;
         }
 
         /// <summary>

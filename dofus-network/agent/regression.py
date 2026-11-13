@@ -2649,7 +2649,20 @@ def test_combat_suites() -> None:
                    # in sample, never a negative slope (which would make the planner
                    # prefer the candidate it is sure will fail), and bit-identical
                    # output when no sidecar is present.
-                   "agent.test_calibration"):
+                   "agent.test_calibration",
+                   # The inert-action attribution. The reviews quote "86% inert" as
+                   # a permanent property of the agent; the corpus says it was one
+                   # chronological quarter (88.6%) that ended when nav.goto started
+                   # working (39.5% in the newest quarter). This suite pins the two
+                   # things that keep that claim honest: exclusive layers sum to the
+                   # inert count, and `obs_source=carried` -- on 96% of inert rows
+                   # but 99% of effective ones -- is never reported as a cause.
+                   "agent.test_inert_attribution",
+                   # Glicko-2 as an archetype-stratified release gate. Pinned against
+                   # Glickman's published worked example (1464.06 / 151.52 / 0.05999)
+                   # and against the property that matters: a 3-case family can win
+                   # 3-0 and still fail, because the gate uses r - 2*RD, not r.
+                   "ai.test_glicko2"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
         text = (proc.stderr or "") + (proc.stdout or "")
@@ -2885,7 +2898,8 @@ def test_csharp_compile() -> None:
     legacy = compiler[0].lower().endswith("csc.exe")
     refs = ["mscorlib.dll", "System.dll", "System.Core.dll", "System.Drawing.dll",
             "System.Windows.Forms.dll", "System.Management.dll",
-            "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"]
+            "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll",
+            "System.Net.Http.dll"]
     args = ["/nologo", "/target:winexe", "/optimize+"]
     if not legacy:
         windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
@@ -18188,7 +18202,9 @@ def test_live_transitions() -> None:
               "current_objective": obj,
               "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
               "hp": 100}),
-        # accepted, and nothing moved: this is the 86% of the real corpus
+        # accepted, and nothing moved: the "86% inert" in old reviews was the third
+        # chronological quarter of the corpus (88.6%); the newest quarter is 39.5%.
+        # See `agent/inert_attribution.py` for the era-stratified measurement.
         step(1001, "do all the quests", "quest.advance",
              {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
               "current_objective": obj,

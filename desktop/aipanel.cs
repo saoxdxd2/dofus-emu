@@ -26,6 +26,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -329,6 +330,7 @@ namespace DofusFarm.UI
         private Button _btnSend;
         private Button _btnKeys;
         private Label _lblState;
+        private Label _lblServices;
 
         private readonly List<Process> _procs = new List<Process>();
         // Which instance each child drives. Without this the panel knows only "a
@@ -348,6 +350,19 @@ namespace DofusFarm.UI
         private readonly object _brainLock = new object();
         private readonly HashSet<string> _brainRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private DateTime _brainStatusAt = DateTime.MinValue;
+
+        // Per-service transport state, written by the SSE readers and painted from
+        // the cache. Every "the AI is not responding" report used to be one string
+        // with no way to tell a dead daemon from a slow one or from a client that
+        // never opened a socket.
+        private readonly ServiceHealth _brainService = new ServiceHealth("brain");
+        private readonly ServiceHealth _sentinelService = new ServiceHealth("sentinel");
+        private CancellationTokenSource _streamCts;
+        private int _streamsStarted;
+        private System.Windows.Forms.Timer _serviceTimer;
+        private static readonly int SentinelPort =
+            int.TryParse(Environment.GetEnvironmentVariable("DOFUS_SENTINEL_PORT") ?? "", out var _sent) && _sent > 0
+                ? _sent : 8890;
         private bool _brainHadInstances;
         private static readonly int BrainPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRAIN_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 95);
 
@@ -495,6 +510,21 @@ namespace DofusFarm.UI
             _lblState.AutoSize = true;
             _lblState.Location = new Point(556, 27);
             row3.Controls.Add(_lblState);
+
+            // "brain up 12ms . sentinel down (refused)" -- the two services the panel
+            // depends on, each with its own transport state. An SSE event is the read,
+            // so this is the age of the last frame, not of the last poll.
+            _lblServices = new Label();
+            _lblServices.Text = "";
+            _lblServices.ForeColor = Color.FromArgb(100, 116, 139);
+            _lblServices.AutoSize = true;
+            _lblServices.Location = new Point(640, 27);
+            row3.Controls.Add(_lblServices);
+
+            _serviceTimer = new System.Windows.Forms.Timer();
+            _serviceTimer.Interval = 1000;
+            _serviceTimer.Tick += delegate { UpdateServiceUi(); };
+            _serviceTimer.Start();
 
             var lblHint = new Label();
             lblHint.Text = "All 28 tools enabled; schema, no-progress and recovery guards live in agent/autopilot.py.";
@@ -1639,13 +1669,24 @@ namespace DofusFarm.UI
 
             try
             {
-                using (var wc = new WebClient())
+                using (var deadline = new CancellationTokenSource(4000))
+                using (var request = new HttpRequestMessage(HttpMethod.Post, BridgeUrl()))
                 {
-                    wc.Headers[HttpRequestHeader.ContentType] = "application/json";
-                    wc.Headers[HttpRequestHeader.Authorization] = LocalSecret.Bearer;
-                    wc.Encoding = Encoding.UTF8;
-                    string res = wc.UploadString(BridgeUrl(), "POST", payload);
-                    Append("[ai] " + tool + " -> " + Shorten(res, 220));
+                    request.Headers.TryAddWithoutValidation("Authorization", LocalSecret.Bearer);
+                    request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+                    using (var response = BrainHttp.SendAsync(request, deadline.Token)
+                                                   .GetAwaiter().GetResult())
+                    {
+                        // UploadString threw on any non-2xx and reported the status as
+                        // the exception message; a tool error the bridge explains in
+                        // its body is worth showing instead.
+                        string res = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        if (!response.IsSuccessStatusCode)
+                            Append("[ai] " + tool + " failed: " + (int)response.StatusCode + " "
+                                   + Shorten(res, 180));
+                        else
+                            Append("[ai] " + tool + " -> " + Shorten(res, 220));
+                    }
                 }
             }
             catch (Exception ex)
@@ -1691,29 +1732,45 @@ namespace DofusFarm.UI
             return "\"" + JsonEscape(value) + "\"";
         }
 
+        // One connection pool for every panel call, one deadline per call.
+        //
+        // `new WebClient()` per Quick() built a socket, a header set and a proxy probe
+        // each time, and `HttpWebRequest.Timeout` does not cover name resolution or the
+        // response body -- a daemon that accepted the request and then stalled held the
+        // caller for as long as it felt like. A shared HttpClient keeps the pool, and a
+        // CancellationToken ends the whole exchange at the deadline, body included.
+        private static readonly HttpClient BrainHttp = CreateBrainHttp();
+
+        private static HttpClient CreateBrainHttp()
+        {
+            var handler = new HttpClientHandler();
+            // Loopback must not be routed through a system proxy, and this daemon has
+            // nowhere to redirect us.
+            handler.UseProxy = false;
+            handler.AllowAutoRedirect = false;
+            return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        }
+
         private static string BrainRequest(string method, string path, string json, int timeoutMs)
         {
             try
             {
-                var req = (HttpWebRequest)WebRequest.Create(BrainUrl(path));
-                req.Method = method;
-                req.Timeout = timeoutMs;
-                req.ReadWriteTimeout = timeoutMs;
-                // Loopback must not be routed through a system HTTP proxy.
-                req.Proxy = null;
-                req.KeepAlive = false;
-                req.Headers[HttpRequestHeader.Authorization] = LocalSecret.Bearer;
-                if (json != null)
+                using (var deadline = new CancellationTokenSource(Math.Max(50, timeoutMs)))
+                using (var request = new HttpRequestMessage(new HttpMethod(method), BrainUrl(path)))
                 {
-                    byte[] data = Encoding.UTF8.GetBytes(json);
-                    req.ContentType = "application/json";
-                    req.ContentLength = data.Length;
-                    using (Stream stream = req.GetRequestStream())
-                        stream.Write(data, 0, data.Length);
+                    request.Headers.TryAddWithoutValidation("Authorization", LocalSecret.Bearer);
+                    if (json != null)
+                        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    using (var response = BrainHttp
+                               .SendAsync(request, HttpCompletionOption.ResponseContentRead, deadline.Token)
+                               .GetAwaiter().GetResult())
+                    {
+                        if (!response.IsSuccessStatusCode) return null;
+                        // .NET Framework has no token overload for the body read; with
+                        // ResponseContentRead the body is already buffered here.
+                        return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    }
                 }
-                using (var resp = (HttpWebResponse)req.GetResponse())
-                using (var reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                    return reader.ReadToEnd();
             }
             catch
             {
@@ -2106,10 +2163,16 @@ namespace DofusFarm.UI
 
         private void RefreshBrainStatus()
         {
+            StartStreams();
             // Cached answer, refreshed on a pool thread. This is called from a 1000 ms
             // Windows.Forms.Timer tick, so the HTTP probe it used to run inline blocked
             // the host window every tick -- against a Python daemon that is CPU-bound
             // under the GIL while it plans. Callers read the last known state now.
+            //
+            // A live SSE frame is a fresher answer than any poll: when one arrived
+            // within the last three seconds the probe is skipped entirely, and the
+            // poll is what still runs when the stream is down.
+            if (_brainService.Fresh) return;
             if ((DateTime.UtcNow - _brainStatusAt).TotalMilliseconds < 1500) return;
             if (Interlocked.CompareExchange(ref _brainStatusBusy, 1, 0) != 0) return;
             _brainStatusAt = DateTime.UtcNow;
@@ -2147,7 +2210,12 @@ namespace DofusFarm.UI
             }
             string body = BrainRequest("GET", "/brain/status", null, 1200);
             if (body == null) return;
+            ApplyBrainStatus(body);
+        }
 
+        /// <summary>Apply one `/brain/status` body, from a poll or from a stream frame.</summary>
+        private void ApplyBrainStatus(string body)
+        {
             var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             Match list = Regex.Match(body, "\"active\"\\s*:\\s*\\[([^\\]]*)\\]");
             if (list.Success)
@@ -2179,6 +2247,171 @@ namespace DofusFarm.UI
                 TryIdleTraining();
                 try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
             }
+        }
+
+        /// <summary>Per-service transport state, written by the stream readers.</summary>
+        private sealed class ServiceHealth
+        {
+            private readonly object _gate = new object();
+            private bool _connected;
+            private long _latencyMs = -1;
+            private string _error = "";
+            private DateTime _eventAt = DateTime.MinValue;
+            private int _attempts;
+
+            public ServiceHealth(string name) { Name = name; }
+
+            public string Name { get; private set; }
+
+            public bool Connected { get { lock (_gate) return _connected; } }
+
+            /// <summary>A frame arrived recently enough that no poll is needed.</summary>
+            public bool Fresh
+            {
+                get
+                {
+                    lock (_gate)
+                        return _connected && (DateTime.UtcNow - _eventAt).TotalSeconds < 3.0;
+                }
+            }
+
+            public void Ok(long serverMs)
+            {
+                long latency = -1;
+                if (serverMs > 0)
+                {
+                    long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+                    latency = Math.Max(0, now - serverMs);
+                }
+                lock (_gate)
+                {
+                    _connected = true;
+                    _eventAt = DateTime.UtcNow;
+                    _latencyMs = latency;
+                    _error = "";
+                    _attempts = 0;
+                }
+            }
+
+            public void Down(string why)
+            {
+                lock (_gate)
+                {
+                    _connected = false;
+                    _attempts++;
+                    _error = string.IsNullOrEmpty(why) ? "no answer" : why;
+                }
+            }
+
+            /// <summary>"brain up 12ms" or "brain down (timeout)", for the panel row.</summary>
+            public string Describe()
+            {
+                lock (_gate)
+                {
+                    if (_connected)
+                        return Name + " up" + (_latencyMs >= 0 ? " " + _latencyMs.ToString() + "ms" : "");
+                    if (_attempts == 0) return Name + " …";
+                    return Name + " down (" + (_error.Length > 0 ? _error : "no answer") + ")";
+                }
+            }
+        }
+
+        /// <summary>Start one reader per service, once.</summary>
+        private void StartStreams()
+        {
+            if (Interlocked.CompareExchange(ref _streamsStarted, 1, 0) != 0) return;
+            _streamCts = new CancellationTokenSource();
+            StartStream("brain", BrainUrl("/brain/status/stream"), _brainService, true);
+            StartStream("sentinel",
+                        "http://127.0.0.1:" + SentinelPort.ToString() + "/sentinel/status/stream",
+                        _sentinelService, false);
+        }
+
+        /// <summary>Read `text/event-stream` frames until the panel closes.
+        ///
+        /// Line-based on purpose: the frames are `data: {...}` with blank-line
+        /// separators, so a reader that handles those two cases is complete, and a
+        /// partial line simply waits for the rest of it. Reconnects after 1 s, which is
+        /// the rate the old poll ran at, so a dead daemon costs no more than before.
+        /// </summary>
+        private void StartStream(string name, string url, ServiceHealth state, bool applyStatus)
+        {
+            CancellationTokenSource cts = _streamCts;
+            var thread = new Thread((ThreadStart)delegate
+            {
+                CancellationToken token = cts.Token;
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                        {
+                            request.Headers.TryAddWithoutValidation("Authorization", LocalSecret.Bearer);
+                            request.Headers.TryAddWithoutValidation("Accept", "text/event-stream");
+                            using (var response = BrainHttp
+                                       .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token)
+                                       .GetAwaiter().GetResult())
+                            {
+                                if (!response.IsSuccessStatusCode)
+                                {
+                                    state.Down("http " + ((int)response.StatusCode).ToString());
+                                }
+                                else
+                                {
+                                    using (Stream stream = response.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+                                    using (var reader = new StreamReader(stream, Encoding.UTF8))
+                                    {
+                                        string line;
+                                        while (!token.IsCancellationRequested
+                                               && (line = reader.ReadLine()) != null)
+                                        {
+                                            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+                                            string body = line.Substring(5).Trim();
+                                            if (body.Length == 0) continue;
+                                            state.Ok(JsonLong(body, "server_ms"));
+                                            if (applyStatus) ApplyBrainStatus(body);
+                                        }
+                                    }
+                                    state.Down("stream closed");
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (Exception ex) { state.Down(ex.GetType().Name); }
+                    if (token.WaitHandle.WaitOne(1000)) return;
+                }
+            });
+            thread.IsBackground = true;
+            thread.Name = "ai-" + name + "-stream";
+            thread.Start();
+        }
+
+        /// <summary>First integer value of a JSON key, or 0. The frames are one line.</summary>
+        private static long JsonLong(string json, string key)
+        {
+            Match match = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*(-?[0-9]+)");
+            long value;
+            if (match.Success && long.TryParse(match.Groups[1].Value, out value)) return value;
+            return 0;
+        }
+
+        /// <summary>Paint the two service states. UI thread; a worker marshals here.</summary>
+        private void UpdateServiceUi()
+        {
+            if (_lblServices == null || _lblServices.IsDisposed) return;
+            if (InvokeRequired)
+            {
+                try { BeginInvoke((MethodInvoker)delegate { UpdateServiceUi(); }); }
+                catch { }
+                return;
+            }
+            bool brain = _brainService.Connected;
+            bool sentinel = _sentinelService.Connected;
+            _lblServices.Text = _brainService.Describe() + "  \u00b7  " + _sentinelService.Describe();
+            _lblServices.ForeColor = (brain && sentinel) ? Color.FromArgb(100, 116, 139)
+                                   : (brain || sentinel) ? Color.FromArgb(234, 179, 8)
+                                                         : Color.FromArgb(248, 113, 113);
         }
 
         /// <summary>The daemon's active set, asked now. Null means "no answer, I do not know".
@@ -2607,6 +2840,8 @@ namespace DofusFarm.UI
         {
             if (disposing)
             {
+                try { if (_serviceTimer != null) { _serviceTimer.Stop(); _serviceTimer.Dispose(); } } catch { }
+                try { if (_streamCts != null) _streamCts.Cancel(); } catch { }
                 try { StopAuto("window closed"); } catch { }
                 try { StopBrainProcess(); } catch { }
             }

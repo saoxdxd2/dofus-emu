@@ -75,11 +75,24 @@ def test_info_nce_prefers_a_correct_ranking() -> None:
         _scores, _moved, _progress, entity, q = model(batch, return_embeddings=True)
         good = t.info_nce_loss(q, entity, batch["cand_mask"], batch["labels"],
                                hard_negatives=4)
-        shuffled = t.info_nce_loss(q, entity, batch["cand_mask"],
-                                   (batch["labels"] + 1) % 8, hard_negatives=4)
     check("InfoNCE is finite", bool(torch.isfinite(good)), "%.3f" % float(good))
-    check("wrong labels cost more", float(shuffled) > float(good),
-          "%.3f > %.3f" % (float(shuffled), float(good)))
+
+    # A ranking where the labelled candidate really is on top must cost less than
+    # one where a sibling outranks it. Shifting the labels instead would only
+    # rename an equally-plausible candidate and prove nothing.
+    batch_rows, candidates, width = 6, 5, 8
+    q = torch.eye(width)[:batch_rows]
+    entity = torch.zeros(batch_rows, candidates, width)
+    mask = torch.ones(batch_rows, candidates)
+    labels = torch.zeros(batch_rows, dtype=torch.long)
+    entity[:, 0] = q
+    entity[:, 1] = -q
+    aligned = t.info_nce_loss(q, entity, mask, labels, hard_negatives=3)
+    entity[:, 0] = -q
+    entity[:, 1] = q
+    inverted = t.info_nce_loss(q, entity, mask, labels, hard_negatives=3)
+    check("wrong ranking costs more", float(inverted) > float(aligned),
+          "%.3f > %.3f" % (float(inverted), float(aligned)))
     model.train()
     _scores, moved, progress, entity, q = model(batch, return_embeddings=True)
     loss = t.info_nce_loss(q, entity, batch["cand_mask"], batch["labels"])

@@ -165,6 +165,7 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G125** | The structure cache was 184 lines nothing constructed | fixed 2026-11-13, measured — closed, archived |
 | **G126** | The whole `planning/` brain is built at startup and never asked to plan or record anything | measured 2026-11-13 |
 | **G127** | `move_prob` decides three hardcoded cuts and did not mean what it said — the drift was `nav.goto` starting to work | measured 2026-11-13, partly fixed |
+| **G128** | Three review tasks aimed at dead code: the combat world model has no caller, its buff branch is unreachable, and the Win32 handles are already closed | measured 2026-11-13 |
 
 ---
 
@@ -8058,3 +8059,69 @@ the three properties that make a calibrator safe: never worse than identity in s
 never a negative slope (a negative `a` would make `planner_nn` prefer the candidate it is
 sure will fail — the first solver returned `a = -0.0247` on anti-correlated data), and
 bit-identical output when no sidecar is present.
+
+## G128. Three review tasks aimed at code that never runs — `combat/world_model.py` has no caller, its buff branch cannot be reached, and the Win32 handles are already closed *(measured 2026-11-13)*
+
+A pasted review proposed (a) zero-copy structural-sharing rollouts in
+`combat/world_model.py`, (b) binding buffs by canonical spell IDs instead of French
+names, and (c) fitting the reward weights with Bradley-Terry. All three are real
+*ideas*; none of them can change a single decision today.
+
+**The module is dead.** `DofusWorldModel`, `step`, `simulate_rollout` and
+`calculate_reward` have **zero callers**. The only references in the tree are the
+PEP 562 lazy export at `combat/__init__.py:38` and the re-export at `:76`.
+`combat/recursive_reasoner.py:19` imports `CombatState` (the data class, not the
+model) but needs `torch`, which this runtime does not have — that is G124. So there
+are **no rollouts to optimise**.
+
+**The buff branch is unreachable, which also kills (b).** `step` sets
+`is_buff = not damage_elements and _BUFF_NAME_RE.search(name_fr) and not is_heal`.
+All **34 of 34** spells in `data/game_data_extractor.py::BUILTIN_SPELLS` carry a
+damage effect. The only two whose French names match a buff keyword are
+`Épée Divine` (id 169, AIR damage) and `Tempête de Puissance` (id 167, FIRE damage),
+and the code's own comment correctly excludes them. **Zero** spells can reach the
+buff branch, so rewriting the French regex to use `SpellInfo.id` would be a change
+to code that cannot execute. (It is still the right change *when* the branch is
+populated — just not before.)
+
+**The cost that (a) proposes to remove.** Measured on a level-60 state with two
+active buffs, 2,000 iterations:
+
+```
+deepcopy(state)            37.3 us
+DofusWorldModel.step()     83.0 us   <- deepcopy is 44.9%
+100 rollouts x 6 steps     49.8 ms   <- 22.4 ms of that is deepcopy
+```
+
+Even at 100x that search depth the copy is ~2.2 s, and the real answer is 0 us
+because no rollout is issued. Structural sharing here is a solution in search of a
+problem.
+
+**There is no data for (c).** No `duel`/`preference`/`pairwise` artifact exists under
+`data/`, and `calculate_reward` has no caller, so a Bradley-Terry fit would have
+neither outcomes to fit nor a place for the fitted weights to act. The four
+coefficients (15.0 / 1.2 / 8.0 / 0.1) are arbitrary but inert.
+
+**What would actually help:** wire the world model into the combat policy that is
+shipped (`LivePolicy._hp_choice`), then populate the catalog with non-damage spells,
+then fit the reward. In that order. Doing any of the three review tasks first adds
+untestable code to a dormant module — the same mistake G124 recorded.
+
+**The fourth task, Windows Job Object containment in `desktop/win32.cs`, is
+hardening rather than a bug.** Every `OpenProcess` handle is closed in a `finally`:
+`prioritygovernor.cs:316`, `win32.cs:601`, `farmengine.cs:2655` (snapshot). There
+are 20+ explicit `Process.Kill()` teardown paths across `aipanel.cs`,
+`farmengine.cs`, `mainform.cs` and the installers. `SafeHandle` would make a missed
+`finally` impossible, and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` would also reap
+grandchildren when the host is killed with no teardown at all — both worthwhile, but
+neither fixes an observed failure. Deferred deliberately: changing P/Invoke
+signatures in a 605-line file consumed by six other `.cs` files requires rebuilding
+`DofusFarm.exe`, no C# compiler can be invoked in this sandbox, and the operator is
+running the host live. An unverifiable change to the process-supervision path is
+not worth the risk to a running farm.
+
+**What this session did instead** (for the same review): G127 recalibrated the
+`move_prob` that *does* gate decisions; `agent/inert_attribution.py` measured the
+real inert rate by era and layer; `ai/glicko2.py` added an archetype-stratified
+release gate. Guards: `agent/test_inert_attribution` (45 tests) and
+`ai/test_glicko2` (29 tests), both delegated from `test_combat_suites`.
