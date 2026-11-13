@@ -119,6 +119,14 @@ trajectories/
 # Generated tool-use SFT corpus (training data, stays local)
 dofus-network/data/agent_sft/
 
+# Untracked datasets & heavy training checkpoints
+*.jsonl
+!*fixture.jsonl
+kaggle/**/runs/
+dofus-network/data/tool_candidate/
+dofus-network/data/tool_candidate_v4/
+/dofus-network/kaggle/toolkit/
+
 
 # ---------------------------------------------------------------------------
 # SECRETS - never commit these. accounts.txt and proxies.txt were tracked before
