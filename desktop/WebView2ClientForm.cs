@@ -2596,6 +2596,12 @@ namespace DofusFarm.Engine
                 return;
             }
 
+            // The container is a host decision, exactly as `browsertab` is on Android.
+            // The page reports the URL either way; only where it opens changes.
+            if (RuntimeSettings.Current.OauthBrowser
+                && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))
+                return;
+
             try
             {
                 CloseOAuthDialog();
@@ -2804,6 +2810,16 @@ namespace DofusFarm.Engine
         private bool _cloudFrontBlockLogged;
         private bool _cloudFrontBlockPageShown;
         private bool _continueMimicStarted;
+        // CloudFront answers the guest-authorize URL with a 202 + a 2 KB document
+        // that renders as a blank page while it runs an AWS WAF challenge. That
+        // blank page is what the operator described as "a white windows that popup
+        // with no way to progress". Three fields carry the retry: how many times,
+        // which URL, and when the last attempt was.
+        private int _wafAttempts;
+        private string _wafUrl;
+        private DateTime _wafLastAt = DateTime.MinValue;
+        private bool _wafGaveUp;
+        private bool _wafSeen202;
 
         public OAuthLoginForm(string initialUrl, ClientLaunchOptions options, WebView2ClientForm parentForm, Action<string> logCallback, CoreWebView2Environment sharedEnv)
         {
@@ -3002,6 +3018,10 @@ namespace DofusFarm.Engine
                             {
                                 return;
                             }
+                            if (await HandleWafChallengeAsync(evN))
+                            {
+                                return;
+                            }
                         }
                         catch { }
                     }
@@ -3107,6 +3127,18 @@ namespace DofusFarm.Engine
                                     ReportCloudFrontBlockFromResponse(fullUrl, evR.Response.Headers);
                                 }
                             }
+                            else if (st == 202 && WafActionHeader(evR.Response.Headers) != null)
+                            {
+                                // The challenge can be answered, solved and redirected
+                                // before NavigationCompleted runs its probe, which used to
+                                // leave the retry with nothing to see and the operator with
+                                // a blank window. The response itself is the evidence.
+                                _wafSeen202 = true;
+                                if (string.IsNullOrEmpty(_wafUrl)) _wafUrl = evR.Request.Uri;
+                                _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] CloudFront answered 202 "
+                                    + "(x-amzn-waf-action: " + WafActionHeader(evR.Response.Headers) + ") on "
+                                    + WafHostOf(evR.Request.Uri));
+                            }
                         }
                         catch { }
                     };
@@ -3125,6 +3157,144 @@ namespace DofusFarm.Engine
             {
                 _logCallback?.Invoke("[OAUTH-POPUP] Error initializing dialog: " + ex.Message);
             }
+        }
+
+        private const int MaxWafAttempts = 5;
+
+        /// <summary>Probe for the AWS WAF challenge document CloudFront serves instead of the page.</summary>
+        private const string WafProbeScript =
+            "(function(){try{" +
+            " if(!window.awsWafCookieDomainList && !window.gokuProps) return '';" +
+            " var t=((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').trim();" +
+            " return 'WAFCHALLENGE|'+(t.length?t.slice(0,120):'(blank)');" +
+            "}catch(e){return '';}})()";
+
+        /// <summary>Cover the blank challenge document without touching it.</summary>
+        /// <remarks>
+        /// Appended to documentElement, never replacing body: the challenge script
+        /// is what has to finish, and rewriting the document under it would remove
+        /// the very thing being waited for. An overlay only paints over it.
+        /// </remarks>
+        private const string WafOverlayScript =
+            "(function(){try{" +
+            " if(document.getElementById('__dfWafWait')) return 'already';" +
+            " var d=document.createElement('div');d.id='__dfWafWait';" +
+            " d.style.cssText='position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483647;" +
+            "display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;" +
+            "font:15px/1.5 system-ui,Segoe UI,sans-serif;color:#e2e8f0;background:#0f172a';" +
+            " d.innerHTML='<div><div style=\"font-size:26px;margin-bottom:10px\">🛡️</div>" +
+            "<div>Ankama is verifying this device…</div>" +
+            "<div style=\"opacity:.65;font-size:13px;margin-top:8px\">This window finishes on its own.</div></div>';" +
+            " (document.body||document.documentElement).appendChild(d);return 'shown';" +
+            "}catch(e){return 'overlay-error: '+String(e);}})()";
+
+        /// <summary>Drive the CloudFront/AWS-WAF challenge in front of the guest grant.
+        ///
+        /// The client creates a guest token with `POST /token/create-guest` (that
+        /// request passes) and then hands the browser
+        /// `https://auth.ankama.com/login/ankama-guest?...&amp;token=...`, whose only job
+        /// is to redirect to `dofustouch://authorized?code=...`. CloudFront puts an
+        /// AWS WAF challenge in front of it: a 202 with a 2 KB document holding
+        /// `gokuProps` and nothing visible. Measured 2026-11-13 -- that document is
+        /// what the operator saw as "a white windows that popup with no way to
+        /// progress", and `DofusFarm.log` has **zero** `dofustouch://authorized`
+        /// navigations across every attempt, so the grant never landed.
+        ///
+        /// The challenge is cookie-based (`aws-waf-token`), so it can pass on a
+        /// later request from the same profile. Re-request the URL until it does,
+        /// and say so on screen meanwhile -- a blank window that silently retries is
+        /// still a window with no way to progress.
+        /// </summary>
+        private async Task<bool> HandleWafChallengeAsync(CoreWebView2NavigationCompletedEventArgs ev)
+        {
+            if (_webView == null || _webView.CoreWebView2 == null) return false;
+            if (_deepLinkDispatched) return false;
+
+            string probe;
+            try { probe = await _webView.CoreWebView2.ExecuteScriptAsync(WafProbeScript); }
+            catch { return false; }
+            string payload = string.IsNullOrEmpty(probe) ? "" : probe.Trim('"');
+            bool challenging = payload.StartsWith("WAFCHALLENGE|", StringComparison.Ordinal);
+            if (!challenging && _wafSeen202)
+            {
+                // The 202 was logged on the response, but the challenge script had
+                // already replaced the document by the time this probe ran. Still on
+                // the auth host with no deep link means the challenge is still the
+                // thing standing in the way.
+                string here = "";
+                try { here = _webView.CoreWebView2.Source ?? ""; } catch { }
+                challenging = here.IndexOf("ankama", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            if (!challenging) return false;
+
+            if (string.IsNullOrEmpty(_wafUrl))
+            {
+                try { _wafUrl = _webView.CoreWebView2.Source; } catch { }
+                if (string.IsNullOrEmpty(_wafUrl)) _wafUrl = _initialUrl;
+            }
+            _wafAttempts++;
+            _wafLastAt = DateTime.UtcNow;
+
+            if (_wafAttempts > MaxWafAttempts)
+            {
+                if (!_wafGaveUp)
+                {
+                    _wafGaveUp = true;
+                    _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] Ankama's challenge did not "
+                        + "complete after " + MaxWafAttempts.ToString() + " attempts on "
+                        + WafHostOf(_wafUrl) + ". The guest grant cannot be issued from this "
+                        + "browser profile. Google sign-in is unaffected; for a guest account, "
+                        + "Settings > sign in with the system browser lets a real Chrome solve it.");
+                }
+                _lblTitle.Text = "⛔ Ankama refused this browser (challenge unsolved)";
+                _lblTitle.ForeColor = Color.FromArgb(248, 113, 113);
+                return true;
+            }
+
+            try { await _webView.CoreWebView2.ExecuteScriptAsync(WafOverlayScript); }
+            catch { }
+            _lblTitle.Text = "🛡️ Ankama is verifying this device (" + _wafAttempts.ToString()
+                + "/" + MaxWafAttempts.ToString() + ")";
+            _lblTitle.ForeColor = Color.FromArgb(250, 204, 21);
+
+            _logCallback?.Invoke("[OAUTH-POPUP] [WAF-CHALLENGE] attempt " + _wafAttempts.ToString()
+                + "/" + MaxWafAttempts.ToString() + " on " + WafHostOf(_wafUrl)
+                + "; re-requesting after the challenge cookie lands");
+
+            // Long enough for the challenge script to finish and set its cookie,
+            // short enough that a human does not give up on the window first.
+            await Task.Delay(4500);
+            if (_webView == null || _webView.CoreWebView2 == null) return true;
+            if (_deepLinkDispatched) return true;
+            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch { }
+            return true;
+        }
+
+        /// <summary>Host and path only -- the query carries a live guest token.</summary>
+        private static string WafHostOf(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return "(unknown)";
+            int q = url.IndexOf('?');
+            string clean = q > 0 ? url.Substring(0, q) : url;
+            return clean.Length > 90 ? clean.Substring(0, 90) + "..." : clean;
+        }
+
+        /// <summary>The `x-amzn-waf-action` value of a response, or null when absent.</summary>
+        /// <remarks>
+        /// CloudFront signals the challenge with a 202 *and* this header. The status
+        /// alone is not enough -- 202 is an ordinary answer for some endpoints, and
+        /// treating those as a challenge would loop on a page that is fine.
+        /// </remarks>
+        private static string WafActionHeader(CoreWebView2HttpResponseHeaders headers)
+        {
+            if (headers == null) return null;
+            try
+            {
+                if (!headers.Contains("x-amzn-waf-action")) return null;
+                string value = headers.GetHeader("x-amzn-waf-action");
+                return string.IsNullOrEmpty(value) ? "challenge" : value.Trim();
+            }
+            catch { return null; }
         }
 
         private async Task<bool> ShowCloudFrontBlockIfAnyAsync(string url)
@@ -3666,6 +3836,123 @@ namespace DofusFarm.Engine
                 File.Move(path, rotated);
             }
             catch { }
+        }
+    }
+
+    /// <summary>The OAuth window as the Android build opens it: a real browser.
+    ///
+    /// `cordova.plugins.browsertab` is the client's own choice of container, and on
+    /// Android it is a Chrome Custom Tab -- a real browser process sharing the user's
+    /// Chrome profile. The host shimmed that into an in-app WebView2 popup, which is the
+    /// one container Google refuses for sign-in (`disallowed_useragent`) and the one its
+    /// signup verification scores as an unknown device. So when the operator asks for it,
+    /// hand the URL to the system browser instead and receive the result the way Android
+    /// receives it: an intent on `dofustouch://authorized`, which on Windows is a
+    /// protocol handler under HKCU\Software\Classes.
+    ///
+    /// Nothing here guesses. The URL is the one the page already posted (`open_oauth`);
+    /// the callback is the one the page already parses (`__onDeepLinkCallback` ->
+    /// `IonicDeeplink.fire` -> the client's own webAuth exchange); and the pending map
+    /// only answers "which client asked for this", which the pipe-less hand-off cannot
+    /// carry (see `Program.WriteDeepLinkRequest`).
+    /// </summary>
+    internal static class OAuthBrowserHandoff
+    {
+        private const string ProtocolKey = @"Software\Classes\dofustouch";
+        private static readonly object _lock = new object();
+        private static readonly Dictionary<string, DateTime> _pending =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static bool _registered;
+        private static string _registeredCommand;
+
+        /// <summary>Register (once per process) the `dofustouch://` handler for THIS exe.
+        ///
+        /// HKCU, so no elevation, and the uninstaller deletes the same key. Re-registering
+        /// on every launch is deliberate: the app can be moved between folders, and a
+        /// handler pointing at a binary that no longer exists is worse than none.
+        /// </summary>
+        public static bool EnsureProtocolHandler(Action<string> log)
+        {
+            lock (_lock)
+            {
+                string exe = Application.ExecutablePath;
+                string command = "\"" + exe + "\" \"%1\"";
+                if (_registered && string.Equals(_registeredCommand, command, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                try
+                {
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(ProtocolKey))
+                    {
+                        if (key == null) return false;
+                        key.SetValue("", "URL:Dofus Touch OAuth callback");
+                        key.SetValue("URL Protocol", "");
+                        using (var cmd = key.CreateSubKey(@"shell\open\command"))
+                        {
+                            if (cmd == null) return false;
+                            cmd.SetValue("", command);
+                        }
+                    }
+                    _registered = true;
+                    _registeredCommand = command;
+                    log?.Invoke("[OAUTH] registered the dofustouch:// handler -> " + exe);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    log?.Invoke("[OAUTH] could not register dofustouch://: " + ex.Message);
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>Open the URL in the system browser, remembering which client asked.</summary>
+        public static bool Open(string url, string instanceId, Action<string> log)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+            if (!EnsureProtocolHandler(log)) return false;
+            NotePending(instanceId);
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                log?.Invoke("[OAUTH] " + instanceId + ": opening the sign-in in the system browser"
+                            + " (the result returns through dofustouch://)");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke("[OAUTH] " + instanceId + ": could not open the system browser ("
+                            + ex.Message + "); falling back to the in-app popup");
+                return false;
+            }
+        }
+
+        public static void NotePending(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            lock (_lock) _pending[instanceId] = DateTime.UtcNow;
+        }
+
+        /// <summary>Which client is waiting for a callback. Most recent within 15 minutes.
+        ///
+        /// The callback arrives as a bare URL from the OS, so the instance has to be
+        /// remembered at the moment the browser was opened. 15 minutes is longer than any
+        /// sign-in takes and short enough that a stale entry cannot swallow a later one.
+        /// </summary>
+        public static string TakePending()
+        {
+            lock (_lock)
+            {
+                string best = null;
+                DateTime bestAt = DateTime.MinValue;
+                var stale = new List<string>();
+                foreach (var pair in _pending)
+                {
+                    if (DateTime.UtcNow - pair.Value > TimeSpan.FromMinutes(15)) { stale.Add(pair.Key); continue; }
+                    if (pair.Value > bestAt) { bestAt = pair.Value; best = pair.Key; }
+                }
+                foreach (string id in stale) _pending.Remove(id);
+                return best;
+            }
         }
     }
 }

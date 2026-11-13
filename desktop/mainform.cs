@@ -384,6 +384,11 @@ namespace DofusFarm.UI
         // file (see Program.WriteLaunchRequest) instead of having it dropped by the
         // single-instance mutex. One small file, polled once a second, is cheaper
         // than a second IPC channel and cannot race the mutex.
+        //
+        // The same poller carries the OAuth callback: when the system browser finishes
+        // a sign-in it hits `dofustouch://authorized?code=...`, Windows starts this exe
+        // with that URL, and the second instance writes it to `oauth_deeplink.txt`
+        // (Program.WriteDeepLinkRequest). Two files, one poller, no second IPC channel.
         private void StartLaunchRequestPoller()
         {
             try
@@ -391,12 +396,19 @@ namespace DofusFarm.UI
                 string dir = Path.Combine(Environment.GetFolderPath(
                     Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
                 string path = Path.Combine(dir, "launch_request.txt");
+                string deepLinkPath = Path.Combine(dir, "oauth_deeplink.txt");
                 _launchRequestTimer = new System.Windows.Forms.Timer();
                 _launchRequestTimer.Interval = 1000;
                 _launchRequestTimer.Tick += delegate
                 {
                     try
                     {
+                        if (File.Exists(deepLinkPath))
+                        {
+                            string url = File.ReadAllText(deepLinkPath).Trim();
+                            try { File.Delete(deepLinkPath); } catch { }
+                            if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);
+                        }
                         if (!File.Exists(path)) return;
                         string name = File.ReadAllText(path).Trim();
                         try { File.Delete(path); } catch { }
@@ -417,6 +429,42 @@ namespace DofusFarm.UI
                 _launchRequestTimer.Start();
             }
             catch { }
+        }
+
+        /// <summary>Give the OAuth callback to the client that asked for it.
+        ///
+        /// The URL arrives from the OS with no instance attached, so the client is the
+        /// one that opened the browser (OAuthBrowserHandoff.TakePending). When nothing
+        /// is pending -- a callback after a restart, or a sign-in started outside the
+        /// app -- it goes to the only open client if there is exactly one, and is logged
+        /// rather than guessed at when there are several: feeding a code to the wrong
+        /// client is a wrong account, not a lost click.
+        /// </summary>
+        private void DeliverDeepLink(string url)
+        {
+            try
+            {
+                string target = null;
+                try { target = OAuthBrowserHandoff.TakePending(); } catch { }
+                if (string.IsNullOrEmpty(target))
+                {
+                    List<string> ids = null;
+                    try { ids = new List<string>(_webViewBackend.GetActiveInstanceIds()); } catch { ids = null; }
+                    if (ids != null && ids.Count == 1) target = ids[0];
+                }
+                if (string.IsNullOrEmpty(target))
+                {
+                    Log("[OAUTH] sign-in callback arrived but no client is waiting for it; dropped: " + url);
+                    return;
+                }
+                string js = "window.__onDeepLinkCallback && window.__onDeepLinkCallback(" + JsQuote(url) + ")";
+                _webViewBackend.ExecuteScriptOnInstance(target, js);
+                Log("[OAUTH] " + target + ": delivered the sign-in callback from the system browser");
+            }
+            catch (Exception ex)
+            {
+                Log("[OAUTH] could not deliver the sign-in callback: " + ex.Message);
+            }
         }
 
 

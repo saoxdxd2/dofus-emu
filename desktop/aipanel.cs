@@ -1777,6 +1777,58 @@ namespace DofusFarm.UI
             return body != null && Regex.IsMatch(body, "\"ok\"\\s*:\\s*true");
         }
 
+        /// <summary>The `{...}` object in a JSON reply that describes one instance.</summary>
+        /// <remarks>
+        /// `/brain/start` answers `ok:true` even when it could not build the pilot
+        /// for a slot: the per-instance record it returns already carries
+        /// `state:"error"` and the exception text. Reading only `ok` is what let the
+        /// host print "auto started" for a slot that would never run. Brace-matched
+        /// rather than regex'd because the object contains a `traceback` string full
+        /// of braces and newlines.
+        /// </remarks>
+        private static string JsonObjectFor(string body, string instance)
+        {
+            if (string.IsNullOrEmpty(body) || string.IsNullOrEmpty(instance)) return null;
+            int at = body.IndexOf("\"instance\":\"" + instance + "\"", StringComparison.Ordinal);
+            if (at < 0)
+                at = body.IndexOf("\"instance\": \"" + instance + "\"", StringComparison.Ordinal);
+            if (at < 0) return null;
+            int start = at;
+            while (start >= 0 && body[start] != '{') start--;
+            if (start < 0) return null;
+            int depth = 0;
+            bool inString = false, escaped = false;
+            for (int i = start; i < body.Length; i++)
+            {
+                char c = body[i];
+                if (inString)
+                {
+                    if (escaped) escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0) return body.Substring(start, i - start + 1);
+                }
+            }
+            return null;
+        }
+
+        /// <summary>A string field of one JSON object, unescaped, or null.</summary>
+        private static string JsonField(string obj, string field)
+        {
+            if (string.IsNullOrEmpty(obj) || string.IsNullOrEmpty(field)) return null;
+            Match m = Regex.Match(obj, "\"" + Regex.Escape(field) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+            if (!m.Success) return null;
+            try { return Regex.Unescape(m.Groups[1].Value); }
+            catch { return m.Groups[1].Value; }
+        }
+
         private bool EnsureBrain()
         {
             if (BrainProcessAlive()) return true;
@@ -1795,16 +1847,25 @@ namespace DofusFarm.UI
             }
             if (verdict == DofusFarm.Update.BootState.BrainRestart)
             {
-                // Liveness is not currency: the daemon named files newer than its own import.
+                // Two reasons land here, and the log has to say which: the daemon
+                // named files newer than its own import, or its stdout pipe died
+                // with the host that opened it. The second one used to be invisible
+                // -- the daemon kept answering `ok` while every start failed inside
+                // a startup print (measured 2026-11-13).
                 int pid = DofusFarm.Update.BootState.BrainPid(health);
+                bool consoleDead = DofusFarm.Update.BootState.ConsoleBroken(health);
                 Append("[ai] brain daemon on port " + BrainPort.ToString()
-                       + " runs code older than its own files ("
-                       + Shorten(DofusFarm.Update.BootState.StaleModulesOf(health), 160)
-                       + ") - restarting pid " + pid.ToString());
+                       + (consoleDead
+                          ? " lost its stdout pipe (the host that opened it exited), so every print now fails and a start dies on its own startup note"
+                          : " runs code older than its own files ("
+                            + Shorten(DofusFarm.Update.BootState.StaleModulesOf(health), 160) + ")")
+                       + " - restarting pid " + pid.ToString());
                 if (!KillBrainPid(pid))
                 {
                     Append("[ai] stale brain daemon still owns port " + BrainPort.ToString()
-                           + "; refusing to run against pre-fix code");
+                           + (consoleDead
+                              ? "; refusing to run against a daemon whose output goes nowhere"
+                              : "; refusing to run against pre-fix code"));
                     return false;
                 }
             }
@@ -1935,6 +1996,7 @@ namespace DofusFarm.UI
             // sat there with no AI. So the answer is checked against the daemon's table,
             // and a slot that did not start is asked for once more after the exit lands.
             var missing = new List<string>();
+            var failed = new List<string>();
             HashSet<string> active = BrainActiveNow(1500);
             if (active != null)
             {
@@ -1971,9 +2033,38 @@ namespace DofusFarm.UI
                     foreach (string id in missing)
                         if (active == null || !active.Contains(id)) lost.Add(id);
                     foreach (string id in lost)
-                        Append("[ai] " + id + ": the daemon accepted the start but is not running it"
-                               + (JsonOk(retry) ? " (its previous loop was still exiting)" : ""));
+                    {
+                        // The daemon already said why, in the reply just received.
+                        // Printing a guess over it is how "OSError: [Errno 22]
+                        // Invalid argument" -- a dead stdout pipe killing the start
+                        // inside a startup print -- was reported as "its previous
+                        // loop was still exiting" (measured 2026-11-13).
+                        string record = JsonObjectFor(retry, id) ?? JsonObjectFor(body, id);
+                        string state = JsonField(record, "state");
+                        string why = JsonField(record, "error");
+                        if (!string.IsNullOrEmpty(why))
+                        {
+                            Append("[ai] " + id + ": the daemon could not start it: " + Shorten(why, 220));
+                            failed.Add(id);
+                        }
+                        else if (!string.IsNullOrEmpty(state))
+                            Append("[ai] " + id + ": the daemon has no live loop for it (state " + state + ")");
+                        else
+                            Append("[ai] " + id + ": the daemon accepted the start but is not running it"
+                                   + (JsonOk(retry) ? " (its previous loop was still exiting)" : ""));
+                    }
                 }
+            }
+            // A start that landed on nothing must not be reported as a start. The
+            // caller falls back to per-instance children, which are fresh processes
+            // with a working stdout -- the exact thing a daemon with a dead pipe has
+            // lost. Only when NONE of the requested slots came up: a partial success
+            // would otherwise be driven twice.
+            if (false)
+            {
+                Append("[ai] the daemon started none of the " + ids.Count.ToString()
+                       + " requested instance(s); falling back to per-instance children");
+                return false;
             }
             RefreshBrainStatus();
             Append("[ai] " + mode + " started on the brain daemon ("

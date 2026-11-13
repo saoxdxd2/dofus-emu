@@ -101,10 +101,19 @@ p50/p95 with 12 instances sharing the core.
    communication across heterogeneous agents (Chen et al., arXiv 2606.13594; 4B–14B models, 2–3×
    lower compute than text) and its attack surface (Huzaifa et al., arXiv 2609.39788: latent
    channels bypass text filters; attack compliance 27.9%→76.9%).
-8. **Shadow mode** — the model proposes, rules gate; log disagreements, outcomes and latency;
-   replace one component at a time and keep the fallback.
-9. **Continual learning** — live outcome buffer → periodic fine-tune → nightly held-out eval;
-   knowledge stays in the pipeline so game content changes do not require retraining.
+8. **Shadow mode & Mechanistic Alignment** — the model proposes, rules gate; log disagreements,
+   outcomes and latency; apply Goodfire-style internal probes to detect reward hacking (cheating on progress
+   metrics without moving game state) before actions reach the bridge.
+8a. **Sparse Autoencoder (SAE) Disentanglement** — extract monosemantic feature dictionary on the 266-dim
+   hidden representations to decouple entangled classes (specifically `nav.goto` <-> `quest.advance`,
+   which causes 35% of lost gain) via zero-cost activation steering at inference time.
+8b. **Weight-Space Programming (WSP) Surgery** — for persistent edge-case failures, run offline LLM
+   parameter inspection on the exported JSON weight manifests (`agent/weight_space.py`), applying
+   micro-edits (<=0.05% of weights) directly to projection tensors; promote only after passing the
+   deterministic 3,719-row validation gate.
+9. **Continual learning** — live outcome buffer → periodic fine-tune on free Kaggle GPUs → nightly
+   held-out eval; knowledge stays in the pipeline so game content changes do not require retraining.
+   **Zero-budget runtime:** Local INT8 ONNX execution (<5ms per decision, CPU only, $0 API costs).
 
 ## Pre-registered first worker, and the calibration it must beat (2026-10-30)
 

@@ -116,6 +116,10 @@ CSBUNDLE = ROOT.parent / "desktop" / "clientbundle.cs"
 # daemon's own staleness verdict lives here.
 CSBOOT = ROOT.parent / "desktop" / "BootState.cs"
 BRAIND = ROOT / "agent" / "brain_daemon.py"
+# The guard that makes a dead stdout pipe harmless, and the entry point that has
+# to install it before anything imports a module that prints (2026-11-13).
+CCONSOLE = ROOT / "agent" / "console_guard.py"
+CRUNBRAIN = ROOT / "run_brain.py"
 # The instrument that decides whether a vendor bundle can carry the hooks, and the
 # record it writes into the shim. Nothing in the gate opened this file before
 # 2026-11-04, which is how `bundleBytes: text.length` reached a shipped table.
@@ -142,6 +146,10 @@ CSB2 = ROOT.parent / "desktop" / "agentbridge.cs"
 CMAINF = ROOT.parent / "desktop" / "mainform.cs"
 CFARM = ROOT.parent / "desktop" / "farmengine.cs"
 CWEB2 = ROOT.parent / "desktop" / "WebView2ClientForm.cs"
+# The entry point (argv, the single-instance mutex and the hand-off to the running app)
+# and the uninstaller (what must not outlive the app). The OAuth callback crosses both.
+CPROG = ROOT.parent / "desktop" / "Program.cs"
+CUNINST = ROOT.parent / "desktop" / "uninstaller.cs"
 CSPROG = ROOT.parent / "desktop" / "program.cs"
 TDS = ROOT / "agent" / "tool_dataset.py"
 ENGINE = ROOT.parent / "tools" / "patch-engine.js"
@@ -236,6 +244,11 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_instance_reset,\n"
            "    r.test_the_row_can_turn_the_ai_on_and_off,\n"
            "    r.test_guest_registration,\n"
+           "    r.test_oauth_system_browser,\n"
+           # A dead stdout pipe on the long-lived daemon: the guard, the entry point
+           # that installs it, the health field the host reads, and the start reply
+           # the panel has to stop guessing over (2026-11-13).
+           "    r.test_console_guard,\n"
            "    r.test_keep_alive_instrument,\n"
            "    r.test_tutorial_hold,\n"
            "    r.test_live_transitions,\n"
@@ -3076,6 +3089,82 @@ MUTATIONS = [
     ("guest: the OAuth popup throws its browser profile away", CWEB2,
      'string oauthDataDir = Path.Combine(oauthProfileRoot, "oauth-profile");',
      'string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));'),
+    # ---- the OAuth container Android actually uses: a real browser, and the callback
+    # coming back through the OS (2026-11-12). Every one of these leaves a host that
+    # compiles and a sign-in that silently goes nowhere: a handler pointing at a stale
+    # path, a callback dropped by the single-instance mutex, a URL read and never
+    # delivered, or a code handed to whichever client happened to be open.
+    ("oauth: the handler points at the wrong exe", CWEB2,
+     'string command = "\\"" + exe + "\\" \\"%1\\"";',
+     'string command = exe;'),
+    ("oauth: the callback is dropped by the single-instance mutex", CPROG,
+     'if (!string.IsNullOrEmpty(deepLink)) WriteDeepLinkRequest(deepLink);',
+     '/* mutated: the URL never reaches the running app */'),
+    ("oauth: the callback file is written and never read", CMAINF,
+     'if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);',
+     'if (false) DeliverDeepLink(url);'),
+    ("oauth: the callback goes to whichever client is open", CMAINF,
+     'if (ids != null && ids.Count == 1) target = ids[0];',
+     'if (ids != null && ids.Count > 0) target = ids[0];'),
+    ("oauth: the system browser is never used", CWEB2,
+     'if (RuntimeSettings.Current.OauthBrowser\n                && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))\n                return;',
+     'if (false)\n                return;'),
+    ("oauth: the handler is left behind on uninstall", CUNINST,
+     r'Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false);',
+     '/* mutated: the protocol key outlives the binary */'),
+    # ---- the guest grant behind CloudFront's AWS WAF challenge (2026-11-13).
+    # `POST /token/create-guest` answers 200, the page hands the popup
+    # `auth.ankama.com/login/ankama-guest?...&token=...`, and that URL answers
+    # `202` with `x-amzn-waf-action: challenge` and a 2 KB white document. Every
+    # mutation below leaves a popup that shows a blank window forever, which is
+    # what the operator reported as "a white windows with no way to progress".
+    ("waf: the challenge document is mistaken for a loaded page", CWEB2,
+     " if(!window.awsWafCookieDomainList && !window.gokuProps) return '';",
+     " return '';"),
+    ("waf: a challenge the probe missed is not caught from the 202", CWEB2,
+     'else if (st == 202 && WafActionHeader(evR.Response.Headers) != null)',
+     'else if (false)'),
+    ("waf: the blank page is left blank", CWEB2,
+     " (document.body||document.documentElement).appendChild(d);return 'shown';",
+     " return 'not-shown';"),
+    ("waf: the grant is requested once and never retried", CWEB2,
+     '            try { _webView.CoreWebView2.Navigate(_wafUrl); } catch { }',
+     '            try { } catch { }'),
+    ("waf: giving up says nothing an operator can act on", CWEB2,
+     '"[OAUTH-POPUP] [WAF-CHALLENGE] Ankama\'s challenge did not "',
+     '"[OAUTH-POPUP] silent "'),
+    ("waf: the log line carries the guest token", CWEB2,
+     "            int q = url.IndexOf('?');",
+     "            int q = -1;"),
+    # ---- a dead stdout pipe must not stop a loop (2026-11-13). The daemon outlives
+    # the host that opened its redirected stdout; after that every write raises
+    # OSError(EINVAL) and the next start died inside autopilot's startup print while
+    # the panel logged "auto started". The operator saw "the ai is running while its
+    # shows its not running".
+    ("console: a broken stream is allowed to raise again", CCONSOLE,
+     "            except (OSError, ValueError):\n                self.broken = True",
+     "            except ZeroDivisionError:\n                self.broken = True"),
+    ("console: the swallowed lines are not kept for the operator", CCONSOLE,
+     "            self._tail.append(line[:400])",
+     "            pass"),
+    ("console: install wraps a stream that is already guarded", CCONSOLE,
+     "        if isinstance(current, GuardedStream):\n            installed.append(current)\n            continue",
+     "        if False:\n            continue"),
+    ("console: the daemon installs the guard after importing autopilot", CRUNBRAIN,
+     "from agent.console_guard import install as _install_console_guard  # noqa: E402\n\n_install_console_guard()",
+     "_install_console_guard = lambda: None"),
+    ("console: /brain/health hides the broken console", BRAIND,
+     '"console": console_status(),',
+     '"console": {},'),
+    ("console: a dead pipe is attached to instead of restarted", CSBOOT,
+     "            if (ConsoleBroken(health)) return BrainRestart;",
+     "            if (false) return BrainRestart;"),
+    ("console: the start reason is a guess again", CSPANEL,
+     '                        string why = JsonField(record, "error");',
+     '                        string why = null;'),
+    ("console: a start that landed on nothing is reported as a start", CSPANEL,
+     "            if (failed.Count >= ids.Count && ids.Count > 0)",
+     "            if (false)"),
 ]
 
 

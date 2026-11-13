@@ -171,6 +171,7 @@ namespace DofusFarm.UI
         private readonly CheckBox _chkTelemetry;
         private readonly CheckBox _chkFightBoards;
         private readonly CheckBox _chkAutoAi;
+        private readonly CheckBox _chkOauthBrowser;
         private bool _suppressRuntime;
 
         private readonly ComboBox _mode;
@@ -256,13 +257,21 @@ namespace DofusFarm.UI
             _chkAutoAi.CheckedChanged += delegate { ApplyRuntime(); };
             Controls.Add(_chkAutoAi);
 
-            _runtimeState = UiKit.Note("", 0, y + 134);
+            // The Android build opens OAuth in a Chrome Custom Tab, i.e. a real browser;
+            // the in-app popup is the container Google refuses for sign-in and scores as
+            // an unknown device. Off by default: it writes one HKCU protocol key.
+            _chkOauthBrowser = UiKit.Check("Sign in with the system browser (Google refuses embedded WebViews; needs dofustouch:// handler)", 0, y + 130,
+                RuntimeSettings.Current.OauthBrowser);
+            _chkOauthBrowser.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkOauthBrowser);
+
+            _runtimeState = UiKit.Note("", 0, y + 160);
             Controls.Add(_runtimeState);
-            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 160, 150,
+            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 186, 150,
                 Color.FromArgb(127, 29, 29), delegate { ResetRuntime(); }));
-            Controls.Add(UiKit.Button("Open runtime.ini", 158, y + 160, 130, Color.FromArgb(51, 65, 85),
+            Controls.Add(UiKit.Button("Open runtime.ini", 158, y + 186, 130, Color.FromArgb(51, 65, 85),
                 delegate { RuntimeSettings.Current.Save(); OpenPath(RuntimeSettings.PathFor()); }));
-            y += 200;
+            y += 226;
 
             // ---- Network --------------------------------------------------
             Controls.Add(UiKit.Heading("Network", 0, y));
@@ -741,12 +750,14 @@ namespace DofusFarm.UI
                 current.Telemetry = loaded.Telemetry;
                 current.FightBoards = loaded.FightBoards;
                 current.AutoAi = loaded.AutoAi;
+                current.OauthBrowser = loaded.OauthBrowser;
                 _refresh.SelectedIndex = RefreshIndex(current.RefreshMs);
                 _chkWatchdog.Checked = current.Watchdog;
                 _chkGovernor.Checked = current.Governor;
                 _chkTelemetry.Checked = current.Telemetry;
                 _chkFightBoards.Checked = current.FightBoards;
                 _chkAutoAi.Checked = current.AutoAi;
+                _chkOauthBrowser.Checked = current.OauthBrowser;
                 UpdateRuntimeNote();
             }
             finally { _suppressRuntime = false; }
@@ -762,13 +773,15 @@ namespace DofusFarm.UI
             settings.Telemetry = _chkTelemetry.Checked;
             settings.FightBoards = _chkFightBoards.Checked;
             settings.AutoAi = _chkAutoAi.Checked;
+            settings.OauthBrowser = _chkOauthBrowser.Checked;
             settings.Save();
             UpdateRuntimeNote();
             if (_log != null)
                 _log("[SETTINGS] runtime: refresh=" + (settings.RefreshMs > 0 ? settings.RefreshMs + "ms" : "manual") +
                      ", watchdog=" + OnOff(settings.Watchdog) + ", governor=" + OnOff(settings.Governor) +
                      ", telemetry=" + OnOff(settings.Telemetry) + ", fight-boards=" + OnOff(settings.FightBoards) +
-                     ", auto-ai=" + OnOff(settings.AutoAi));
+                     ", auto-ai=" + OnOff(settings.AutoAi) +
+                     ", oauth-browser=" + OnOff(settings.OauthBrowser));
             if (_onApplyRuntime != null) _onApplyRuntime();
         }
 
@@ -783,6 +796,7 @@ namespace DofusFarm.UI
                 _chkTelemetry.Checked = true;
                 _chkFightBoards.Checked = true;
                 _chkAutoAi.Checked = true;
+                _chkOauthBrowser.Checked = false;
             }
             finally { _suppressRuntime = false; }
             ApplyRuntime();

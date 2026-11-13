@@ -224,6 +224,10 @@ namespace DofusUninstall
 
             try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm", false); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DofusFarm", false); } catch { }
+            // The OAuth callback handler (`OAuthBrowserHandoff.EnsureProtocolHandler`).
+            // Left behind it would make Windows offer a protocol that points at a binary
+            // this uninstaller is deleting -- a broken link in the user's browser.
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false); } catch { }
 
             try
             {

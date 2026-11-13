@@ -82,6 +82,41 @@ namespace DofusFarm
             catch { }
         }
 
+        /// <summary>Hand an OAuth callback to the running app, through its own channel.
+        ///
+        /// The `dofustouch://` protocol handler starts THIS exe with the URL as argv, and
+        /// the single-instance mutex would then drop it on the floor -- the browser's
+        /// redirect would arrive nowhere. A second file, not `launch_request.txt`: that
+        /// one carries a launch name and is parsed as one, and a URL is not a name. The
+        /// running app polls both (MainForm.StartLaunchRequestPoller).
+        /// </summary>
+        private static void WriteDeepLinkRequest(string url)
+        {
+            try
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
+                Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir, "oauth_deeplink.txt");
+                string temp = path + ".tmp";
+                File.WriteAllText(temp, url);
+                MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING
+            }
+            catch { }
+        }
+
+        private static string DeepLinkFromArgs(string[] args)
+        {
+            if (args == null) return null;
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (a != null && a.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase))
+                    return a;
+            }
+            return null;
+        }
+
         private static void FocusExistingInstance()
         {
             try
@@ -170,6 +205,97 @@ namespace DofusFarm
         }
 
         /// <summary>
+        /// Prove the OS half of the system-browser sign-in, without a Google account.
+        ///
+        ///   DofusFarm.exe --oauth-selftest      (exit 0 = every piece in place)
+        ///
+        /// Three things can break here and none of them needs a browser to notice: the
+        /// protocol key Windows would refuse to start, the command it points at (a stale
+        /// path after the app moves), and the file the second process writes for the
+        /// running app to poll. The Google round trip itself is NOT tested here -- that
+        /// needs a real account and is named as unproven in G119. Writes
+        /// oauth-selftest.txt.
+        /// </summary>
+        private static int OAuthSelfTest()
+        {
+            var sb = new System.Text.StringBuilder();
+            int failures = 0;
+            Action<bool, string> check = delegate(bool ok, string what)
+            {
+                if (!ok) failures++;
+                sb.AppendLine((ok ? "OK   " : "FAIL ") + what);
+            };
+            try
+            {
+                string exe = Application.ExecutablePath;
+                sb.AppendLine("exe: " + exe);
+
+                bool registered = Engine.OAuthBrowserHandoff.EnsureProtocolHandler(
+                    delegate(string line) { sb.AppendLine("     " + line); });
+                check(registered, "the dofustouch:// handler is registered");
+
+                string value = null, urlProtocol = null, command = null;
+                try
+                {
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                               @"Software\Classes\dofustouch"))
+                    {
+                        if (key != null)
+                        {
+                            value = key.GetValue("") as string;
+                            urlProtocol = key.GetValue("URL Protocol") as string;
+                            using (var cmd = key.OpenSubKey(@"shell\open\command"))
+                                if (cmd != null) command = cmd.GetValue("") as string;
+                        }
+                    }
+                }
+                catch (Exception ex) { sb.AppendLine("     read-back failed: " + ex.Message); }
+
+                sb.AppendLine("     default     : " + (value ?? "(absent)"));
+                sb.AppendLine("     URL Protocol: " + (urlProtocol == null ? "(absent)" : "(set)"));
+                sb.AppendLine("     command     : " + (command ?? "(absent)"));
+                check(urlProtocol != null, "URL Protocol is present (Windows refuses the scheme without it)");
+                check(!string.IsNullOrEmpty(command)
+                      && command.IndexOf(exe, StringComparison.OrdinalIgnoreCase) >= 0,
+                      "the handler points at THIS binary");
+
+                // The path inside the command has to exist: a moved or deleted app leaves
+                // a handler that opens nothing, and Windows shows no error at all.
+                string quoted = command ?? "";
+                int first = quoted.IndexOf('"');
+                int second = first >= 0 ? quoted.IndexOf('"', first + 1) : -1;
+                string target = (first >= 0 && second > first)
+                    ? quoted.Substring(first + 1, second - first - 1) : null;
+                check(target != null && File.Exists(target),
+                      "the binary the handler names exists" + (target == null ? "" : " (" + target + ")"));
+
+                check(DeepLinkFromArgs(new string[] { "--launch", "dofus-02",
+                          "dofustouch://authorized?code=ABC" }) == "dofustouch://authorized?code=ABC",
+                      "a dofustouch:// URL is found in argv");
+                check(DeepLinkFromArgs(new string[] { "--launch", "dofus-02" }) == null,
+                      "a launch name is not mistaken for a callback");
+
+                // The hand-off file, both directions. The running app deletes it when it
+                // reads it, so this leaves nothing behind.
+                string dir = Path.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
+                string file = Path.Combine(dir, "oauth_deeplink.txt");
+                string probe = "dofustouch://authorized?code=SELFTEST-" + Guid.NewGuid().ToString("N");
+                WriteDeepLinkRequest(probe);
+                string read = File.Exists(file) ? File.ReadAllText(file).Trim() : null;
+                check(read == probe, "the callback file round-trips unchanged");
+                try { if (File.Exists(file)) File.Delete(file); } catch { }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ERROR: " + ex);
+                failures++;
+            }
+            sb.AppendLine(failures == 0 ? "RESULT: OK" : "RESULT: " + failures + " FAILED");
+            return Finish(sb, failures == 0 ? 0 : 1, "oauth-selftest.txt");
+        }
+
+        /// <summary>
         /// Headless check of the live AI pill: read the last step the loop wrote and
         /// format it exactly as the nav strip does. Writes ai-status-selftest.txt.
         ///
@@ -225,9 +351,14 @@ namespace DofusFarm
                 return;
             }
             if (args != null && args.Length > 0 &&
-                string.Equals(args[0], "--ai-status-selftest", StringComparison.OrdinalIgnoreCase))
+                string.Equals(args[0], "--oauth-selftest", StringComparison.OrdinalIgnoreCase))
             {
-                bool running = Array.IndexOf(args, "--running") >= 0;
+                Environment.Exit(OAuthSelfTest());
+                return;
+            }
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--ai-status-selftest", StringComparison.OrdinalIgnoreCase))
+            {                bool running = Array.IndexOf(args, "--running") >= 0;
                 // A free argument names an instance, and with several loops the
                 // farm-wide log is no longer the interesting one: each client now
                 // writes autopilot.<instance>.jsonl. Scan for it -- "--running"
@@ -245,6 +376,14 @@ namespace DofusFarm
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+
+            // A `dofustouch://` URL in argv is the OAuth callback coming back from the
+            // system browser (the protocol handler launches this exe). It is forwarded
+            // before the mutex decides anything, so it works whether or not the manager
+            // is already running: the running app polls the file, and a first instance
+            // picks it up from the same poller a second later.
+            string deepLink = DeepLinkFromArgs(args);
+            if (!string.IsNullOrEmpty(deepLink)) WriteDeepLinkRequest(deepLink);
 
             bool createdNew;
             _singleInstanceMutex = new Mutex(true, @"Global\DofusFarmManager_SingleInstance_Mutex_2026", out createdNew);

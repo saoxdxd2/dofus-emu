@@ -9132,3 +9132,208 @@ that has no host-side fix.
   `lifecycle/steps/signup/name` and then the verification page, on a slot whose profile was created
   minutes earlier.
 
+
+
+## G119. The OAuth window can be the browser Android uses, and the callback can come back through the OS *(built 2026-11-12, awaiting a live sign-in)*
+
+The operator's question after G118: *"for google cant we use the part needed from an android version to
+make the webview looked like an android phone ?"* The instinct was right and the mechanism was not —
+the Android build does not disguise its WebView, it **leaves it**.
+
+### What the Android build actually does
+
+`client/www/js/cordova-standalone-shim.js` shims `window.cordova.plugins.browsertab`, which is
+**cordova-plugin-browsertab** — a Chrome Custom Tab on Android, i.e. a real browser process sharing
+the user's Chrome profile and Google session:
+
+```js
+window.cordova.plugins.browsertab = { openUrl: function (url) { handleOAuthUrl(url); ... } };
+function handleOAuthUrl(url) { ... postMessage({ type: 'open_oauth', url: url }) }
+```
+
+The host answered that call with an in-app WebView2 popup. That is the one container Google refuses
+for sign-in (`disallowed_useragent`, matched on the `wv` marker an Android WebView UA carries), and
+its signup verification scores the browser it is shown — so a phone-shaped WebView would have been the
+*worst* configuration to present, not the best. A UA string is also one signal among several that are
+computed from the real platform (`Sec-CH-UA*` client hints, `navigator.userAgentData`, touch, WebGL
+renderer), so overriding only the UA manufactures a mismatch that is itself a bot signal. The deciding
+signal — datacenter egress, no Google cookies, brand-new device — is untouched either way. Emulating a
+phone was rejected on that evidence, not on effort.
+
+### What was built instead: the Android *architecture*
+
+| piece | where | why |
+|---|---|---|
+| container choice | `WebView2ClientForm.OpenOAuthDialog` | `RuntimeSettings.OauthBrowser` on → system browser; off → the popup, unchanged |
+| protocol handler | `OAuthBrowserHandoff.EnsureProtocolHandler` | `HKCU\Software\Classes\dofustouch` = `"<exe>" "%1"`, `URL Protocol` set; HKCU, no elevation |
+| hand-off | `Program.WriteDeepLinkRequest` | the handler starts a **second** process; the single-instance mutex would drop the URL, so argv is written to `oauth_deeplink.txt` (atomic `MoveFileEx`) **before** the mutex decides |
+| delivery | `MainForm.DeliverDeepLink` | the existing 1 s launch-request poller reads it and calls `window.__onDeepLinkCallback(url)` on the client that opened the browser (`OAuthBrowserHandoff.TakePending`, 15 min window) |
+| cleanup | `uninstaller.cs` | deletes the protocol key, so Windows never offers a scheme pointing at a deleted binary |
+
+No new page code: the URL the page posts (`open_oauth`) is the one handed to the browser, and the
+callback it already parses (`__onDeepLinkCallback` → `IonicDeeplink.fire` → the client's own webAuth
+exchange) is the one delivered. The shim keeps saying `browsertab`, and it is now true.
+
+With several clients open the callback is **not** guessed: it goes to the client that opened the
+browser, or — if nothing is pending — to the only open client, and otherwise it is logged
+(`sign-in callback arrived but no client is waiting for it; dropped`) rather than handed to a client
+at random. A code delivered to the wrong client is a wrong account, not a lost click.
+
+### What is verified, and what is not
+
+Verified: `test_oauth_system_browser` **10 checks, 0 failed**; six mutation anchors, all CAUGHT
+(`oauth: the handler points at the wrong exe`, `oauth: the callback is dropped by the single-instance
+mutex`, `oauth: the callback file is written and never read`, `oauth: the callback goes to whichever
+client is open`, `oauth: the system browser is never used`, `oauth: the handler is left behind on
+uninstall`). `test_csharp_compile` 3, 0 failed.
+
+Verified on this machine, headless — `DofusFarm.exe --oauth-selftest` (exit 0, `oauth-selftest.txt`):
+
+```
+OK   the dofustouch:// handler is registered
+     command     : "C:\Users\sao\Documents\dofus-emu\DofusFarm.exe" "%1"
+OK   URL Protocol is present (Windows refuses the scheme without it)
+OK   the handler points at THIS binary
+OK   the binary the handler names exists
+OK   a dofustouch:// URL is found in argv
+OK   a launch name is not mistaken for a callback
+OK   the callback file round-trips unchanged
+```
+
+That is the whole OS half: the key Windows starts, the command it resolves to, and the file the
+second process hands to the poller. The Google round trip is what is left.
+
+**Not verified — this needs one live sign-in:** the popup route also copied the auth cookies from the
+popup's jar into the game session, and the browser route does not. On this path the exchange must
+complete from the `code` alone, through the client's own `webAuth` handshake. Everything upstream of
+that is in place and the page's parser is the client's own, but the round trip has not been observed
+on this machine. Until it is, `OauthBrowser` stays **off by default** and the popup remains the
+fallback: a failure here changes nothing for a farm that signs in as guests.
+
+**Not fixed, and it cannot be:** creating a *new* Google account. That is guarded on Google's side
+regardless of container. Sign-in is the part a real browser fixes.
+
+## G120. A diagnostic `print` could stop the whole AI, and the panel said "started" anyway *(measured 2026-11-13)*
+
+**Symptom, in the operator's words:** "the ai is running while its shows its not running". The AI
+panel logged a start, the row said AI OFF, and no step was ever taken.
+
+**What the daemon said when asked.** Not inferred -- `GET /brain/status` against the daemon that was
+running at the time (pid 13592, `loaded_s: 34810`):
+
+```json
+{"instance": "dofus-02", "state": "error", "alive": false,
+ "error": "OSError: [Errno 22] Invalid argument",
+ "traceback": "... File \"agent/autopilot.py\", line 4719, in _base_policy
+                   print(f\"[autopilot] policy: {planner.note}; {planner.stack_note}\")
+               OSError: [Errno 22] Invalid argument"}
+```
+
+The policy could not be built because **a startup print could not write to stdout**.
+
+**Why stdout was dead.** The host starts the daemon with `RedirectStandardOutput = true` and drains
+it with `BeginOutputReadLine` (`desktop/aipanel.cs`). The daemon is a singleton that outlives its
+host -- the next launch logs `attached to the brain daemon already on port 8895`. When the spawning
+host exits, the read end of that pipe closes, and on Windows every later write fails with
+`EINVAL`. A daemon 9.7 hours old was therefore one `print` away from aborting every start, forever,
+while `status: ok` and `active: []` kept it looking healthy.
+
+**Two defects, not one.**
+
+1. *A diagnostic write could raise inside business logic.* `_base_policy` builds the planner and then
+   announces it; the announce killed the build.
+2. *The host reported a start it never got.* `/brain/start` answers `ok:true` and carries a
+   per-instance record with `state` and `error`. The panel read only `ok`, printed
+   `auto started on the brain daemon`, and -- when the instance still was not in the active set --
+   guessed `(its previous loop was still exiting)`. The daemon had already said `state:"error"` and
+   given the exception; the guess replaced it. That is why the operator had a start in the log, an
+   OFF row, and no reason anywhere.
+
+**Fixed.**
+
+- `agent/console_guard.py`: `install()` wraps `sys.stdout`/`sys.stderr` in a writer that swallows
+  `OSError`/`ValueError`, keeps the last 40 lines, and reports `broken`. A live pipe passes through
+  byte for byte. `run_brain.py` installs it **before** importing `agent.serve` (an import-time print
+  is as dangerous as a runtime one) and `serve.main()` installs it as its first statement, before
+  `logging.basicConfig` adopts `sys.stderr`.
+- `GET /brain/health` now carries a `console` block, so a dead pipe is visible from outside.
+- `BootState.ConsoleBroken(health)` folds into `DecideBrainAttach`, which already knew how to answer
+  `BrainRestart` for a daemon running pre-fix code. A daemon whose output goes nowhere is the same
+  class of problem, so it is killed and respawned, and the log says which of the two reasons it was.
+- `BrainStart` reads the daemon's own verdict: `state:"error"` is logged as
+  `the daemon could not start it: <error>`, the guess is now the last branch instead of the first,
+  and a start that landed on none of the requested slots returns `false` so the caller falls back to
+  per-instance children -- fresh processes with a working stdout, which is exactly what the daemon
+  lost.
+
+**Verified.** `python scratch/prove_console_guard.py` starts a throwaway daemon, closes its stdout
+pipe as a host exit does, and asks it to start an instance:
+
+```
+ok=True state='starting' alive=True error=None
+swallowed tail: ['[autopilot] policy: tool policy tool_policy.onnx (21 tools, +history); stack not loaded', ...]
+```
+
+The very print that used to abort the start now runs and is kept. The pipe is not reported `broken`
+on a short run because Windows buffers it; the `EINVAL` swallow itself is proven by
+`test_console_guard`, which points the guard at a stream that raises and asserts nothing escapes.
+
+**Still open.** The daemon that produced this evidence was killed rather than repaired (it could not
+start anything). The next launch respawns it through the `BrainRestart` path, and the first real
+test of that is a launch with the new `DofusFarm.exe` (600,576 B, md5 `a90015bb...`).
+
+## G121. The guest grant is behind an AWS WAF challenge, and the challenge is a blank window *(measured 2026-11-13)*
+
+**Symptom, in the operator's words:** "when creating a guest acount its a white windows that popup
+with no way to progress ... i think because of the need of background services of google play". The
+guess was reasonable and wrong.
+
+**What actually happens.** The client's guest path is not a legal-agreement modal and not Google
+Play. From `DofusFarm.log` at 01:24:38, in order:
+
+```
+[AUTH-NET] POST https://auth.ankama.com/token/create-guest -> 200 body={"token":"Q_E2WBk..."}
+{"type":"open_oauth","url":"https://auth.ankama.com/login/ankama-guest?...&token=Q_E2WBk..."}
+[OAUTH-POPUP] Navigating: https://auth.ankama.com/login/ankama-guest?...
+[OAUTH-POPUP] [AUTH-NET] GET https://auth.ankama.com/favicon.ico -> 404
+   ... and then nothing. No page text, no navigation, no callback.
+```
+
+`grep -c "dofustouch://authorized" DofusFarm.log` = **0**. The grant has never landed, in any
+attempt, in the whole log.
+
+**Why the window is white.** Asked directly, with a browser user agent and a freshly minted guest
+token:
+
+```
+$ curl -i "https://auth.ankama.com/login/ankama-guest?...&token=vw9Wffzq..."
+HTTP/1.1 202 Accepted
+x-amzn-waf-action: challenge
+Content-Length: 1999
+```
+
+The body is 1,999 bytes holding `window.awsWafCookieDomainList` and `window.gokuProps` and no
+visible content. A browser renders it as a white page while the challenge script runs. When the
+challenge does not complete, the page stays white forever -- a window with no way to progress, which
+is exactly what was reported. The same request without a browser UA is a `403` from CloudFront, so
+this is bot protection on the guest-grant endpoint specifically; `/login/google` is not challenged,
+which is why Google sign-in works.
+
+**Fixed.** `OAuthLoginForm` now recognises the challenge two ways -- the document contents
+(`gokuProps`/`awsWafCookieDomainList`) and the response itself (`202` plus `x-amzn-waf-action`,
+because the challenge can redirect before `NavigationCompleted` probes) -- and then:
+
+- covers the blank document with an overlay that says `Ankama is verifying this device...`. It is
+  **appended**, never a rewrite: the challenge script is what has to finish, and replacing the body
+  would remove the thing being waited for;
+- re-requests the same URL after 4.5 s, up to 5 times, because the challenge is cookie-based
+  (`aws-waf-token`) and a later request from the same profile can pass;
+- on giving up, says so in the log and on the window, with the one action that works: the
+  system-browser sign-in (G119), where a real Chrome solves the challenge;
+- never logs the query string, which carries a live guest token.
+
+**Not fixed, and it may not be fixable from here.** If CloudFront's challenge never completes in
+WebView2 for this profile, guest creation through the popup cannot succeed at all. The next
+measurement is a launch with the new build: `[WAF-CHALLENGE] attempt n/5` lines followed by either
+`Intercepted OAuth completion code redirect` (fixed) or `challenge did not complete after 5 attempts`
+(the popup is a dead end for guests and the system browser is the answer).

@@ -66,7 +66,33 @@ namespace DofusFarm.Update
         {
             if (string.IsNullOrEmpty(health)) return BrainStart;
             if (health.IndexOf("dofus-brain", StringComparison.Ordinal) < 0) return BrainOther;
+            // A daemon whose own stdout pipe is dead is no more attachable than a
+            // stale one. The pipe closes when the host that opened it exits, and on
+            // Windows every later write raises OSError(EINVAL) -- so the next
+            // `print` inside a start path aborts that start. Measured 2026-11-13: a
+            // 9.7 h old daemon answered every /brain/start with
+            // `state:"error", error:"OSError: [Errno 22] Invalid argument"` from
+            // autopilot's startup note, so no loop ever ran while the host logged
+            // "auto started". Killing and respawning is the only cure, and it costs
+            // one process.
+            if (ConsoleBroken(health)) return BrainRestart;
             return StaleModulesOf(health).Length == 0 ? BrainAttach : BrainRestart;
+        }
+
+        /// <summary>Does the daemon say its stdout/stderr pipe has failed?</summary>
+        /// <remarks>
+        /// The daemon keeps answering after its pipe dies, which is why liveness
+        /// alone cannot see this: `/brain/status` still returns `ok:true`. The
+        /// `console` block is the daemon's own report (agent/console_guard.py).
+        /// A daemon too old to have the field reports nothing and counts as sound,
+        /// for the same reason a missing `code_stale` does.
+        /// </remarks>
+        public static bool ConsoleBroken(string health)
+        {
+            if (string.IsNullOrEmpty(health)) return false;
+            Match block = Regex.Match(health, "\"console\"\\s*:\\s*\\{(?<obj>[^\\}]*)\\}");
+            if (!block.Success) return false;
+            return Regex.IsMatch(block.Groups["obj"].Value, "\"broken\"\\s*:\\s*true");
         }
 
         /// <summary>The module names a health reply says the daemon imported before they changed.</summary>

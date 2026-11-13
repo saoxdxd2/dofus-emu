@@ -4943,6 +4943,78 @@ def test_guest_registration() -> None:
           "a fresh profile per popup is a brand-new device to every identity provider")
 
 
+def test_oauth_system_browser() -> None:
+    section("OAuth in the system browser (the container Android actually uses)")
+    # G118 established that the popup cannot win the device-verification argument, and
+    # that the Android build does not try: `cordova.plugins.browsertab` is a Chrome
+    # Custom Tab, i.e. a real browser process with the operator's own Google session.
+    # This is that container on Windows -- the URL goes to the default browser and the
+    # result comes back as an intent on `dofustouch://authorized`, which here is a
+    # protocol handler under HKCU. Everything on both ends already existed (the page
+    # posts `open_oauth`, the page parses `__onDeepLinkCallback`); what was missing was
+    # the host choosing a different container and a way to hand the callback back.
+    form = code_only((ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    prog = code_only((ROOT / "desktop" / "Program.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    main = code_only((ROOT / "desktop" / "mainform.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    runtime = code_only((ROOT / "desktop" / "runtimesettings.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    uninst = code_only((ROOT / "desktop" / "uninstaller.cs").read_text(
+        encoding="utf-8", errors="replace"))
+
+    check("the container is a host decision, and the popup stays as the fallback",
+          "RuntimeSettings.Current.OauthBrowser" in form
+          and "OAuthBrowserHandoff.Open(url, _instanceId, _logCallback)" in form
+          and "_activeOAuthDialog = new OAuthLoginForm(url, _options, this, _logCallback, _env);" in form,
+          "one container for both settings means the fallback is gone")
+    check("the handler is a per-user protocol key pointing at this exe",
+          '@"Software\\Classes\\dofustouch"' in form
+          and 'key.SetValue("URL Protocol", "");' in form
+          and 'string command = "\\"" + exe + "\\" \\"%1\\"";' in form,
+          "a handler without URL Protocol or with an unquoted path opens nothing")
+    # The callback arrives as argv to a SECOND process, and the single-instance mutex
+    # would drop it. It has to be forwarded before that decision, not after.
+    check("the callback is forwarded before the single-instance mutex",
+          "string deepLink = DeepLinkFromArgs(args);" in prog
+          and "if (!string.IsNullOrEmpty(deepLink)) WriteDeepLinkRequest(deepLink);" in prog
+          and prog.find("WriteDeepLinkRequest(deepLink);") < prog.find("_singleInstanceMutex = new Mutex("),
+          "the URL is dropped by the mutex before anything can read it")
+    check("the callback file is written atomically, like the launch request",
+          'string path = Path.Combine(dir, "oauth_deeplink.txt");' in prog
+          and "MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING" in prog,
+          "a half-written URL is a callback that parses as garbage")
+    check("the running app reads the callback and delivers it",
+          'string deepLinkPath = Path.Combine(dir, "oauth_deeplink.txt");' in main
+          and "if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);" in main
+          and "window.__onDeepLinkCallback && window.__onDeepLinkCallback(" in main,
+          "the file is written and never read")
+    check("the callback goes to the client that opened the browser",
+          "OAuthBrowserHandoff.TakePending()" in main
+          and "if (ids != null && ids.Count == 1) target = ids[0];" in main,
+          "with four clients open, guessing one is a wrong account")
+    check("an unmatched callback is logged, not guessed",
+          "no client is waiting for it; dropped: " in main,
+          "a silent drop is indistinguishable from a sign-in that never happened")
+    check("the setting is persisted like every other runtime switch",
+          "public bool OauthBrowser = false;" in runtime
+          and 'Same(key, "oauth_browser")' in runtime
+          and 'text.AppendLine("oauth_browser=" + (OauthBrowser ? "1" : "0"));' in runtime,
+          "a toggle that forgets itself turns the popup back on after a restart")
+    check("uninstall removes the protocol handler",
+          'Registry.CurrentUser.DeleteSubKeyTree(@"Software\\Classes\\dofustouch", false);' in uninst,
+          "Windows keeps offering a protocol that points at a deleted binary")
+    # The three silent failures here are checkable without a Google account, so they are
+    # a selftest of their own: a key Windows will not start, a command naming a path that
+    # no longer exists, and a hand-off file that does not round-trip.
+    check("the OS half has a headless selftest",
+          '"--oauth-selftest"' in prog
+          and "private static int OAuthSelfTest()" in prog
+          and 'Finish(sb, failures == 0 ? 0 : 1, "oauth-selftest.txt")' in prog,
+          "a broken handler would only be discovered by a sign-in that fails")
+
+
 def test_board_pca_signature() -> None:
     section("Board PCA signature (compression measured before it is wired)")
     import numpy as np
@@ -18780,6 +18852,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_ready_set_ranking)
     _run_test(test_login_cooldown_guard)
     _run_test(test_guest_registration)
+    _run_test(test_oauth_system_browser)
     _run_test(test_board_pca_signature)
     _run_test(test_one_driver_per_instance)
     _run_test(test_boss_benchmark_runs)

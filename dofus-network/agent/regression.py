@@ -3068,6 +3068,40 @@ class Probe {
               BootState.BrainPid("{\"service\":\"dofus-brain\",\"pid\":7336,"
                   + "\"code_stale\":[\"agent.planner\"]}") == 7336,
               BootState.BrainPid("{\"service\":\"dofus-brain\",\"pid\":7336}").ToString());
+        // A daemon whose stdout pipe died answers exactly like a healthy one:
+        // `/brain/status` still says ok. Measured 2026-11-13 on a daemon 9.7 h
+        // old, whose spawning host had exited: every /brain/start came back
+        // `state:"error", error:"OSError: [Errno 22] Invalid argument"` raised by
+        // autopilot's startup print, so no loop ever ran while the panel logged
+        // "auto started". Attaching to that daemon repeats the failure forever.
+        Check("a dead stdout pipe is visible in the health reply",
+              BootState.ConsoleBroken(
+                  "{\"service\":\"dofus-brain\",\"pid\":9,\"console\":"
+                  + "{\"stdout\":{\"broken\":true,\"swallowed\":3}}}"),
+              "ConsoleBroken missed broken:true");
+        Check("a working console is not a reason to restart",
+              !BootState.ConsoleBroken(
+                  "{\"service\":\"dofus-brain\",\"pid\":9,\"console\":"
+                  + "{\"stdout\":{\"broken\":false,\"swallowed\":0}}}"),
+              "ConsoleBroken fired on broken:false");
+        Check("a daemon too old to report a console counts as sound",
+              !BootState.ConsoleBroken(
+                  "{\"service\":\"dofus-brain\",\"pid\":9,\"code_stale\":[]}"),
+              "an absent field must not restart every older daemon");
+        Check("a daemon with a dead pipe is restarted, not attached to",
+              BootState.DecideBrainAttach(
+                  "{\"service\":\"dofus-brain\",\"pid\":9,\"code_stale\":[],\"console\":"
+                  + "{\"stdout\":{\"broken\":true}}}") == BootState.BrainRestart,
+              BootState.DecideBrainAttach(
+                  "{\"service\":\"dofus-brain\",\"pid\":9,\"code_stale\":[],\"console\":"
+                  + "{\"stdout\":{\"broken\":true}}}"));
+        Check("a broken console outranks an empty stale list",
+              BootState.ConsoleBroken(
+                  "{\"service\":\"dofus-brain\",\"console\":{\"stderr\":{\"broken\":true}}}")
+              && BootState.DecideBrainAttach(
+                  "{\"service\":\"dofus-brain\",\"code_stale\":[],\"console\":"
+                  + "{\"stderr\":{\"broken\":true}}}") == BootState.BrainRestart,
+              "stderr alone was not enough to restart");
         Check("a brain too old to report its code is attached to, not killed",
               BootState.DecideBrainAttach(
                   "{\"status\":\"ok\",\"service\":\"dofus-brain\",\"pid\":9132}")
@@ -4941,6 +4975,225 @@ def test_guest_registration() -> None:
           and "public string ProfileDir { get { return _userDataDir; } }" in form
           and "DofusFarm_OAuth_" not in form,
           "a fresh profile per popup is a brand-new device to every identity provider")
+
+
+def test_oauth_system_browser() -> None:
+    section("OAuth in the system browser (the container Android actually uses)")
+    # G118 established that the popup cannot win the device-verification argument, and
+    # that the Android build does not try: `cordova.plugins.browsertab` is a Chrome
+    # Custom Tab, i.e. a real browser process with the operator's own Google session.
+    # This is that container on Windows -- the URL goes to the default browser and the
+    # result comes back as an intent on `dofustouch://authorized`, which here is a
+    # protocol handler under HKCU. Everything on both ends already existed (the page
+    # posts `open_oauth`, the page parses `__onDeepLinkCallback`); what was missing was
+    # the host choosing a different container and a way to hand the callback back.
+    form = code_only((ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    prog = code_only((ROOT / "desktop" / "Program.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    main = code_only((ROOT / "desktop" / "mainform.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    runtime = code_only((ROOT / "desktop" / "runtimesettings.cs").read_text(
+        encoding="utf-8", errors="replace"))
+    uninst = code_only((ROOT / "desktop" / "uninstaller.cs").read_text(
+        encoding="utf-8", errors="replace"))
+
+    check("the container is a host decision, and the popup stays as the fallback",
+          "RuntimeSettings.Current.OauthBrowser" in form
+          and "OAuthBrowserHandoff.Open(url, _instanceId, _logCallback)" in form
+          and "_activeOAuthDialog = new OAuthLoginForm(url, _options, this, _logCallback, _env);" in form,
+          "one container for both settings means the fallback is gone")
+    check("the handler is a per-user protocol key pointing at this exe",
+          '@"Software\\Classes\\dofustouch"' in form
+          and 'key.SetValue("URL Protocol", "");' in form
+          and 'string command = "\\"" + exe + "\\" \\"%1\\"";' in form,
+          "a handler without URL Protocol or with an unquoted path opens nothing")
+    # The callback arrives as argv to a SECOND process, and the single-instance mutex
+    # would drop it. It has to be forwarded before that decision, not after.
+    check("the callback is forwarded before the single-instance mutex",
+          "string deepLink = DeepLinkFromArgs(args);" in prog
+          and "if (!string.IsNullOrEmpty(deepLink)) WriteDeepLinkRequest(deepLink);" in prog
+          and prog.find("WriteDeepLinkRequest(deepLink);") < prog.find("_singleInstanceMutex = new Mutex("),
+          "the URL is dropped by the mutex before anything can read it")
+    check("the callback file is written atomically, like the launch request",
+          'string path = Path.Combine(dir, "oauth_deeplink.txt");' in prog
+          and "MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING" in prog,
+          "a half-written URL is a callback that parses as garbage")
+    check("the running app reads the callback and delivers it",
+          'string deepLinkPath = Path.Combine(dir, "oauth_deeplink.txt");' in main
+          and "if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);" in main
+          and "window.__onDeepLinkCallback && window.__onDeepLinkCallback(" in main,
+          "the file is written and never read")
+    check("the callback goes to the client that opened the browser",
+          "OAuthBrowserHandoff.TakePending()" in main
+          and "if (ids != null && ids.Count == 1) target = ids[0];" in main,
+          "with four clients open, guessing one is a wrong account")
+    check("an unmatched callback is logged, not guessed",
+          "no client is waiting for it; dropped: " in main,
+          "a silent drop is indistinguishable from a sign-in that never happened")
+    check("the setting is persisted like every other runtime switch",
+          "public bool OauthBrowser = false;" in runtime
+          and 'Same(key, "oauth_browser")' in runtime
+          and 'text.AppendLine("oauth_browser=" + (OauthBrowser ? "1" : "0"));' in runtime,
+          "a toggle that forgets itself turns the popup back on after a restart")
+    check("uninstall removes the protocol handler",
+          'Registry.CurrentUser.DeleteSubKeyTree(@"Software\\Classes\\dofustouch", false);' in uninst,
+          "Windows keeps offering a protocol that points at a deleted binary")
+    # The three silent failures here are checkable without a Google account, so they are
+    # a selftest of their own: a key Windows will not start, a command naming a path that
+    # no longer exists, and a hand-off file that does not round-trip.
+    check("the OS half has a headless selftest",
+          '"--oauth-selftest"' in prog
+          and "private static int OAuthSelfTest()" in prog
+          and 'Finish(sb, failures == 0 ? 0 : 1, "oauth-selftest.txt")' in prog,
+          "a broken handler would only be discovered by a sign-in that fails")
+
+    # G119: the guest grant is behind an AWS WAF challenge, and the challenge
+    # document is 2 KB of white. Measured 2026-11-13 -- `POST /token/create-guest`
+    # answers 200, the page then hands the popup
+    # `auth.ankama.com/login/ankama-guest?...&token=...`, and that URL answers
+    # `HTTP 202` with `x-amzn-waf-action: challenge` and a body holding only
+    # `gokuProps`. `DofusFarm.log` has ZERO `dofustouch://authorized` navigations,
+    # so the code was never issued. The operator's report was "a white windows
+    # that popup with no way to progress".
+    check("the challenge document is recognised by what it contains",
+          "window.awsWafCookieDomainList && !window.gokuProps" in form
+          and "WAFCHALLENGE|" in form,
+          "a 202 with a 2 KB white body looks like a loaded page to NavigationCompleted")
+    check("a challenge the probe misses is still caught from the response",
+          "else if (st == 202 && WafActionHeader(evR.Response.Headers) != null)" in form
+          and "_wafSeen202 = true;" in form,
+          "the challenge can redirect before the probe runs")
+    check("the blank page is covered, not rewritten",
+          "d.id='__dfWafWait'" in form
+          and "(document.body||document.documentElement).appendChild(d)" in form,
+          "replacing the body removes the challenge script that has to finish")
+    check("the grant is re-requested until the challenge cookie lands",
+          "private const int MaxWafAttempts = 5;" in form
+          and "_webView.CoreWebView2.Navigate(_wafUrl);" in form
+          and "if (_wafAttempts > MaxWafAttempts)" in form,
+          "a blank window that silently retries is still a window with no way out")
+    check("giving up names the cause and the way out",
+          "[WAF-CHALLENGE] Ankama's challenge did not " in form
+          and "challenge unsolved" in form
+          and "sign in with the system browser" in form,
+          "an operator cannot act on a blank window")
+    check("the log line never carries the guest token",
+          "private static string WafHostOf(string url)" in form
+          and "int q = url.IndexOf('?');" in form,
+          "the query string holds a live guest token")
+
+
+def test_console_guard() -> None:
+    section("A diagnostic print cannot stop a loop (dead stdout pipe)")
+    # The host starts the daemon with RedirectStandardOutput and then may exit
+    # while the daemon keeps running -- the next host "attaches to the brain
+    # daemon already on port 8895". That closes the read end of the pipe, and on
+    # Windows every later write raises OSError(EINVAL). Measured 2026-11-13 on a
+    # daemon 9.7 h old (pid 13592):
+    #
+    #   /brain/status -> dofus-02 | state=error | alive=False
+    #                    error: OSError: [Errno 22] Invalid argument
+    #                    traceback: agent/autopilot.py:4719 in _base_policy
+    #                               print(f"[autopilot] policy: {planner.note}; ...")
+    #
+    # so the policy could not be built and no loop ever ran, while the panel
+    # logged "auto started" and the row correctly said AI OFF. The operator's
+    # words were "the ai is running while its shows its not running".
+    import io
+    import sys as _sys
+
+    from agent.console_guard import GuardedStream, install, status
+
+    class _Dead(object):
+        encoding = "utf-8"
+        errors = "replace"
+
+        def write(self, text):
+            raise OSError(22, "Invalid argument")
+
+        def flush(self):
+            raise OSError(22, "Invalid argument")
+
+    # Behaviour, not shape: the whole point is that the exception does not escape.
+    saved = _sys.stdout
+    try:
+        dead = GuardedStream(_Dead(), "stdout")
+        _sys.stdout = dead
+        try:
+            print("[autopilot] policy: nn; stack none")
+            wrote = True
+        except OSError:
+            wrote = False
+        check("a print into a dead pipe does not raise", wrote,
+              "the OSError that killed the policy build still escapes")
+        check("the swallowed line is kept for the operator",
+              any("policy" in line for line in dead.tail()),
+              "tail=%r" % (dead.tail(),))
+        check("the stream reports itself broken", dead.broken and dead.swallowed >= 1,
+              "broken=%r swallowed=%r" % (dead.broken, dead.swallowed))
+
+        healthy = io.StringIO()
+        guard = GuardedStream(healthy, "stdout")
+        guard.write("hello")
+        guard.flush()
+        check("a live pipe passes through unchanged",
+              healthy.getvalue() == "hello" and not guard.broken,
+              "a working host must see exactly what it saw before")
+
+        _sys.stdout = guard
+        again = install(("stdout",))[0]
+        check("installing twice does not double-wrap", again is guard,
+              "a wrapper around a wrapper hides the real one")
+
+        _sys.stdout = dead
+        check("status() reports the broken stream for /brain/health",
+              status().get("stdout", {}).get("broken") is True,
+              "status()=%r" % (status(),))
+    finally:
+        _sys.stdout = saved
+
+    net = ROOT / "dofus-network"
+    run_brain = (net / "run_brain.py").read_text(encoding="utf-8", errors="replace")
+    serve = (net / "agent" / "serve.py").read_text(encoding="utf-8", errors="replace")
+    daemon = (net / "agent" / "brain_daemon.py").read_text(encoding="utf-8", errors="replace")
+
+    check("the daemon installs the guard before importing anything that prints",
+          run_brain.find("_install_console_guard()") >= 0
+          and run_brain.find("_install_console_guard()") < run_brain.find("from agent.serve import main"),
+          "a guard installed after the import cannot protect an import-time print")
+    check("the control plane installs it too, for the per-instance child path",
+          serve.find("install_console_guard()") < serve.find("logging.basicConfig(level="),
+          "logging.basicConfig adopts sys.stderr before the guard exists")
+    check("/brain/health reports the console so the host can act on it",
+          '"console": console_status(),' in daemon
+          and "from agent.console_guard import status as console_status" in daemon,
+          "a daemon with a dead pipe answers exactly like a healthy one")
+
+    panel = code_only((ROOT / "desktop" / "aipanel.cs").read_text(
+        encoding="utf-8", errors="replace"))
+
+    check("a start that the daemon could not build is reported with its reason",
+          "string record = JsonObjectFor(retry, id) ?? JsonObjectFor(body, id);" in panel
+          and 'string why = JsonField(record, "error");' in panel
+          and "the daemon could not start it: " in panel,
+          "the reply already carried state:error and the host guessed instead")
+    check("the guess is only used when the daemon said nothing",
+          'the daemon accepted the start but is not running it' in panel
+          and panel.find('string why = JsonField(record, "error");')
+          < panel.find('the daemon accepted the start but is not running it'),
+          "the fallback must be the last branch, not the first")
+    check("a start that landed on nothing is not reported as a start",
+          "if (failed.Count >= ids.Count && ids.Count > 0)" in panel
+          and "started none of the " in panel,
+          "the panel said 'started' for a slot that would never run")
+    check("the daemon's record is brace-matched, because a traceback holds braces",
+          "bool inString = false, escaped = false;" in panel
+          and "if (depth == 0) return body.Substring(start, i - start + 1);" in panel,
+          "a regex over a JSON object containing a traceback cuts it in half")
+    check("the restart names a dead pipe as the reason",
+          "lost its stdout pipe (the host that opened it exited)" in panel,
+          "one message for two causes is a diagnosis nobody can act on")
 
 
 def test_board_pca_signature() -> None:
@@ -18780,6 +19033,8 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_ready_set_ranking)
     _run_test(test_login_cooldown_guard)
     _run_test(test_guest_registration)
+    _run_test(test_oauth_system_browser)
+    _run_test(test_console_guard)
     _run_test(test_board_pca_signature)
     _run_test(test_one_driver_per_instance)
     _run_test(test_boss_benchmark_runs)

@@ -437,9 +437,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "9e8cfb73ef4e9c2b0ab5251c0d76ca4b243fdd0a546b972c63f3473660d71213",
+      "source_sha256": "3564877debd428ac70317550c4725c4050363009ca5cbbf903b9a2559580fa70",
       "status": "sync",
-      "toolkit_sha256": "9e8cfb73ef4e9c2b0ab5251c0d76ca4b243fdd0a546b972c63f3473660d71213"
+      "toolkit_sha256": "3564877debd428ac70317550c4725c4050363009ca5cbbf903b9a2559580fa70"
     },
     {
       "drift": false,
@@ -2354,9 +2354,18 @@
       "missing": false,
       "path": "tools/mutate_cause_gate.py",
       "source": "tools/mutate_cause_gate.py",
-      "source_sha256": "042fe871f61b45156a1e59af26d13fd8a7a9b9b0b1fba225a33a7009d3e8f183",
+      "source_sha256": "3bda9cf5a14610a40033ae6a75b40b11e2cf42c0a8563f55e547864b574d4cf9",
       "status": "sync",
-      "toolkit_sha256": "042fe871f61b45156a1e59af26d13fd8a7a9b9b0b1fba225a33a7009d3e8f183"
+      "toolkit_sha256": "3bda9cf5a14610a40033ae6a75b40b11e2cf42c0a8563f55e547864b574d4cf9"
+    },
+    {
+      "drift": false,
+      "missing": false,
+      "path": "tools/neuron_transplant.py",
+      "source": "tools/neuron_transplant.py",
+      "source_sha256": "d14b4e13d44136798007fb31f643b39427c8be21dfbbd90a2897fd95fcd6b82c",
+      "status": "sync",
+      "toolkit_sha256": "d14b4e13d44136798007fb31f643b39427c8be21dfbbd90a2897fd95fcd6b82c"
     },
     {
       "drift": false,
@@ -2692,7 +2701,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-12T23:06:06.314374+00:00",
+  "generated_at": "2026-11-12T23:51:26.851694+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

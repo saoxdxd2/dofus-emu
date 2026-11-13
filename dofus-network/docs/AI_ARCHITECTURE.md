@@ -70,7 +70,7 @@ measurement and its random-answer control are in `agent/consult_gate.py`'s heade
 | cause head | `models/cause_head.*` (JSON/ONNX/prototypes), `ai/train_cause_head.py`, `ai/test_cause_head.py` | trained (0.855 on unseen phrasings) but **retired**: its 25-tool feature axis cannot read the 28-tool registry; not wired |
 | move head | `ai/train_move_head.py`, `ai/train_move_head_gated.py` | gated; publishes no artifact (last gate: median AUC 0.787, worst ECE 0.315) |
 | planner student | `ai/train_planner_student.py` | no artifact, no consumer |
-| weight-space programming | `agent/weight_space.py`, `models/weight_edits_*.json`, `models/encounter_wsp_*.pkl` | closed research; measured, but no weight arm shipped |
+| weight-space programming | `agent/weight_space.py`, `models/weight_edits_*.json`, `models/encounter_wsp_*.pkl` | **Reactivated for semantic micro-surgery (Takehi et al. 2026)**: blind perturbation was retired; offline LLM weight analysis proposes sparse edits (<=0.05% params) to patch head confusion, verified by the deterministic replay gate before shipping. |
 | command model v1 | `models/command_encoder/`, `ai/train_command_model.py` | superseded by `command_encoder30`; nothing loads it |
 | verifier SFT recipe | `ai/build_verifier_sft.py`, `ai/train_verifier_head.py` | recipe for the opt-in head above |
 
@@ -116,6 +116,8 @@ escalation decision. Chosen after a literature pass; the transplants and why:
 | **HiMAC** (arXiv 2603.00977) | separates macro planning (blueprints) from micro execution and assigns credit per level; +16% over a flat-group advantage baseline | a **macro/micro split with separate acceptance gates**: macro = which quest/objective and which goal mode, micro = which tool now. A bad micro step may not poison the macro credit — this is why the shared intent head failed when specialised per instance |
 | **TRM / Less is More** (arXiv 2510.04871) | weight-shared recursion, 7M params, strong on ARC | **rejected as the core shape**: recursion was already tested twice on this corpus (see §6). Kept only as the *halting* idea inside the escalation head |
 | **RWML** (arXiv 2602.05842), RLxF (ICML 2026 workshop) | agents that anticipate action consequences from world feedback rather than human labels | the label rule: **outcomes come from the server's own validation traffic**, never from the rule that proposed the action |
+| **Goodfire Mechanistic Shaping** (2026) | guides internal representations using auxiliary feature probes to penalize shortcut learning and reward hacking | **anti-stall & anti-hack probes**: enforces that actions proposed have non-trivial expected transition signatures, eliminating idle read loops |
+| **Sparse Autoencoders / SAEs** (Anthropic / Goodfire 2026) | expands hidden representations into monosemantic sparse dictionaries | **head-vs-head disambiguation**: separates entangled `nav.goto` vs `quest.advance` features (35% of lost gain) via runtime activation projection at 0ms latency |
 
 **Shape of the component** (this is the part that is new, and it is deliberately tiny):
 

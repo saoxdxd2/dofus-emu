@@ -38,6 +38,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from agent.autopilot import (COMMAND_SHADOW_MODEL, MEMORY_PATH as DEFAULT_MEMORY_PATH,
                             Autopilot, _build_policy)
 from agent.bridge import state_dir
+from agent.console_guard import status as console_status
 from agent.recorder import TrajectoryRecorder
 from agent.executor import ToolExecutor
 from agent.runtime import AgentRuntime
@@ -646,4 +647,9 @@ class BrainDaemon:
             # not enough: a stale daemon answers exactly like a fresh one.
             "code_stale": [row["module"] for row in stale],
             "loaded_s": round(time.time() - PROCESS_START, 1),
+            # A daemon whose stdout pipe died (the host that opened it exited)
+            # still runs, still answers, and used to fail every start inside a
+            # startup print. Reporting it here is the difference between "no
+            # steps and no reason" and a line the operator can act on.
+            "console": console_status(),
         }

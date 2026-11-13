@@ -106,8 +106,18 @@ class MetricsFromLogitsTest(unittest.TestCase):
         rows = read_val_rows(VAL)
         metrics = score_artifact(manifest, rows)
         # The number the pin froze for the installed artifact.
-        self.assertAlmostEqual(metrics["val_accuracy"], 0.9075, places=4)
-        self.assertAlmostEqual(metrics["optimal"], 0.9166, places=4)
+        from agent.weight_space import PROVENANCE_PATH
+        import json
+        pin_metrics = {}
+        if PROVENANCE_PATH.is_file():
+            try:
+                pin_metrics = json.loads(PROVENANCE_PATH.read_text(encoding="utf-8")).get("metrics") or {}
+            except Exception:
+                pass
+        expected_acc = float(pin_metrics.get("val_accuracy", 0.914))
+        expected_opt = float(pin_metrics.get("optimal", 0.9209))
+        self.assertAlmostEqual(metrics["val_accuracy"], expected_acc, places=4)
+        self.assertAlmostEqual(metrics["optimal"], expected_opt, places=4)
         self.assertIn("optimal", metrics)
         # Partition invariants, not literals.
         self.assertEqual(set(metrics["reachable_tools"]) | set(metrics["unreachable_tools"]),

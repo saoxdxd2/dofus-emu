@@ -33,5 +33,11 @@
   "temperature": 0.25,
   "targets": "soft",
   "seed": 7,
-  "params": 81367
+  "params": 90305,
+  "sweet_layer": {
+    "router_hidden": 32,
+    "expert_hidden": 32,
+    "trained_at": "2026-11-13T01:19:44Z",
+    "method": "Context-Gated Dynamic Selection Router (Qwen/FastForward inspired)"
+  }
 }

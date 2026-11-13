@@ -1,0 +1,13 @@
+exe: C:\Users\sao\Documents\dofus-emu\DofusFarm.exe
+     [OAUTH] registered the dofustouch:// handler -> C:\Users\sao\Documents\dofus-emu\DofusFarm.exe
+OK   the dofustouch:// handler is registered
+     default     : URL:Dofus Touch OAuth callback
+     URL Protocol: (set)
+     command     : "C:\Users\sao\Documents\dofus-emu\DofusFarm.exe" "%1"
+OK   URL Protocol is present (Windows refuses the scheme without it)
+OK   the handler points at THIS binary
+OK   the binary the handler names exists (C:\Users\sao\Documents\dofus-emu\DofusFarm.exe)
+OK   a dofustouch:// URL is found in argv
+OK   a launch name is not mistaken for a callback
+OK   the callback file round-trips unchanged
+RESULT: OK

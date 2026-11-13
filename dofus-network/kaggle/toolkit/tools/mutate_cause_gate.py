@@ -142,6 +142,10 @@ CSB2 = ROOT.parent / "desktop" / "agentbridge.cs"
 CMAINF = ROOT.parent / "desktop" / "mainform.cs"
 CFARM = ROOT.parent / "desktop" / "farmengine.cs"
 CWEB2 = ROOT.parent / "desktop" / "WebView2ClientForm.cs"
+# The entry point (argv, the single-instance mutex and the hand-off to the running app)
+# and the uninstaller (what must not outlive the app). The OAuth callback crosses both.
+CPROG = ROOT.parent / "desktop" / "Program.cs"
+CUNINST = ROOT.parent / "desktop" / "uninstaller.cs"
 CSPROG = ROOT.parent / "desktop" / "program.cs"
 TDS = ROOT / "agent" / "tool_dataset.py"
 ENGINE = ROOT.parent / "tools" / "patch-engine.js"
@@ -236,6 +240,7 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_instance_reset,\n"
            "    r.test_the_row_can_turn_the_ai_on_and_off,\n"
            "    r.test_guest_registration,\n"
+           "    r.test_oauth_system_browser,\n"
            "    r.test_keep_alive_instrument,\n"
            "    r.test_tutorial_hold,\n"
            "    r.test_live_transitions,\n"
@@ -3076,6 +3081,29 @@ MUTATIONS = [
     ("guest: the OAuth popup throws its browser profile away", CWEB2,
      'string oauthDataDir = Path.Combine(oauthProfileRoot, "oauth-profile");',
      'string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));'),
+    # ---- the OAuth container Android actually uses: a real browser, and the callback
+    # coming back through the OS (2026-11-12). Every one of these leaves a host that
+    # compiles and a sign-in that silently goes nowhere: a handler pointing at a stale
+    # path, a callback dropped by the single-instance mutex, a URL read and never
+    # delivered, or a code handed to whichever client happened to be open.
+    ("oauth: the handler points at the wrong exe", CWEB2,
+     'string command = "\\"" + exe + "\\" \\"%1\\"";',
+     'string command = exe;'),
+    ("oauth: the callback is dropped by the single-instance mutex", CPROG,
+     'if (!string.IsNullOrEmpty(deepLink)) WriteDeepLinkRequest(deepLink);',
+     '/* mutated: the URL never reaches the running app */'),
+    ("oauth: the callback file is written and never read", CMAINF,
+     'if (!string.IsNullOrEmpty(url)) DeliverDeepLink(url);',
+     'if (false) DeliverDeepLink(url);'),
+    ("oauth: the callback goes to whichever client is open", CMAINF,
+     'if (ids != null && ids.Count == 1) target = ids[0];',
+     'if (ids != null && ids.Count > 0) target = ids[0];'),
+    ("oauth: the system browser is never used", CWEB2,
+     'if (RuntimeSettings.Current.OauthBrowser\n                && OAuthBrowserHandoff.Open(url, _instanceId, _logCallback))\n                return;',
+     'if (false)\n                return;'),
+    ("oauth: the handler is left behind on uninstall", CUNINST,
+     r'Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\dofustouch", false);',
+     '/* mutated: the protocol key outlives the binary */'),
 ]
 
 

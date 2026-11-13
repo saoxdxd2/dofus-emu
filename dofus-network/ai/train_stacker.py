@@ -233,19 +233,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                    providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
     expected = int(session.get_inputs()[0].shape[1])
-    if len(rows[0]["x"]) != expected:
-        raise SystemExit("policy wants %d features, corpus has %d"
-                         % (expected, len(rows[0]["x"])))
+    all_state = np.asarray([row["x"] for row in rows], dtype=np.float32)
+    if expected > all_state.shape[1]:
+        from agent.weight_space import _history_rows
+        all_hist = np.asarray(_history_rows(rows, obs=False, derived=False), dtype=np.float32)
+        all_x = np.hstack([all_state, all_hist])
+    else:
+        all_x = all_state
+    if all_x.shape[1] != expected:
+        raise SystemExit("policy wants %d features, built %d"
+                         % (expected, all_x.shape[1]))
 
-    all_x = np.asarray([row["x"] for row in rows], dtype=np.float32)
     logits = _policy_logits(session, input_name, all_x)
     cluster_rows = load_rows(Path(args.cluster_corpus))
     if not cluster_rows:
         raise SystemExit("no clustering rows at %s" % args.cluster_corpus)
     cluster_x = np.asarray([row["x"] for row in cluster_rows], dtype=np.float64)
-    if cluster_x.shape[1] != expected:
-        raise SystemExit("cluster corpus has %d features, policy wants %d"
-                         % (cluster_x.shape[1], expected))
     kmeans = fit_kmeans(cluster_x, clusters=max(1, int(args.clusters)),
                         seed=int(args.seed))
     feature_names = (list(BASE_FEATURES)

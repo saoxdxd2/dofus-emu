@@ -137,11 +137,13 @@ class NNPlanner(QuestPlanner):
         if self.stack is None or self.foresight is None:
             return None
         try:
+            width = getattr(self.foresight, "width", 42)
+            x_state = x[:width] if hasattr(x, "__len__") and len(x) > width else x
             cells = {row["tool"]: row for row in
-                     self.foresight.rank(x, self.tools)}
+                     self.foresight.rank(x_state, self.tools)}
             if len(cells) < 2:
                 return None
-            context = self.stack.context(x) if hasattr(self.stack, "context") else None
+            context = self.stack.context(x_state) if hasattr(self.stack, "context") else None
             ranked = self.stack.rank(logits, cells, self.tools, context=context)
             if not ranked:
                 return None

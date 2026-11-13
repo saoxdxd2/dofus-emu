@@ -50,6 +50,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent.brain_daemon import BrainDaemon
 from agent.bridge import local_secret
+from agent.console_guard import install as install_console_guard
 from agent.executor import ToolExecutor
 from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
@@ -482,6 +483,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # First statement on purpose: `logging.basicConfig` below adopts sys.stderr,
+    # and every service this host launches is started with a redirected stdout
+    # that outlives the host that opened it. See agent/console_guard.py.
+    install_console_guard()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     args = build_parser().parse_args(argv)
 

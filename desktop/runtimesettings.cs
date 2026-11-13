@@ -34,6 +34,16 @@ namespace DofusFarm.Engine
         // window the user is about to switch to, which is why it is no longer
         // the default. The governor still evens out priority classes.
         public bool BackgroundThrottle = false;
+        // Where the OAuth window lives. Off: the in-app WebView2 popup (what the host
+        // has always done). On: the system browser, and the result comes back through
+        // the `dofustouch://` protocol handler -- which is what the Android build does
+        // (`cordova.plugins.browsertab` is a Chrome Custom Tab, i.e. a real browser
+        // process with the operator's own Google session). Google refuses sign-in from
+        // embedded WebViews (`disallowed_useragent`), and its signup verification scores
+        // the browser it is shown; a real browser is the only container that removes
+        // that half of the problem. Default off: it writes one HKCU protocol key and
+        // opens a second process, and neither should happen unless asked for.
+        public bool OauthBrowser = false;
 
         private static readonly object _lock = new object();
         private static RuntimeSettings _current;
@@ -83,6 +93,7 @@ namespace DofusFarm.Engine
                     else if (Same(key, "auto_ai")) settings.AutoAi = ParseBool(value, settings.AutoAi);
                     else if (Same(key, "ai_off")) settings.AiOff = (value ?? "").Trim();
                     else if (Same(key, "background_throttle")) settings.BackgroundThrottle = ParseBool(value, settings.BackgroundThrottle);
+                    else if (Same(key, "oauth_browser")) settings.OauthBrowser = ParseBool(value, settings.OauthBrowser);
                 }
             }
             catch { }
@@ -104,6 +115,7 @@ namespace DofusFarm.Engine
                 text.AppendLine("auto_ai=" + (AutoAi ? "1" : "0"));
                 text.AppendLine("ai_off=" + (AiOff ?? ""));
                 text.AppendLine("background_throttle=" + (BackgroundThrottle ? "1" : "0"));
+                text.AppendLine("oauth_browser=" + (OauthBrowser ? "1" : "0"));
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);
                 lock (_lock) { _current = this; }
             }
