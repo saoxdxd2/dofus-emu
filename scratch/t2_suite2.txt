@@ -1,3 +1,0 @@
-
-== Battle log and optional challenges (the client's own numbers) ==
-CHECKS: 22 FAILURES: []

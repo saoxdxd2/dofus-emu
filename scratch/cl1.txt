@@ -1,9 +1,0 @@
-source: C:\Users\sao\AppData\Local\DofusFarm\fight_boards.jsonl exists: True
-board rows: 333
-unique boards: 298
-BEFORE stats: {'asked': 0, 'fired': 0}
-AFTER  stats: {'asked': 7, 'fired': 7}
-actionable boards: 124
-actionable AND value_ready: 15
-decisions changed: 0
-reasons after: Counter({'solver': 64, 'policy_pass': 34, 'solver_move': 23, 'policy_retreat': 2, 'no_legal_plan': 1})

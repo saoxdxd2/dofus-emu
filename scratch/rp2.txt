@@ -1,4 +1,0 @@
-FIXED    {"repeated_fires": true, "verdicts": {"noop": 3, "advanced": 1}, "world": 0, "reads": 1, "split_holds": true}
-reads clear the streak           {"repeated_fires": false, "verdicts": {"noop": 12, "advanced": 7}, "world": 0, "reads": 7, "split_holds": true}
-nothing clears the streak        {"repeated_fires": true, "verdicts": {"noop": 3, "advanced": 1}, "world": 0, "reads": 1, "split_holds": true}
-reads counted as world changes   {"repeated_fires": true, "verdicts": {"noop": 3, "advanced": 1}, "world": 1, "reads": 0, "split_holds": true}

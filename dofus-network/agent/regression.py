@@ -65,6 +65,16 @@ _RETIRED_SUITES = {
 _FAILURES: List[str] = []
 _CHECKS = 0
 
+# The seven tools the learned tool policy has no logit for. Measured 2026-11-13:
+# `models/tool_policy.json` names 21 tools, `data/capabilities.json` names 28, and the
+# difference is exactly this list -- so `tap.interactive` (the free-form branch),
+# `inv.equip` (the equip path), `shop.buy`/`hdv.buy`/`hdv.prices` (the economy objective
+# that ARCH_REASSESSMENT N.13 already calls ungroundable) and both `ui.*` taps can only be
+# chosen by the rule. Recorded as KNOWN_GAPS G123; the check exists so the set cannot grow
+# without somebody deciding to grow it.
+POLICY_UNEMITTABLE = ["hdv.buy", "hdv.prices", "inv.equip", "shop.buy",
+                      "tap.interactive", "ui.icons", "ui.tap"]
+
 
 def check(label: str, condition: Any, detail: Any = "") -> None:
     global _CHECKS
@@ -282,6 +292,23 @@ def test_tool_vocabulary() -> None:
     check("no duplicate tool ids", len(set(tool_names)) == len(tool_names))
     for name in ("hdv.buy", "inv.equip", "hdv.prices", "tap.interactive"):
         check(name + " is in the schema", name in tool_names)
+    # The vocabulary has 28 tools; the learned policy has 21 logits, so seven can only ever
+    # come from the rule. Measured 2026-11-13 on `models/tool_policy.json` against
+    # `data/capabilities.json`: the difference is exactly the list below, and the runtime says
+    # so out loud on every start (`[autopilot] policy: tool policy tool_policy.onnx (21 tools,
+    # +history)`). CURRENT.md §4 has documented the seven since 2026-10-27 -- what was missing
+    # was a guard, so `test_tool_vocabulary` asserted the vocabulary had 28 tools and never
+    # asserted the policy could emit them, and the two numbers were free to drift apart again.
+    # Recorded as KNOWN_GAPS G123; adding a 29th tool without a retrain now fails here by name.
+    policy_path = REPO_ROOT / "models" / "tool_policy.json"
+    if policy_path.exists():
+        policy_tools = json.loads(policy_path.read_text(encoding="utf-8")).get("tools") or []
+        unemittable = sorted(set(tool_names) - set(policy_tools))
+        check("the learned tool policy emits only tools the vocabulary declares",
+              not (set(policy_tools) - set(tool_names)),
+              sorted(set(policy_tools) - set(tool_names)))
+        check("the tools the learned policy cannot emit are the seven KNOWN_GAPS G123 records",
+              unemittable == POLICY_UNEMITTABLE, (unemittable, POLICY_UNEMITTABLE))
     from agent import verifier
     check("hdv.prices is read-only", "hdv.prices" in verifier.READ_ONLY_TOOLS)
 

@@ -1,7 +1,0 @@
-1 of 706 mutations selected (0 already caught in 0 resume log(s))
-clean tree runs the snippet: 0 failing checks, exit 0
-CAUGHT  live corpus: the default goes back to the repo's 8-board snapshot 1 failing check(s)
-      the builder defaults to the corpus the app writes, not a repo-local copy:
-
-restored: 0 failing checks, exit 0 (must be 0/0)
-mutations that no check noticed: none

@@ -1,3 +1,0 @@
-
-== The critic's gate is read before the solver-first return ==
-CHECKS 4 FAILURES []

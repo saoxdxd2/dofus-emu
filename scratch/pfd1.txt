@@ -1,2 +1,0 @@
-reader total : 14 {'Harrizarre|7|7125': 1, 'Weaselraff|6|7129': 1, 'Weaselraff|6|7131': 2, 'Harrizarre|6|7125': 1, 'Boorbear|6|7121': 3, 'Aggressive Raccoon|7|6938': 2, 'Weaselraff|5|7129': 1, 'Weaselraff|5|7131': 1, 'Aggressive Raccoon|7|6940': 2}
-longest total: 14 {'Harrizarre|7|7125': 1, 'Weaselraff|6|7129': 1, 'Weaselraff|6|7131': 2, 'Harrizarre|6|7125': 1, 'Boorbear|6|7121': 3, 'Aggressive Raccoon|7|6938': 2, 'Weaselraff|5|7129': 1, 'Weaselraff|5|7131': 1, 'Aggressive Raccoon|7|6940': 2}

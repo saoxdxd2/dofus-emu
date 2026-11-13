@@ -40,6 +40,18 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | # | claim | verdict as recorded |
 |---|---|---|
 | **G1** | The AFK disconnect is the client's own timer, and the keep-alive never reached it | fixed 2026-10-27, measured live — closed, archived |
+| **G21** | The dialog row could not say who ended the conversation | fixed 2026-10-26, offline-verified — closed, archived |
+| **G22** | The loop asked the same reply on the same page 87 times | fixed 2026-10-26, offline-verified — closed, archived |
+| **G26** | `objectives_completed` was 0 in all 4,286 live rows while a claimable objective sat at index 1 | fixed 2026-10-26, offline-verified — closed, archived |
+| **G27** | A free-form objective's `parameter0` was planned as a monster, and the client says it has no mo… | fixed 2026-10-26, offline-verified — closed, archived |
+| **G28** | Every quest-progress number the page produced was structurally 0 | fixed 2026-10-26, offline-verified — closed, archived |
+| **G30** | The knowledge store resolved live objective ids to *another game's* objectives, and the loop be… | fixed 2026-10-26, offline-verified — closed, archived |
+| **G31** | All 366 live quest-start requests named a quest this game has never shown | fixed 2026-10-26, offline-verified; the first… — closed, archived |
+| **G33** | `quest.advance` cannot accept a quest while a dialog is open — the accept branch is behind it | fixed 2026-10-27, offline-verified; live proo… — closed, archived |
+| **G34** | An action the server ignores looked like an action worth retrying | fixed 2026-10-27, measured live — closed, archived |
+| **G36** | The simulator reported an open quest dialog just for standing on a start map | fixed 2026-10-28, measured — closed, archived |
+| **G37** | Three fights were played with the weapon only because the damage spells were gated behind a sta… | fixed 2026-10-28, measured live — closed, archived |
+| **G38** | Level-ups were never spent: the bot fought at base stats with 35 points in the bank | fixed 2026-10-28, measured live — closed, archived |
 | **G2** | Equip: inv.equip preset path shipped; direct-UID equip and live proof owed | — |
 | **G3** | Dialog question text now consulted (interim heuristic, 2026-10-26) | — |
 | **G4** | There is no vision / image encoder | — |
@@ -50,53 +62,41 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G9** | Identity is keyed by slot, not by account | fail-closed binding shipped 2026-10-27, offli… |
 | **G10** | `kaggle/toolkit/` drifts with no generator | generator shipped 2026-10-27; dataset re-uplo… |
 | **G11** | `tools/js-error-finder.js` is red (9 bundle checks) — checker vs runtime-patch mismatch | — |
-| **G12** | The live client had no map-transition resilience — a stalled map load locked the screen fo… | pipeline closed 2026-10-26; rule executed off… |
+| **G12** | The live client had no map-transition resilience — a stalled map load locked the screen forever | pipeline closed 2026-10-26; rule executed off… |
 | **G13** | A claim that ended the connection was re-sent 287 times — the scheduler's dead loop | — |
 | **G14** | 455 repairs were labelled `unknown` — the repair table was being trained on a blank | — |
 | **G15** | With no client window at all, the loop ground 27 doomed directives | — |
 | **G16** | The recovery table was certifying itself — 348 successes in 348 tries | — |
 | **G17** | 480 accepted quest claims were called no-ops because the loop stopped watching too early | — |
-| **G18** | 70% of the baseline's "steps" were the loop looking at the world, and 3,005 of them were s… | — |
+| **G18** | 70% of the baseline's "steps" were the loop looking at the world, and 3,005 of them were scored… | — |
 | **G19** | A repair queued for one goal was dispatched under the next goal's label | — |
-| **G20** | The dialog ranker's primary signal decided nothing, and nothing recorded whether its choic… | — |
-| **G21** | The dialog row could not say who ended the conversation | fixed 2026-10-26, offline-verified — closed, archived |
-| **G22** | The loop asked the same reply on the same page 87 times | fixed 2026-10-26, offline-verified — closed, archived |
+| **G20** | The dialog ranker's primary signal decided nothing, and nothing recorded whether its choice wor… | — |
 | **G23** | The recorded corpus cannot label a dialog choice at all — measured, not assumed | 2026-10-26 |
-| **G24** | Nothing started the combat brain, so no fight in the corpus was decided by the learned pol… | wired 2026-10-26, offline-verified |
-| **G25** | The live board the page sends cannot be acted on — 156 of 156 recorded snapshots fail the… | measured 2026-10-26 |
-| **G26** | `objectives_completed` was 0 in all 4,286 live rows while a claimable objective sat at ind… | fixed 2026-10-26, offline-verified — closed, archived |
-| **G27** | A free-form objective's `parameter0` was planned as a monster, and the client says it has… | fixed 2026-10-26, offline-verified — closed, archived |
-| **G28** | Every quest-progress number the page produced was structurally 0 | fixed 2026-10-26, offline-verified — closed, archived |
-| **G29** | The quest knowledge cache cannot describe any live quest: its ids stop at 2,546, the live… | — |
-| **G30** | The knowledge store resolved live objective ids to *another game's* objectives, and the lo… | fixed 2026-10-26, offline-verified — closed, archived |
-| **G31** | All 366 live quest-start requests named a quest this game has never shown | — — closed, archived |
+| **G24** | Nothing started the combat brain, so no fight in the corpus was decided by the learned policy | wired 2026-10-26, offline-verified |
+| **G25** | The live board the page sends cannot be acted on — 156 of 156 recorded snapshots fail the contr… | measured 2026-10-26 |
+| **G29** | The quest knowledge cache cannot describe any live quest: its ids stop at 2,546, the live ids s… | capture read + observed knowledge shipped 202… |
 | **G32** | The quest offer is a link in the NPC's own text, and the page was deleting it | read half fixed 2026-10-26, offline-verified;… |
-| **G33** | `quest.advance` cannot accept a quest while a dialog is open — the accept branch is behind… | fixed 2026-10-27, offline-verified; live proo… — closed, archived |
-| **G34** | An action the server ignores looked like an action worth retrying | fixed 2026-10-27, measured live — closed, archived |
-| **G36** | The simulator reported an open quest dialog just for standing on a start map | fixed 2026-10-28, measured — closed, archived |
 | **G35** | Cause-head validation leaked identical inputs | gate-pass claim withdrawn 2026-10-28 |
-| **G37** | Three fights were played with the weapon only because the damage spells were gated behind… | fixed 2026-10-28, measured live — closed, archived |
-| **G38** | Level-ups were never spent: the bot fought at base stats with 35 points in the bank | fixed 2026-10-28, measured live — closed, archived |
-| **G39** | The training pipeline was scoring itself against a teacher it could not beat, and its live… | measured 2026-10-29 |
-| **G40** | The downloaded knowledge store is legacy for live quests; the client-captured index is the… | measured 2026-10-29 |
-| **G41** | Every live-outcome number so far was validated on the same days it trained on; a temporal… | measured 2026-10-29 |
-| **G42** | The outcome label counted walking: 318 of 636 "quest.advance" successes changed only the c… | measured 2026-10-29 |
-| **G43** | The outcome label read the pre-action snapshot: 45% of movements and 40 of 51 advancements… | measured 2026-10-29 |
-| **G44** | The context features do not predict success inside a tool - the apparent win was the call'… | measured 2026-10-29 |
+| **G39** | The training pipeline was scoring itself against a teacher it could not beat, and its live labe… | measured 2026-10-29 |
+| **G40** | The downloaded knowledge store is legacy for live quests; the client-captured index is the live… | measured 2026-10-29 |
+| **G41** | Every live-outcome number so far was validated on the same days it trained on; a temporal fold… | measured 2026-10-29 |
+| **G42** | The outcome label counted walking: 318 of 636 "quest.advance" successes changed only the charac… | measured 2026-10-29 |
+| **G43** | The outcome label read the pre-action snapshot: 45% of movements and 40 of 51 advancements were… | measured 2026-10-29 |
+| **G44** | The context features do not predict success inside a tool - the apparent win was the call's own… | measured 2026-10-29 |
 | **G45** | The travel primitive fails nine times out of ten, and it is the form the planner uses most | measured 2026-10-29 |
 | **G46** | The planner's reasons were thrown away, and its decisions cannot be reconstructed offline | measured 2026-10-29 |
 | **G47** | The loop acts on a state carried from the previous step, and the corpus never said so | measured 2026-10-29 |
-| **G48** | Re-issuing an identical request is the loop's dominant failure mode, and the pooled succes… | measured 2026-10-29 |
-| **G49** | `quest.advance`'s claim is too strong for a talk, so 58% of the corpus's quest calls are l… | measured 2026-10-29 |
-| **G50** | A reply's claim counted the wrong event, and a more mechanical claim is *less* learnable f… | measured 2026-10-29 |
+| **G48** | Re-issuing an identical request is the loop's dominant failure mode, and the pooled success hea… | measured 2026-10-29 |
+| **G49** | `quest.advance`'s claim is too strong for a talk, so 58% of the corpus's quest calls are labell… | measured 2026-10-29 |
+| **G50** | A reply's claim counted the wrong event, and a more mechanical claim is *less* learnable from s… | measured 2026-10-29 |
 | **G51** | The rule-keyed streak is a shippable veto; the tool-keyed streak is not | measured 2026-10-29 |
-| **G52** | The retry decision is a step at the second miss, and the richer state-change policy does n… | measured 2026-10-29 |
+| **G52** | The retry decision is a step at the second miss, and the richer state-change policy does not su… | measured 2026-10-29 |
 | **G53** | The gate preserves progress; progress itself is the binding constraint | measured 2026-10-29 |
-| **G54** | The gate replicates across four rolling-origin cuts, so it is a rule and not one period's… | measured 2026-10-29 |
+| **G54** | The gate replicates across four rolling-origin cuts, so it is a rule and not one period's luck | measured 2026-10-29 |
 | **G55** | The loop already contains the replacement, and takes it only 17% of the time | measured 2026-10-29 |
 | **G56** | A forest ranks better than the counter; at the shipping point it is identical | measured 2026-10-29 |
-| **G57** | A world-model encoder does not beat the hand-built features, and the first fold compared t… | measured 2026-10-29 |
-| **G58** | At the rule's own veto count the forest keeps more nav successes in three cuts out of four… | measured 2026-10-29 |
+| **G57** | A world-model encoder does not beat the hand-built features, and the first fold compared two vo… | measured 2026-10-29 |
+| **G58** | At the rule's own veto count the forest keeps more nav successes in three cuts out of four, by… | measured 2026-10-29 |
 | **G59** | A frozen veto model loses to the rule out of time, so nothing is shadowed | measured 2026-10-29 |
 | **G60** | The gate counted interactive retries as new calls; volatile arguments are now ignored | measured 2026-10-30 |
 | **G61** | The sessions are spent bouncing between two maps, and no row says why | measured 2026-10-30 |
@@ -142,7 +142,7 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G101** | One in-process test cost 28% of every mutation, so the central proof was unaffordable | measured 2026-11-01 |
 | **G102** | Four mutations had been edited out of existence, and the sweep cannot see that | measured 2026-11-01 |
 | **G98** | The tutorial stalls on the bag step because nothing equips (2026-11-06) | — |
-| **G99** | `inv.equip` needs a slot, and the three client fallbacks all fail on the tutorial items (2… | — |
+| **G99** | `inv.equip` needs a slot, and the three client fallbacks all fail on the tutorial items (2026-1… | — |
 | **G100** | A dialog that answers "ok" forever is a stall the ask memo cannot see (2026-11-07) | — |
 | **G107** | Every finished instance kept its Autopilot for the life of the daemon | measured 2026-11-07 |
 | **G108** | The recorder cuts every price table before the first price | measured 2026-11-07 |
@@ -154,12 +154,13 @@ Closed entries live in [`archive/KNOWN_GAPS_closed.md`](archive/KNOWN_GAPS_close
 | **G114** | The gate could not see the fix it was supposed to guard | measured 2026-11-12 |
 | **G115** | The AI stops by itself, and the row had no way to say which stop it was | — |
 | **G116** | The reset was a wiped profile, not a new instance, and the row's pill was painted once | measured 2026-11-12 |
-| **G117** | The reset left the instance with no guest to replay, and the switch had no word for "aske… | measured 2026-11-12 |
+| **G117** | The reset left the instance with no guest to replay, and the switch had no word for "asked for" | measured 2026-11-12 |
 | **G118** | The OAuth popup threw its cookie jar away, so every attempt looked like a new device | measured 2026-11-12 |
-| **G119** | The OAuth window can be the browser Android uses, and the callback can come back through… | built 2026-11-12, awaiting a live sign-in |
+| **G119** | The OAuth window can be the browser Android uses, and the callback can come back through the OS | built 2026-11-12, awaiting a live sign-in |
 | **G120** | A diagnostic `print` could stop the whole AI, and the panel said "started" anyway | measured 2026-11-13 |
 | **G121** | The guest grant is behind an AWS WAF challenge, and the challenge is a blank window | measured 2026-11-13 |
 | **G122** | The guest grant completes in a real browser and has never completed in the popup | measured 2026-11-13 |
+| **G123** | The learned tool policy can only ever choose 21 of the 28 tools — documented, but unguarded and… | measured 2026-11-13 |
 
 ---
 
@@ -7774,3 +7775,76 @@ affects the shop and not account creation. The standalone shim has no `store`/`w
 that path is unexercised rather than broken, and it is not touched here: the shop needs Google's
 billing library on a licensed device, and the only legitimate substitute on this host is Ankama's web
 shop in the system browser.
+
+## G123. The learned tool policy can only ever choose 21 of the 28 tools — documented, but unguarded and never priced per tool *(measured 2026-11-13)*
+
+An outside review of this tree listed "21-logit vs. 28-tool mismatch: NNPlanner silently cannot
+select the newest 7 tools" as a defect. The mismatch is real. The word *silently* is not: `CURRENT.md`
+§4 already says it, in as many words — *"The legal registry is 28 tools; the seven added since the
+21-logit head was trained (the four of 2026-10-27 plus `ui.tap`, `ui.icons`, `shop.buy`) are rule-only
+until the head is retrained."* What the review found that was genuinely missing is narrower, and it is
+the point of this entry: **nothing in the gate pinned that set**, and **nobody had priced what each of
+the seven costs the loop**. A prose note that the numbers differ is not a guard, and the two numbers
+were free to drift apart again with no check noticing.
+
+**The measurement.** `models/tool_policy.json` carries `tools`, and it names 21:
+
+```
+['knowledge.search', 'nav.goto', 'nav.follow', 'quest.list', 'quest.advance', 'farm.start',
+ 'farm.stop', 'fight.join', 'fight.pass', 'inv.list', 'inv.sell', 'hdv.scan', 'hdv.list',
+ 'chat.say', 'state.snapshot', 'safe.stop', 'knowledge.remember', 'knowledge.forget',
+ 'fight.state', 'fight.plan', 'fight.estimate']
+```
+
+`data/capabilities.json` carries 28 `capabilities[].id`. The difference is exactly:
+
+```
+hdv.buy, hdv.prices, inv.equip, shop.buy, tap.interactive, ui.icons, ui.tap
+```
+
+The runtime says it out loud on every start, in the line this project has been reading past:
+
+```
+[autopilot] policy: tool policy tool_policy.onnx (21 tools, +history); stack not loaded
+```
+
+**Why it matters, per tool** — the part that was never written down. These seven are not decorative,
+and they are not equally cheap:
+
+| tool | what the loop loses while it is rule-only |
+|---|---|
+| `tap.interactive` | the free-form branch — the one G47/G110 and the interactive-tap line of work exist to reach |
+| `inv.equip` | the equip path G62 calls the tutorial wall |
+| `shop.buy`, `hdv.buy`, `hdv.prices` | the economy objective ARCH_REASSESSMENT §N.13 already concluded is not groundable yet |
+| `ui.tap`, `ui.icons` | the two raw UI primitives the page-level taps fall back to |
+
+So the learned planner is structurally unable to propose the action in five of the situations the
+project has spent the most effort on, and the rule picks up every one of them. A learned planner that
+scores well on the 21 it can emit is not evidence about the 7 it cannot.
+
+**What it is not.** Not a crash and not a silent wrong answer: `NNPlanner` scores the logits it has
+and the rule supplies the rest, so the loop runs. `test_tool_vocabulary` asserted the vocabulary had
+28 tools and never asserted the policy could emit them — that asymmetry, not the 21 itself, is the
+defect this entry closes.
+
+**What closing it would take.** Two paths, and the second is the honest default until the first is
+paid for:
+
+1. **Retrain on 28 logits.** Refit `tool_policy.json` with the full vocabulary, then re-run
+   `tools/bench_quest_policies.py`. The bar is the one CURRENT.md already records: rule **79.90**
+   vs learned **80.50** quests (5W/5T/0L, `p = 0.0625`), with the oracle variant *losing* at 79.80.
+   A retrain that adds seven logits and does not move that comparison has bought nothing but a
+   wider output layer.
+2. **Keep the rule as the only production path** for the seven. `CURRENT.md` §4 already says this
+   and has been right since 2026-10-27; what it needed was the table above (what each of the seven
+   costs) and the guard below, not another paragraph.
+
+**The falsifier.** If a 28-logit refit still fails to beat 79.90 out of time, then the missing
+logits are not the binding constraint and this entry should be closed as "not the cause", not
+re-opened by refitting again. If it does beat it, the seven were the constraint and the entry closes
+with that number.
+
+**Guarded, so it cannot grow quietly.** `agent/regression.py` now carries `POLICY_UNEMITTABLE` and
+two checks in `test_tool_vocabulary`: the policy's tools must be a subset of the vocabulary, and the
+set it cannot emit must be exactly the seven above. Adding a 29th tool without a retrain fails the
+gate by name instead of becoming rule-only in silence.

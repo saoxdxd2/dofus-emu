@@ -4,7 +4,7 @@
 re-deriving this project from 20,000 lines of prose.
 
 This document exists because the repository's knowledge is real but scattered across `resume.md`
-(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (7,776<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
+(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (7,850<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
 (6,768<!--f:arch_lines-->) and five daily memory logs — and a new reader cannot tell which of those is
 authoritative for which question, nor what the private vocabulary means. Read this file first; it
 routes, it does not replace. The three sizes are rendered from the files themselves
@@ -56,7 +56,7 @@ facts. Expected output is stated so a mismatch is visible.
 
 ```bash
 cd dofus-network
-python -m agent.regression                      # the gate: 2,443<!--f:gate_checks--> checks, exit 0 = green
+python -m agent.regression                      # the gate: 2,445<!--f:gate_checks--> checks, exit 0 = green
 python scratch/chain_reachability.py            # which rankers are actually reached
 python tools/sync_kaggle_toolkit.py             # 288 sync, 8 pinned, 0 drift/missing
 python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200
@@ -69,7 +69,7 @@ teaching the rule an exception.
 
 | # | command | expect |
 |---|---|---|
-| 1 | `python -m agent.regression` | **2,443<!--f:gate_checks--> checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
+| 1 | `python -m agent.regression` | **2,445<!--f:gate_checks--> checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
 | 2 | `python -m unittest combat.test_live_policy` | 36 tests, OK (~0.3 s) |
 | 3 | `python -m unittest combat.test_duel_value combat.test_battle_solver combat.test_side_swap` | 102 tests, OK (~38 s) |
 | 4 | `python scratch/chain_reachability.py` | `hp_choice_stats {'asked': 1}` on the adjacent board — proves the shipped ranker is reached |
@@ -100,7 +100,7 @@ The five failures of the first run, and what each actually was:
 measures*, not the code being wrong. A gate whose failures are stale tests is worse than no gate,
 because it trains the reader to ignore red.
 
-**2,443<!--f:gate_checks--> is a tagged number.** If you change the gate, re-run it and update every
+**2,445<!--f:gate_checks--> is a tagged number.** If you change the gate, re-run it and update every
 `<!--f:gate_checks-->` site; `test_docs_quote_measurements_by_tag` will tell you which ones drifted,
 by file and line. Do not type the number by hand anywhere else.
 
@@ -119,7 +119,7 @@ by file and line. Do not type the number by hand anywhere else.
 | **`boards_differed`** | How many boards the two policies actually disagreed on. **Ties are not evidence**; a p-value over 600 boards of which 121 differed is a statement about 121. | `duel_value.evaluate` |
 | **G-numbers** | Entries in `docs/KNOWN_GAPS.md`. `G98`/`G99`/`G100` are each used **twice**; quote the date with the number. | `KNOWN_GAPS.md` |
 | **§L.x** | Subsections of **section L** in `ARCH_REASSESSMENT.md` (L.1–L.43). `§XI`/`§XII`/`§XIII` are top-level roman sections of the same file. Two numbering schemes, one file. | `ARCH_REASSESSMENT.md` |
-| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,443<!--f:gate_checks-->-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
+| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,445<!--f:gate_checks-->-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
 | **the ladder** | `agent/hunting.py`'s engagement ladder: `join` → `travel`, gated by a *learned risk budget* (total monster level ÷ own level, raised by wins, lowered by losses). | `hunting.py` |
 | **toolkit mirror** | `kaggle/toolkit/` — a byte-copy of selected files for Kaggle. Editing a mirrored file without re-running the sync leaves the copy stale; `test_kaggle_toolkit_sync` catches it. | `tools/sync_kaggle_toolkit.py` |
 | **`<!--f:name-->`** | A **fact tag**. The number immediately before it is machine-checked against a named measurement, e.g. `2,220<!--f:gate_checks-->` is verified against `data/last_gate_run.json`. ~55 tags exist (`tools`, `gate_checks`, `live_steps`, `fight_head_wins`, …). `test_docs_quote_measurements_by_tag` reports any drift **by file and line**. Never type such a number without its tag, and never edit the number without re-running the measurement. | `agent/regression.py` |
@@ -171,7 +171,7 @@ and the register keeps a one-line row for each closed one so the pointer survive
 
 **The read budget, stated so it can be checked:** a session that reads HANDOFF plus the three
 indexes has read about 600 lines and knows what each document contains. Reading the three
-documents whole is 6,005<!--f:resume_lines--> + 7,776<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
+documents whole is 6,005<!--f:resume_lines--> + 7,850<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
 correct when the task is to audit one of them.
 
 ---

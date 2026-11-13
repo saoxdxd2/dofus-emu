@@ -1,3 +1,0 @@
-
-== Every mutation anchor still points at code ==
-CHECKS 5 FAILURES []

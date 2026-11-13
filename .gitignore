@@ -186,3 +186,37 @@ AGENTS.MD
 # loses five stack checks and the whole cause-head section.
 !dofus-network/models/tool_stack.json
 !dofus-network/models/cause_head.json
+
+# ---------------------------------------------------------------------------
+# Run residue that was tracked until 2026-11-13. Measured with
+# `git ls-files -z | xargs -0 du -b | sort -rn`: 17 artifacts plus two whole
+# trees, 41.3 MB of tracked content that is not source.
+#
+#   DofusFarm.exe.old-2026-11-12{,b}, -11-13{,b}   4 copies of a build output
+#   DofusFarm.new.exe                              the "install me" staging copy
+#   dofus-net-proxy.exe.wildcard-cors              8.1 MB, one experiment's binary
+#   DofusFarm.log.1                               10.6 MB of a previous run's log
+#   gate_out{,2,3}.txt, reg_out.txt, reg_err.txt  captured gate transcripts
+#   _obs_05.json, _rewrite_base_policy.py         one-off probe input and rewriter
+#   scratch/                                       122 files, 38.3 MB, ad-hoc .txt
+#                                                  and one-shot scripts. The bench
+#                                                  the docs cite is
+#                                                  dofus-network/scratch/, which
+#                                                  stays tracked.
+#   NLP/                                           23 files, 3.0 MB, Polyglot-0
+#                                                  experiments with no reader.
+#
+# The files are still on disk; only the index changed. This stops future growth
+# and keeps `git status` and code search honest -- it does not shrink the history,
+# which would need a filter-repo rewrite and is the owner's call.
+/scratch/
+/NLP/
+/DofusFarm.exe.old-*
+/DofusFarm.new.exe
+/DofusFarm.log.*
+/dofus-net-proxy.exe.*
+/gate_out*.txt
+/reg_out.txt
+/reg_err.txt
+/_obs_*.json
+/_rewrite_*.py

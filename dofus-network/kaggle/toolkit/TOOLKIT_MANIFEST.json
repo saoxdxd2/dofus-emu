@@ -446,9 +446,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "d783aaa013ee25eb68b2e8ca3ebb4b047ccd93d651edf2a45ad9f5cf9be4d3d0",
+      "source_sha256": "83c545aee86b48c51a58b44245f6593b44cab0eb81c5fa0ac736552aab28ae81",
       "status": "sync",
-      "toolkit_sha256": "d783aaa013ee25eb68b2e8ca3ebb4b047ccd93d651edf2a45ad9f5cf9be4d3d0"
+      "toolkit_sha256": "83c545aee86b48c51a58b44245f6593b44cab0eb81c5fa0ac736552aab28ae81"
     },
     {
       "drift": false,
@@ -2138,9 +2138,9 @@
       "missing": false,
       "path": "tools/docs_navigable.py",
       "source": "tools/docs_navigable.py",
-      "source_sha256": "5fabd397f5c890538d2ba44c7c6bc382abb730141d659e14a56c35cfedefef78",
+      "source_sha256": "bddfae28be60ffc96f91e618b90db2a9e0cd2f399437f53bab3120612ad01e8c",
       "status": "sync",
-      "toolkit_sha256": "5fabd397f5c890538d2ba44c7c6bc382abb730141d659e14a56c35cfedefef78"
+      "toolkit_sha256": "bddfae28be60ffc96f91e618b90db2a9e0cd2f399437f53bab3120612ad01e8c"
     },
     {
       "drift": false,
@@ -2746,7 +2746,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-13T02:46:23.506780+00:00",
+  "generated_at": "2026-11-13T03:28:32.559355+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

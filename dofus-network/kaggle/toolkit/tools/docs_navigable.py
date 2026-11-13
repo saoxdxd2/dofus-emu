@@ -69,7 +69,10 @@ def short(title: str, limit: int = 96) -> str:
 
 
 def verdict(heading: str) -> str:
-    m = re.search(r"\*\(([^*]{0,90})\)\*", heading)
+    # G31's parenthetical runs past 90 characters ("fixed 2026-10-26, offline-verified; the
+    # first count of this gap was wrong and is corrected below"), so a 90-char window read it
+    # as "no verdict recorded" and the row rendered "— — closed, archived".
+    m = re.search(r"\*\(([^*]{0,400})\)\*", heading)
     if not m:
         return "—"
     v = m.group(1).strip()
@@ -94,6 +97,41 @@ def plan_arch(lines: List[str]):
     index = [(num, short(title), verdict(heading)) for _s, _e, num, heading in items
              for title in [heading[3:]]]
     return front, items, index
+
+
+def refresh_index(path: Path, head: re.Pattern, header_row: str, extra_rows: List[str],
+                  rows_for) -> Tuple[int, int]:
+    """Replace the body of the generated table with rows derived from the headings.
+
+    `--write` splits once; this runs every time a heading is added, which is every time a
+    gap is recorded. It finds the table by its header row (so the prose around it survives),
+    keeps the separator, and rewrites only the `| **x** | ... |` lines.
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    rows = list(extra_rows) + [rows_for(m) for m in
+                               (head.match(l) for l in lines) if m]
+    if not rows:
+        return 0, 0
+    out: List[str] = []
+    i = 0
+    replaced = 0
+    while i < len(lines):
+        if lines[i].strip() != header_row.strip():
+            out.append(lines[i])
+            i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+        # The `|---|` separator belongs to the table, not to its body.
+        if i < len(lines) and lines[i].lstrip().startswith("|"):
+            out.append(lines[i])
+            i += 1
+        while i < len(lines) and lines[i].startswith("|"):
+            i += 1
+            replaced += 1
+        out.extend(rows)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return replaced, len(rows)
 
 
 def check_indexes(gaps_path: Path, arch_path: Path, resume_path: Path) -> int:
@@ -149,6 +187,39 @@ def main(argv: List[str]) -> int:
     arch_path = DOCS / "ARCH_REASSESSMENT.md"
     resume_path = DOCS.parents[1] / "resume.md"
     if "--check" in argv:
+        return check_indexes(gaps_path, arch_path, resume_path)
+    if "--index" in argv:
+        # Regenerate each table from the headings as they are now. Closed gaps keep their
+        # row (with the pointer to the archive) so the number stays findable.
+        closed = ARCHIVE / "KNOWN_GAPS_closed.md"
+        archived = {}
+        if closed.exists():
+            for m in (GAP_HEAD.match(l) for l in closed.read_text(
+                    encoding="utf-8", errors="replace").splitlines()):
+                if m:
+                    archived[m.group(1)] = m.group(2)
+        def closed_cell(n: str, t: str) -> str:
+            v = verdict("## " + n + ". " + t)
+            return "closed, archived" if v == "—" else v + " — closed, archived"
+
+        gap_rows = ["| **%s** | %s | %s |" % (n, short(t), closed_cell(n, t))
+                    for n, t in archived.items()]
+        gap_rows.sort(key=lambda r: int(r.split("**")[1][1:]))
+
+        def gap_row(m) -> str:
+            return "| **%s** | %s | %s |" % (m.group(1), short(m.group(2)),
+                                             verdict("## " + m.group(1) + ". " + m.group(2)))
+
+        n1 = refresh_index(gaps_path, GAP_HEAD, "| # | claim | verdict as recorded |",
+                           gap_rows, gap_row)
+        n2 = refresh_index(arch_path, ARCH_HEAD, "| § | what it settles |", [],
+                           lambda m: "| **%s** | %s |" % (m.group(1), short(m.group(2))))
+        n3 = refresh_index(resume_path, re.compile(r"^## ([0-9]+)\.\s+(.*)$"),
+                           "| § | what it covers |", [],
+                           lambda m: "| **%s** | %s |" % (m.group(1), short(m.group(2))))
+        for label, (old, new) in (("KNOWN_GAPS.md", n1), ("ARCH_REASSESSMENT.md", n2),
+                                  ("resume.md", n3)):
+            print("%-22s %d row(s) -> %d" % (label, old, new))
         return check_indexes(gaps_path, arch_path, resume_path)
     gaps = gaps_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
     arch = arch_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
