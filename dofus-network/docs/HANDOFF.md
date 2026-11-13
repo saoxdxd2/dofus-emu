@@ -4,7 +4,7 @@
 re-deriving this project from 20,000 lines of prose.
 
 This document exists because the repository's knowledge is real but scattered across `resume.md`
-(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (8,305<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
+(6,005<!--f:resume_lines--> lines), `docs/KNOWN_GAPS.md` (8,317<!--f:known_gaps_lines-->), `docs/ARCH_REASSESSMENT.md`
 (6,768<!--f:arch_lines-->) and five daily memory logs — and a new reader cannot tell which of those is
 authoritative for which question, nor what the private vocabulary means. Read this file first; it
 routes, it does not replace. The three sizes are rendered from the files themselves
@@ -171,7 +171,7 @@ and the register keeps a one-line row for each closed one so the pointer survive
 
 **The read budget, stated so it can be checked:** a session that reads HANDOFF plus the three
 indexes has read about 600 lines and knows what each document contains. Reading the three
-documents whole is 6,005<!--f:resume_lines--> + 8,305<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
+documents whole is 6,005<!--f:resume_lines--> + 8,317<!--f:known_gaps_lines--> + 6,768<!--f:arch_lines--> lines, and is only
 correct when the task is to audit one of them.
 
 ---

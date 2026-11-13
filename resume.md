@@ -647,7 +647,7 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 ```
 
 **Line counts, re-measured 2026-10-30:** C# **24,033** (desktop 23,117 + `builder/build.cs`
-916), Go/JS **29,940<!--f:script_lines-->** (Go 7,359<!--f:go_lines--> + JS 22,581<!--f:js_lines--> across `scripts/` and `tools/`), Python
+916), Go/JS **30,428<!--f:script_lines-->** (Go 7,560<!--f:go_lines--> + JS 22,868<!--f:js_lines--> across `scripts/` and `tools/`), Python
 **99,335** in 259 files, docs **12,721**. The 2026-10-27 snapshot of this document claimed
 23,064 / 13,516 / 76,699 / ~10,500 — every one of those was understated, the Python figure
 by 22,636 lines, and part of the rest is this day's own work: the shadow, alternative and
@@ -2957,7 +2957,7 @@ asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 ## 13. Open gaps (G1–G129<!--f:gaps_max-->)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (8,305<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (8,317<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -5802,7 +5802,7 @@ four defects, and one new rule.
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
 | `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G129<!--f:gaps_max-->**) | **current** (2026-10-31), 8,305<!--f:known_gaps_lines--> lines |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G129<!--f:gaps_max-->**) | **current** (2026-10-31), 8,317<!--f:known_gaps_lines--> lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
 | `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |

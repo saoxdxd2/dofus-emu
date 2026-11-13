@@ -593,12 +593,13 @@ class SyntheticTrafficDriver:
                     "telemetry": {"pws_mb": 25.5, "latency_ms": 1.2},
                 }
                 store.append(record, kind="telemetry")
-                if counter % 20 == 0:
-                    try:
-                        store.retain(max_rows=500)
-                        store.checkpoint()
-                    except Exception:
-                        pass
+                if counter % 24 == 0:
+                    for s in stores:
+                        try:
+                            s.retain(max_rows=100)
+                            s.checkpoint()
+                        except Exception:
+                            pass
                 time.sleep(0.1)
         finally:
             for s in stores:
