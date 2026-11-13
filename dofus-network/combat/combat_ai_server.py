@@ -26,9 +26,10 @@ import threading
 import time
 import tracemalloc
 import urllib.parse
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
@@ -207,21 +208,22 @@ def _rotate_log_locked() -> None:
     _open_log_locked()
 
 
-def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
+def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    """Append one decision row and hand it back for the live shadow auditor."""
     global _LOG_BYTES, _LOG_PENDING
+    record = {
+        "time": time.time(),
+        "fight_id": payload.get("fight_id"),
+        "round": payload.get("round"),
+        "my_id": payload.get("my_id"),
+        # The optional challenges the fight was started with. They are not
+        # scored here -- the reward for one lives in the outcome row -- but a
+        # decision row without them cannot be used later to learn a policy
+        # that respects one.
+        "challenges": payload.get("challenges") or [],
+        "decision": decision,
+    }
     try:
-        record = {
-            "time": time.time(),
-            "fight_id": payload.get("fight_id"),
-            "round": payload.get("round"),
-            "my_id": payload.get("my_id"),
-            # The optional challenges the fight was started with. They are not
-            # scored here -- the reward for one lives in the outcome row -- but a
-            # decision row without them cannot be used later to learn a policy
-            # that respects one.
-            "challenges": payload.get("challenges") or [],
-            "decision": decision,
-        }
         line = dumps_bytes(record) + b"\n"
         with _LOG_LOCK:
             if _LOG_HANDLE is None or _LOG_OPEN_PATH != LOG_PATH:
@@ -242,12 +244,20 @@ def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
                 _close_log_locked(flush=False)
             except Exception:  # noqa: BLE001 - best effort close
                 pass
+    return record
 
 
 @atexit.register
 def _flush_decision_log() -> None:
     with _LOG_LOCK:
         _close_log_locked()
+    # The cadence leaves up to `every` paired casts unwritten. A session that
+    # ends mid-fight would otherwise drop exactly the casts it just measured.
+    try:
+        if _SHADOW_AUDITOR is not None:
+            _SHADOW_AUDITOR.flush()
+    except Exception:  # noqa: BLE001 - shutdown must not raise
+        pass
 
 
 _LEARNER = None
@@ -304,8 +314,12 @@ class _ThreatObserver:
         self.path = Path(path or _threat.DEFAULT_MEMORY)
         self.memory = _threat.ThreatMemory.load(self.path)
         self.learned = 0
-        self._fight: Any = None
-        self._log: List[Any] = []
+        # One seen-suffix per (account, fight). A single `_fight`/`_log` pair
+        # was overwritten by whichever slot posted next, and two slots in combat
+        # alternate turns, so the reset fired on *every* turn: `_new_messages`
+        # then returned the whole cumulative log and the same monster hits were
+        # folded into `threat_model.json` again and again (10-40x over a fight).
+        self._logs: "OrderedDict[Tuple[str, str], List[Any]]" = OrderedDict()
         self._lock = threading.Lock()
 
     def observe(self, payload: Dict[str, Any]) -> int:
@@ -316,12 +330,15 @@ class _ThreatObserver:
             log = payload.get("last_actions")
         if not isinstance(log, list) or not log:
             return 0
-        fight = payload.get("fight_id")
+        key = _fight_key(payload)
         with self._lock:
-            if fight != self._fight:
-                self._fight, self._log = fight, []
-            fresh = _new_messages(self._log, log)
-            self._log = list(log)
+            seen = self._logs.pop(key, [])
+            fresh = _new_messages(seen, log)
+            # Re-insert at the end: the dict is ordered by use, so eviction below
+            # drops the fight that stopped posting rather than an active one.
+            self._logs[key] = list(log)
+            while len(self._logs) > _MAX_TRACKED_FIGHTS:
+                self._logs.popitem(last=False)
             if not fresh:
                 return 0
             names: Dict[int, str] = {}
@@ -341,6 +358,31 @@ class _ThreatObserver:
     def report(self) -> Dict[str, Any]:
         return {"learned_hits": self.learned, "monsters": len(self.memory.monsters),
                 "path": str(self.path)}
+
+
+#: How many concurrent fights one server process remembers log suffixes for.
+#: A leak guard, not a limit on characters: a running server sees a handful of
+#: fights in flight and an evicted one is a fight that stopped posting.
+_MAX_TRACKED_FIGHTS = 64
+
+
+def _fight_key(payload: Dict[str, Any]) -> Tuple[str, str]:
+    """(account, fight) for a board payload -- the same key `live_learn` uses.
+
+    `fight_id` alone is not enough: two slots on one account can share a fight,
+    and a stale board can carry a recycled id. `my_id` is absent on some
+    payloads, so the board's own self-identifying fighter stands in; without
+    that fallback every id-less board would share one slot and the bug would
+    come back through the back door.
+    """
+    mine = payload.get("my_id")
+    if mine is None:
+        for fighter in payload.get("fighters") or []:
+            if isinstance(fighter, dict) and fighter.get("is_me"):
+                mine = fighter.get("id")
+                break
+    return (str(mine) if mine is not None else "",
+            str(payload.get("fight_id")) if payload.get("fight_id") is not None else "")
 
 
 def _new_messages(previous: List[Any], current: List[Any]) -> List[Any]:
@@ -379,6 +421,34 @@ def _threat_report() -> Dict[str, Any]:
         return {"status": "unavailable", "error": "%s: %s" % (type(exc).__name__, exc)}
 
 
+_SHADOW_AUDITOR: Optional[Any] = None
+_SHADOW_LOCK = threading.Lock()
+
+
+def _shadow_auditor() -> Any:
+    """The live residual auditor, created on first use.
+
+    Without this the damage calibration is a file only the CLI writes, so the
+    solver's correction would be wired to something a running install never
+    produces. Lazy for the same reason as the learner and the threat observer:
+    a brain that cannot import the combat stack must still answer.
+    """
+    global _SHADOW_AUDITOR
+    if _SHADOW_AUDITOR is None:
+        with _SHADOW_LOCK:
+            if _SHADOW_AUDITOR is None:
+                from combat.live_learn import LiveShadowAuditor
+                _SHADOW_AUDITOR = LiveShadowAuditor()
+    return _SHADOW_AUDITOR
+
+
+def _shadow_report() -> Dict[str, Any]:
+    try:
+        return _shadow_auditor().report()
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "unavailable", "error": "%s: %s" % (type(exc).__name__, exc)}
+
+
 def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Learn before deciding. The page posts a board every turn, so the board arriving    # now is the label for the turn that just finished: the drop in our own life is
     # what the enemies cost us, and it needs no spell id to be trustworthy (see
@@ -412,7 +482,14 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Recorded on the row that ended the turn, so the ledger shows what the model
         # was told as well as what it answered.
         decision["credited_damage"] = credit.damage
-    _log_decision(payload, decision)
+    record = _log_decision(payload, decision)
+    # Pair this cast with the board update that reflects it, and keep the damage
+    # calibration current. After the decision, not before: the residual is a
+    # measurement of what the server just priced, and it must not delay the answer.
+    try:
+        _shadow_auditor().observe(record)
+    except Exception:  # noqa: BLE001 - an auditor must never stop a fight
+        pass
     return decision
 
 
@@ -570,6 +647,10 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
             # prior -- which is exactly what "he walks into the enemy"
             # looks like from the inside.
             "threat": _threat_report(),
+            # The third learner: what the solver said a spell would do versus
+            # what the board said it did. `writes` staying at zero means the
+            # damage correction the solver applies is still the prior.
+            "shadow": _shadow_report(),
             # Who is answering. A socket that replies only proves *a* server exists; on
             # 2026-11-04 the server answering :8891 was started 50 minutes and three app
             # restarts earlier, on the dev interpreter instead of the shipped one. The run

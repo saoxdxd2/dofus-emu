@@ -161,7 +161,17 @@ namespace DofusFarm.UI
                     }
                 }
             }
-            catch { /* a corrupt settings file must not stop the app from starting */ }
+            catch (Exception ex)
+            {
+                // A corrupt or unreadable settings file must not stop the app from
+                // starting, but it must not be invisible either: without this line the
+                // only symptom is that every preference silently reverted to its
+                // default, which reads as "the app forgot my settings" and gives the
+                // operator nothing to act on. The path is in the message because the
+                // usual cause is a file being edited by hand while it is loaded.
+                Debug.WriteLine("[WARN] aipanel: AiSettings.Load(" + path + "): "
+                                + ex.GetType().Name + ": " + ex.Message);
+            }
             foreach (string a in Actions())
                 if (!s.Shortcuts.ContainsKey(a)) s.Shortcuts[a] = DefaultShortcuts()[a];
             return s;

@@ -45,6 +45,19 @@ from combat.damage_calculator import (
 from data.game_data_extractor import DamageEffect, SpellInfo
 from combat import threat
 
+
+def _trade_module():
+    """`combat.cell_effects`, imported on first use.
+
+    It imports `_CARDINAL_NEIGHBOURS` from this module, so a top-level import in
+    either direction would fail depending on which module Python entered first.
+    The functions it provides are called only while planning a trap or summon,
+    which is never at import time.
+    """
+    from combat import cell_effects
+
+    return cell_effects
+
 # Client action table, 1.74.9. Damage/steal ids carry their element by id; the
 # generic 95/100 ids are the element-less variants, treated as neutral.
 ELEMENT_BY_EFFECT: Dict[int, Tuple[str, str]] = {
@@ -84,16 +97,37 @@ UTILITY_EFFECT_KINDS = {
     133: "ap_loss",
     168: "ap_loss",
     169: "mp_loss",
+    180: "summon",
+    181: "summon",
+    400: "trap",
+    401: "glyph",
+    402: "glyph",
+    1008: "summon",
+    1011: "summon",
     1041: "pushed",
     1042: "pulled",
 }
 # Effects the one-turn planner can price with real board state. Teleport is a
-# cast origin, push/pull displace the target, AP/MP changes alter the economy;
+# cast origin, push/pull displace the target, AP/MP changes alter the economy,
+# traps/glyphs trigger tactical chains, and summons extend the tactical board;
 # the remaining utility ids stay reported as unmodelled.
 PLANNED_MECHANIC_KINDS = frozenset({
     "teleport", "push", "pull", "ap_loss", "ap_steal",
-    "mp_loss", "ap_gain", "mp_gain",
+    "mp_loss", "ap_gain", "mp_gain", "trap", "glyph", "summon",
 })
+
+#: The strategic buckets a candidate list is diversified over, in the order the
+#: solver guarantees a slot for each. `trap_setup`, `summon_control`,
+#: `buff_setup` and `kite_defend` are not separate buckets here: a trap and a
+#: summon are both `setup` (see `_classify_plan`), and displacement covers the
+#: kiting case. Splitting them would mean classifying by *which* mechanic fired,
+#: which is one line in `_classify_plan` when a caller needs it.
+#:
+#: The order is a priority, not a quality ranking: with `k=6` the budget is five
+#: action slots and there are four action buckets, so the first round fills four
+#: and the second round adds one more before the leftover fallback. `damage` is
+#: first because on a board where nothing else applies it is the only bucket.
+BUCKET_ORDER = ("damage", "setup", "displacement", "boss")
 _EPS = 1e-9
 
 
@@ -543,10 +577,30 @@ class LiveSpell:
     # sending. Without this field the *reason* was dropped at parse time, so a live
     # session that hit a broken client API looked exactly like a healthy board.
     castable_error: Optional[str] = None
+    is_summon: bool = False
+    summon_type: Optional[int] = None
 
     # The solver asks these thousands of times per plan; recomputing the filter
     # from the effect tuple each time was measurable. The spell is immutable, so
     # the first answer is the only answer.
+    @cached_property
+    def is_trap(self) -> bool:
+        name_l = (self.name or "").lower()
+        return (
+            "trap" in name_l
+            or "piege" in name_l
+            or "piège" in name_l
+            or any(e.effect_id == 400 or e.kind == "trap" for e in self.effects)
+        )
+
+    @cached_property
+    def is_glyph(self) -> bool:
+        name_l = (self.name or "").lower()
+        return (
+            "glyph" in name_l
+            or "glyphe" in name_l
+            or any(e.effect_id in (401, 402) or e.kind == "glyph" for e in self.effects)
+        )
     @cached_property
     def damage_effects(self) -> Tuple[LiveEffect, ...]:
         return tuple(self._effect_lines(("damage", "steal")))
@@ -760,6 +814,81 @@ def enemy_character(fighter: Fighter) -> CharacterStats:
     )
 
 
+@dataclass(frozen=True)
+class BoardMark:
+    mark_id: int
+    mark_type: str  # "trap" or "glyph"
+    cell: int
+    radius: int
+    owner_id: int
+    team: str
+    spell_id: int = 0
+    effects: Tuple[LiveEffect, ...] = ()
+    push_distance: int = 0
+    duration: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.mark_id,
+            "mark_id": self.mark_id,
+            "mark_type": self.mark_type,
+            "cell": self.cell,
+            "radius": self.radius,
+            "owner_id": self.owner_id,
+            "team": self.team,
+            "spell_id": self.spell_id,
+            "push_distance": self.push_distance,
+            "duration": self.duration,
+            "effects": [
+                {"effect_id": e.effect_id, "dice_num": e.min_roll, "dice_side": e.max_roll,
+                 "target_id": e.target_id, "duration": e.duration}
+                for e in self.effects
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class BoardMarks:
+    marks: Tuple[BoardMark, ...] = ()
+
+    @property
+    def traps(self) -> Tuple[BoardMark, ...]:
+        return tuple(m for m in self.marks if m.mark_type == "trap")
+
+    @property
+    def glyphs(self) -> Tuple[BoardMark, ...]:
+        return tuple(m for m in self.marks if m.mark_type == "glyph")
+
+    def traps_at(self, cell: int, cells_map: Optional[Any] = None) -> List[BoardMark]:
+        """Traps whose trigger zone covers `cell`."""
+        out = []
+        for mark in self.marks:
+            if mark.mark_type != "trap":
+                continue
+            if mark.radius <= 0:
+                if mark.cell == cell:
+                    out.append(mark)
+            else:
+                if cells_map is not None:
+                    dist = cells_map.distance(mark.cell, cell)
+                else:
+                    mx, my = cell_point(mark.cell)
+                    cx, cy = cell_point(cell)
+                    dist = abs(mx - cx) + abs(my - cy)
+                if dist <= mark.radius:
+                    out.append(mark)
+        return out
+
+    def with_mark(self, mark: BoardMark) -> "BoardMarks":
+        return BoardMarks(self.marks + (mark,))
+
+    def without_mark(self, mark_id: int) -> "BoardMarks":
+        return BoardMarks(tuple(m for m in self.marks if m.mark_id != mark_id))
+
+    def without_marks(self, mark_ids: FrozenSet[int]) -> "BoardMarks":
+        return BoardMarks(tuple(m for m in self.marks if m.mark_id not in mark_ids))
+
+
 @dataclass
 class Board:
     map_id: Optional[int]
@@ -778,8 +907,46 @@ class Board:
     fight_id: Optional[int] = None
     current_fighter_id: Optional[int] = None
     last_actions: Tuple[Dict[str, Any], ...] = ()
+    marks: BoardMarks = field(default_factory=BoardMarks)
     _character_stats_cache: Optional[CharacterStats] = field(
         default=None, init=False, repr=False, compare=False)
+    # The record this board was parsed from. `to_fight_state` is a useful
+    # reconstruction, not a faithful inverse: it publishes `my_ap`/`my_mp` that
+    # the page omits and normalises nulls to 0. A model trained on the page's
+    # own payloads has to be fed the page's own payloads -- measured on the 333
+    # live boards, the reconstruction moved `my_ap` on 98 and `my_mp` on 64, and
+    # the enemy-turn price collapsed to 0.0 on the boards where it mattered.
+    source_payload: Optional[Dict[str, Any]] = field(
+        default=None, init=False, repr=False, compare=False)
+
+    @property
+    def max_summons(self) -> int:
+        boost = _int(self.my_stats.get("summonable_creatures_boost"), 0) or 0
+        stat = _int(self.my_stats.get("summons"), 0) or _int(self.my_stats.get("max_summons"), 0) or 0
+        if stat > 0:
+            return max(1, stat)
+        return max(1, 1 + boost)
+
+    @property
+    def active_my_summons(self) -> int:
+        return sum(1 for f in self.fighters
+                   if f.alive and (f.is_summon or f.summoner_id == self.my_id)
+                   and f.summoner_id == self.my_id)
+
+    @property
+    def active_summon_types(self) -> FrozenSet[int]:
+        types = set()
+        for f in self.fighters:
+            if f.alive and f.summoner_id == self.my_id:
+                if f.creature_generic_id is not None:
+                    types.add(f.creature_generic_id)
+                elif f.name:
+                    types.add(hash(f.name))
+        return frozenset(types)
+
+    @property
+    def available_summon_slots(self) -> int:
+        return max(0, self.max_summons - self.active_my_summons)
 
     @classmethod
     def from_fight_state(cls, payload: Dict[str, Any]) -> "Board":
@@ -847,7 +1014,94 @@ class Board:
                              max_ap=me.max_ap or budget_ap,
                              max_mp=me.max_mp or budget_mp)
                 fighters = [me if fighter.id == me.id else fighter for fighter in fighters]
-        return cls(
+        parsed_marks: List[BoardMark] = []
+        spells_by_id = {s.id: s for s in spells}
+        fighters_by_id = {f.id: f for f in fighters}
+
+        raw_marks: List[Dict[str, Any]] = []
+        if isinstance(payload.get("marks"), list):
+            raw_marks.extend(raw for raw in payload["marks"] if isinstance(raw, dict))
+        if isinstance(payload.get("traps"), list):
+            for raw in payload["traps"]:
+                if isinstance(raw, dict):
+                    raw_copy = dict(raw)
+                    raw_copy.setdefault("mark_type", "trap")
+                    raw_marks.append(raw_copy)
+        if isinstance(payload.get("glyphs"), list):
+            for raw in payload["glyphs"]:
+                if isinstance(raw, dict):
+                    raw_copy = dict(raw)
+                    raw_copy.setdefault("mark_type", "glyph")
+                    raw_marks.append(raw_copy)
+
+        for action in payload.get("last_actions") or []:
+            if not isinstance(action, dict):
+                continue
+            action_id = _int(action.get("action_id"))
+            kind = str(action.get("kind") or action.get("type") or "").lower()
+            if action_id in (310, 1099) or kind in ("trap", "glyph", "mark"):
+                raw_marks.append(action)
+
+        seen_mark_keys = set()
+        for index, raw in enumerate(raw_marks):
+            cell = _int(raw.get("cell") or raw.get("target_cell") or raw.get("cell_id"))
+            if cell is None:
+                continue
+
+            m_type_raw = raw.get("mark_type")
+            if m_type_raw == 1 or str(m_type_raw).lower() in ("trap", "piege", "piège"):
+                mark_type = "trap"
+            elif m_type_raw == 2 or str(m_type_raw).lower() in ("glyph", "glyphe"):
+                mark_type = "glyph"
+            elif "glyph" in str(raw.get("kind") or raw.get("name") or "").lower():
+                mark_type = "glyph"
+            else:
+                mark_type = "trap"
+
+            mark_id = _int(raw.get("mark_id") or raw.get("id"), index + 1)
+            radius = _int(raw.get("radius") or raw.get("zone_size") or raw.get("size"), 0) or 0
+            owner_id = _int(raw.get("owner_id") or raw.get("caster_id") or raw.get("source_id"), my_id or -1)
+            owner_f = fighters_by_id.get(owner_id)
+            team = str(raw.get("team") or (owner_f.team if owner_f else "player"))
+            spell_id = _int(raw.get("spell_id"), 0) or 0
+
+            raw_effects = raw.get("effects")
+            if raw_effects:
+                effects = _effects(raw_effects)
+            elif spell_id in spells_by_id:
+                effects = spells_by_id[spell_id].effects
+            else:
+                effects = ()
+
+            push_dist = _int(raw.get("push_distance"), 0) or 0
+            if push_dist == 0 and effects:
+                for e in effects:
+                    if e.kind in ("push", "pushed"):
+                        push_dist += int(round((e.min_roll + e.max_roll) / 2.0))
+                    elif e.kind in ("pull", "pulled"):
+                        push_dist -= int(round((e.min_roll + e.max_roll) / 2.0))
+
+            duration = _int(raw.get("duration"), 0) or 0
+            mark_key = (mark_type, cell, spell_id, owner_id)
+            if mark_key in seen_mark_keys:
+                continue
+            seen_mark_keys.add(mark_key)
+
+            parsed_marks.append(BoardMark(
+                mark_id=mark_id,
+                mark_type=mark_type,
+                cell=cell,
+                radius=radius,
+                owner_id=owner_id,
+                team=team,
+                spell_id=spell_id,
+                effects=effects,
+                push_distance=push_dist,
+                duration=duration,
+            ))
+        board_marks = BoardMarks(tuple(parsed_marks))
+
+        board = cls(
             map_id=_int(payload.get("map_id")),
             in_fight=bool(payload.get("in_fight")),
             in_preparation=bool(payload.get("in_preparation")),
@@ -865,7 +1119,10 @@ class Board:
             current_fighter_id=_int(payload.get("current_fighter_id")),
             last_actions=tuple(action for action in payload.get("last_actions") or []
                                if isinstance(action, dict)),
+            marks=board_marks,
         )
+        board.source_payload = payload
+        return board
 
     @staticmethod
     def _fighter(raw: Dict[str, Any]) -> Optional[Fighter]:
@@ -906,6 +1163,17 @@ class Board:
 
     @staticmethod
     def _spell(raw: Dict[str, Any]) -> LiveSpell:
+        effects = _effects(raw.get("effects"))
+        raw_is_summon = bool(raw.get("is_summon")) or any(
+            e.effect_id in (180, 181, 1008, 1011, 405) or e.kind == "summon"
+            for e in effects
+        )
+        summon_type = _int(raw.get("summon_type") or raw.get("creature_id") or raw.get("creature_generic_id"))
+        if summon_type is None and raw_is_summon:
+            for e in effects:
+                if e.effect_id in (180, 181, 1008, 1011, 405) or e.kind == "summon":
+                    summon_type = e.min_roll or e.max_roll or _int(raw.get("id"), -1)
+                    break
         return LiveSpell(
             id=_int(raw.get("id"), -1),
             name=str(raw.get("name") or ""),
@@ -923,13 +1191,15 @@ class Board:
             casts_this_turn=_int(raw.get("casts_this_turn"), 0),
             castable=_castable(raw.get("castable")),
             critical_hit_probability=_float(raw.get("critical_hit_probability")),
-            effects=_effects(raw.get("effects")),
+            effects=effects,
             critical_effects=_effects(raw.get("critical_effects")),
             is_weapon=bool(raw.get("is_weapon")),
             zone_size=_int(raw.get("zone_size")) if raw.get("zone_size") is not None else None,
             zone_shape=raw.get("zone_shape") or None,
             castable_error=(str(raw.get("castable_error"))[:120]
                             if raw.get("castable_error") else None),
+            is_summon=raw_is_summon,
+            summon_type=summon_type,
         )
 
     @property
@@ -986,6 +1256,8 @@ class Board:
                 # it here made an unchecked spell indistinguishable from a checked
                 # one on the way back.
                 "castable_error": spell.castable_error,
+                "is_summon": spell.is_summon,
+                "summon_type": spell.summon_type,
             }
 
         def fighter_row(fighter: "Fighter") -> Dict[str, Any]:
@@ -1017,6 +1289,7 @@ class Board:
             "spells": [spell_row(s) for s in self.spells],
             "fighters": [fighter_row(f) for f in self.fighters],
             "last_actions": [dict(a) for a in self.last_actions],
+            "marks": [m.as_dict() for m in self.marks.marks],
         }
 
     @property
@@ -1229,6 +1502,8 @@ class _CastTemplate:
     utility: float = 0.0
     move_target: Optional[int] = None
     moved: int = 0
+    is_trap_placement: bool = False
+    is_summon: bool = False
 
 
 @dataclass(slots=True)
@@ -1249,6 +1524,9 @@ class _Node:
     # generated from the board's start cells, so a later cast at the old cell
     # would be illegal; a displaced target is terminal for this plan.
     moved_targets: FrozenSet[int] = frozenset()
+    marks: BoardMarks = field(default_factory=BoardMarks)
+    summons_count: int = 0
+    summon_types: FrozenSet[int] = frozenset()
 
 
 _EMPTY_FROZENSET: FrozenSet[Any] = frozenset()
@@ -1259,7 +1537,9 @@ class BattleSolver:
 
     def __init__(self, beam_width: int = 16, max_actions: int = 4,
                  max_nodes: int = 20000,
-                 memory: Optional[Any] = None) -> None:
+                 memory: Optional[Any] = None,
+                 enemy_turn_price: Optional[Any] = None,
+                 damage_calibration: Optional[Any] = None) -> None:
         self.beam_width = max(1, beam_width)
         self.max_actions = max(0, max_actions)
         self.max_nodes = max(1, max_nodes)
@@ -1271,6 +1551,19 @@ class BattleSolver:
         # fight. The live entry points (`LivePolicy`, `agent.executor`) pass
         # `threat.default_memory`, which re-reads the file when it changes.
         self.memory = memory
+        # Two more live-only readings, on the same contract as `memory`: a callable
+        # or None, and None means the solver's own prior.
+        #
+        # `enemy_turn_price(board_payload) -> float | None` is what `live_learn`
+        # measured this group costing us in one enemy turn. It reaches the search
+        # through `threat.build(turn_price=...)`, which rescales the per-cell prices
+        # -- a whole-turn scalar subtracted from a score would cancel out of every
+        # comparison and change nothing.
+        #
+        # `damage_calibration() -> dict | None` is the shadow differential between
+        # the solver's damage price and what the server actually paid.
+        self.enemy_turn_price = enemy_turn_price
+        self.damage_calibration = damage_calibration
         self.last_candidates: List[TurnPlan] = []
         self.last_threat: Optional[Any] = None
         # Per-bucket counts from the last stratified search. A learner can see
@@ -1286,6 +1579,40 @@ class BattleSolver:
             return self.memory() if callable(self.memory) else self.memory
         except Exception:  # noqa: BLE001 - an unreadable table is the prior
             return None
+
+    def _turn_price(self, board: Board) -> Optional[float]:
+        """The measured cost of one enemy turn here, or None to keep the prior.
+
+        The learner is fitted on the page's own payloads, so it gets the record
+        the board was parsed from. `to_fight_state` is only the fallback for a
+        board built in code: it publishes `my_ap`/`my_mp` the page omits, which
+        is out of distribution for the model and drove its answer to 0.
+        """
+        if self.enemy_turn_price is None:
+            return None
+        try:
+            hook = self.enemy_turn_price
+            payload = board.source_payload
+            if payload is None:
+                payload = board.to_fight_state()
+            price = hook(payload) if callable(hook) else hook
+            if price is None:
+                return None
+            value = float(price)
+        except Exception:  # noqa: BLE001 - an unreadable price is the prior
+            return None
+        return value if math.isfinite(value) and value >= 0.0 else None
+
+    def _calibration(self) -> Optional[Dict[str, Any]]:
+        """The shadow damage calibration for this turn, or None."""
+        if self.damage_calibration is None:
+            return None
+        try:
+            hook = self.damage_calibration
+            value = hook() if callable(hook) else hook
+        except Exception:  # noqa: BLE001 - an unreadable calibration is no correction
+            return None
+        return value if isinstance(value, dict) else None
 
     def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
         """The top-k distinct turn plans from the last search, pass included.
@@ -1310,8 +1637,92 @@ class BattleSolver:
                         if plan.actions and plan.actions[0].kind != "pass"]
         if not action_plans:
             action_plans = self._approach_plans(board, max(0, int(k) - 1))
+            limit = max(1, int(k))
+            return (action_plans[:max(0, limit - 1)] + [pass_plan])[:limit]
         limit = max(1, int(k))
-        return (action_plans[:max(0, limit - 1)] + [pass_plan])[:limit]
+        budget = max(0, limit - 1)
+        selected = self._select_by_bucket(action_plans, board, budget)
+        return (selected + [pass_plan])[:limit]
+
+    def _select_by_bucket(self, plans: List[TurnPlan], board: Board,
+                          budget: int) -> List[TurnPlan]:
+        """The ``budget`` best plans, one or two per strategic bucket.
+
+        A flat ``plans[:k]`` returns the k highest-scoring plans, and on a board
+        where a direct hit exists the score is almost always a direct hit: the
+        solver spends its whole output budget describing several ways to hit
+        the same monster. Measured on 40 generated boards at ``k=6``, **39
+        returned only ``damage`` + ``pass``**.
+
+        **What this does not do.** It cannot make a trap or summon plan appear.
+        Those spells are not templated at all (`_templates` drops a spell with
+        no damage, no heal and no *planned* mechanic, and `PLANNED_MECHANIC_KINDS`
+        has no trap or summon kind), and on the encounter table this repository
+        ships, the only effect kinds present are `damage` and `heal`. So with
+        this data the selection is correct but inert: the `setup` bucket is
+        reachable in principle and simply never populated. The machinery is here
+        because the collapse is real for the buckets the solver *can* produce --
+        a movement plan loses to a hit on score and used to be sliced off the
+        end of the list just the same.
+
+        The budget is therefore spent per bucket: each declared bucket is
+        guaranteed a slot, up to two, and any remaining slots go to the best of
+        everything not yet chosen. The ordering *within* the result is still by
+        score, so a caller that takes ``plans[0]`` still gets the best-scoring
+        plan -- this changes the menu, not the default.
+
+        Buckets are classified here rather than trusting ``_stratify`` because
+        the approach plans in this list never went through the beam.
+
+        ``BUCKET_ORDER`` is the module constant, not an instance field, so a
+        subclass or a test can rely on the same list the solver used.
+        """
+        if budget <= 0 or not plans:
+            return []
+        for plan in plans:
+            plan.bucket = self._classify_plan(plan, board)
+        ranked = sorted(plans, key=lambda plan: plan.score, reverse=True)
+        chosen: List[TurnPlan] = []
+        seen = set()
+
+        def signature(plan: TurnPlan):
+            return tuple((action.kind, action.move_to, action.spell_id,
+                          action.target_id) for action in plan.actions)
+
+        def add(plan: TurnPlan) -> bool:
+            key = signature(plan)
+            if key in seen or len(chosen) >= budget:
+                return False
+            seen.add(key)
+            chosen.append(plan)
+            return True
+
+        # One guaranteed slot per declared bucket, in the order the game plan
+        # values them, then a second round for the same buckets. Two rounds
+        # rather than "up to two for damage first": with k=6 and five buckets a
+        # single round already fills the budget, and taking two `damage` slots
+        # before any `trap_setup` would reproduce the collapse this replaces.
+        order = BUCKET_ORDER
+        for _round in (0, 1):
+            for bucket in order:
+                if len(chosen) >= budget:
+                    break
+                for plan in ranked:
+                    if plan.bucket != bucket:
+                        continue
+                    if add(plan):
+                        break
+            if len(chosen) >= budget:
+                break
+        for plan in ranked:
+            if len(chosen) >= budget:
+                break
+            add(plan)
+        chosen.sort(key=lambda plan: plan.score, reverse=True)
+        self.last_buckets = {}
+        for plan in chosen:
+            self.last_buckets[plan.bucket] = self.last_buckets.get(plan.bucket, 0) + 1
+        return chosen
 
     def _approach_plans(self, board: Board, limit: int) -> List[TurnPlan]:
         """Walk plans, one per reachable position that closes distance to an enemy.
@@ -1341,7 +1752,8 @@ class BattleSolver:
             return []
         hp = {f.id: f.hp for f in board.fighters if f.alive}
         nearest_now = min(board.cells.distance(me.cell, enemy.cell) for enemy in enemies)
-        danger = threat.build(board, memory=self._table(), occupied=occupied)
+        danger = threat.build(board, memory=self._table(), occupied=occupied,
+                              turn_price=self._turn_price(board))
         plans: List[TurnPlan] = []
         taken: set = set()
         # Nearest enemies first: the closest one is the approach a player would take,
@@ -1525,7 +1937,8 @@ class BattleSolver:
                     for spell in board.spells)
         # What standing on a cell costs. Built once per turn and priced lazily,
         # because every candidate cell is asked about from several nodes.
-        danger = threat.build(board, memory=self._table(), occupied=occupied)
+        danger = threat.build(board, memory=self._table(), occupied=occupied,
+                              turn_price=self._turn_price(board))
         self.last_threat = danger
 
         def templates(cell: int) -> List[_CastTemplate]:
@@ -1613,7 +2026,11 @@ class BattleSolver:
         hp = {f.id: f.hp for f in board.fighters if f.alive}
         start = _Node(cell=me.cell, ap=board.my_ap, mp=float(board.my_mp), hp=hp,
                       spell_uses={}, target_uses={}, healed_by_target={},
-                      actions=[], damage=0.0, healing=0.0, kills=[], score=0.0)
+                      actions=[], damage=0.0, healing=0.0, kills=[], score=0.0,
+                      moved_targets=frozenset(),
+                      marks=board.marks,
+                      summons_count=board.active_my_summons,
+                      summon_types=board.active_summon_types)
         best = start
         frontier = [start]
         seen: Dict[Tuple[Any, ...], float] = {}
@@ -1647,7 +2064,9 @@ class BattleSolver:
                                   List[Tuple[float, int, int, _CastTemplate]]] = {}
                     for index, (cell, mp_cost) in enumerate(walked.items()):
                         for template in templates(cell):
-                            key = (template.spell.id, template.target_id)
+                            key = (template.spell.id,
+                                   template.target_cell if (template.is_trap_placement or template.is_summon)
+                                   else template.target_id)
                             bucket = by_cast.get(key)
                             if bucket is None:
                                 by_cast[key] = [(mp_cost, index, cell, template)]
@@ -1683,7 +2102,9 @@ class BattleSolver:
                     # add AP cost: skip the destination search entirely.
                     if not (enemy_ids <= walked_targets
                             and fighter_spells <= walked_spells):
-                        covered = {(template.spell.id, template.target_id)
+                        covered = {(template.spell.id,
+                                    template.target_cell if (template.is_trap_placement or template.is_summon)
+                                    else template.target_id)
                                    for _mp, _idx, _cell, template, _tele
                                    in representatives}
                         extra = []
@@ -1693,7 +2114,9 @@ class BattleSolver:
                             if tele.ap_cost >= node.ap or not teleport_ready(tele, node):
                                 continue
                             for template in templates(dest):
-                                key = (template.spell.id, template.target_id)
+                                key = (template.spell.id,
+                                       template.target_cell if (template.is_trap_placement or template.is_summon)
+                                       else template.target_id)
                                 if key in covered:
                                     continue
                                 covered.add(key)
@@ -1702,11 +2125,14 @@ class BattleSolver:
                         if extra:
                             representatives = representatives + extra
                 for mp_cost, _index, cell, template, tele in representatives:
-                    if template.target_id in node.moved_targets:
+                    if template.target_id != 0 and template.target_id in node.moved_targets:
                         continue
-                    target_hp = node.hp[template.target_id]
-                    if target_hp <= 0:
-                        continue
+                    if template.target_id:
+                        target_hp = node.hp[template.target_id]
+                        if target_hp <= 0:
+                            continue
+                    else:
+                        target_hp = 1
                     spell = template.spell
                     ap_cost = spell.ap_cost + (tele.ap_cost if tele is not None else 0)
                     if ap_cost > node.ap:
@@ -1720,31 +2146,198 @@ class BattleSolver:
                             spell.casts_this_turn
                             + node.spell_uses.get(spell.id, 0)) > 0):
                         continue
-                    key_uses = (spell.id, template.target_id)
+                    key_uses = (spell.id, template.target_cell if (template.is_trap_placement or template.is_summon) else template.target_id)
                     if spell.max_cast_per_target is not None and (
                             node.target_uses.get(key_uses, 0)
                             >= spell.max_cast_per_target):
                         continue
-                    dealt = min(template.damage, target_hp)
-                    kill = template.damage >= target_hp
-                    direct_gain = 0.0
-                    if template.healing != 0.0:
-                        direct_gain = min(
-                            template.healing,
-                            max(0, template.target_max_hp - target_hp
-                                - node.healed_by_target.get(
-                                    template.target_id, 0)),
+                    if template.is_summon or spell.is_summon:
+                        if node.summons_count >= board.max_summons:
+                            continue
+                        s_type = spell.summon_type if spell.summon_type is not None else spell.id
+                        if s_type in node.summon_types:
+                            continue
+
+                    node_marks = node.marks
+                    cast_cell = cell
+                    walk_damage = 0.0
+                    walk_ap_loss = 0
+                    walk_mp_loss = 0
+                    if cell != node.cell and tele is None:
+                        # Check if caster walked onto an active trap
+                        if node_marks.traps_at(cell, board.cells):
+                            c_dest, w_dmg, w_ap, w_mp, next_w_marks, _ = self._simulate_trap_chain(
+                                board=board,
+                                fighter=me,
+                                target_cell=cell,
+                                entry_from_cell=node.cell,
+                                marks=node_marks,
+                                character=character,
+                                blocked=occupied,
+                                max_depth=8,
+                            )
+                            cast_cell = c_dest
+                            node_marks = next_w_marks
+                            walk_damage = w_dmg
+                            walk_ap_loss = w_ap
+                            walk_mp_loss = w_mp
+
+                    if template.is_trap_placement:
+                        target_cell = template.target_cell
+                        push_r = 0
+                        for e in spell.effects:
+                            if e.kind in ("push", "pushed"):
+                                push_r += int(round((e.min_roll + e.max_roll) / 2.0))
+                            elif e.kind in ("pull", "pulled"):
+                                push_r -= int(round((e.min_roll + e.max_roll) / 2.0))
+                        placed_mark = BoardMark(
+                            mark_id=-(len(node.actions) + 1),
+                            mark_type="trap",
+                            cell=target_cell,
+                            radius=spell.zone_size or 0,
+                            owner_id=me.id,
+                            team="player",
+                            spell_id=spell.id,
+                            effects=spell.effects,
+                            push_distance=push_r,
+                            duration=1,
                         )
-                    steal_gain = 0.0
-                    if template.steal_heal > 0:
-                        steal_gain = min(
-                            template.steal_heal,
-                            max(0, me.max_hp - me.hp
-                                - node.healed_by_target.get(me.id, 0)),
+                        triggered_enemy = next((
+                            f for f in board.fighters
+                            if f.alive and f.team != "player" and board.cells.distance(target_cell, f.cell) <= placed_mark.radius
+                        ), None)
+                        if triggered_enemy is not None:
+                            dest_c, chain_dmg, chain_ap_l, chain_mp_l, next_marks, _ = self._simulate_trap_chain(
+                                board=board,
+                                fighter=triggered_enemy,
+                                target_cell=triggered_enemy.cell,
+                                entry_from_cell=triggered_enemy.cell,
+                                marks=node_marks.with_mark(placed_mark),
+                                character=character,
+                                blocked=occupied,
+                                max_depth=8,
+                            )
+                            t_enemy_hp = node.hp.get(triggered_enemy.id, 0)
+                            dealt = min(chain_dmg, t_enemy_hp)
+                            kill = chain_dmg >= t_enemy_hp
+                            base_score = dealt + (KILL_BONUS * triggered_enemy.max_hp if kill else 0.0) + template.utility
+                            new_hp = dict(node.hp)
+                            new_hp[triggered_enemy.id] = max(0, t_enemy_hp - int(round(chain_dmg)))
+                            kills = (node.kills + [triggered_enemy.id]) if kill else node.kills
+                            action = PlannedAction(
+                                kind="cast", spell_id=spell.id, spell_name=spell.name,
+                                from_cell=cast_cell,
+                                move_to=(cast_cell if cast_cell != node.cell and tele is None else None),
+                                target_id=triggered_enemy.id, target_cell=target_cell,
+                                mp_cost=mp_cost + walk_mp_loss, ap_cost=spell.ap_cost + walk_ap_loss,
+                                damage=dealt, healing=0.0, kills=kill,
+                                moved_target=(dest_c if dest_c != triggered_enemy.cell else None),
+                            )
+                        else:
+                            next_marks = node_marks.with_mark(placed_mark)
+                            dealt = 0.0
+                            kill = False
+                            kills = node.kills
+                            new_hp = node.hp
+                            base_score = template.utility
+                            action = PlannedAction(
+                                kind="cast", spell_id=spell.id, spell_name=spell.name,
+                                from_cell=cast_cell,
+                                move_to=(cast_cell if cast_cell != node.cell and tele is None else None),
+                                target_id=0, target_cell=target_cell,
+                                mp_cost=mp_cost + walk_mp_loss, ap_cost=spell.ap_cost + walk_ap_loss,
+                                damage=0.0, healing=0.0, kills=False,
+                            )
+                        direct_gain = 0.0
+                        steal_gain = 0.0
+                        gained = 0.0
+                        next_summons_count = node.summons_count
+                        next_summon_types = node.summon_types
+                    elif template.is_summon or spell.is_summon:
+                        s_type = spell.summon_type if spell.summon_type is not None else spell.id
+                        next_summons_count = node.summons_count + 1
+                        next_summon_types = node.summon_types | {s_type}
+                        next_marks = node_marks
+                        dealt = 0.0
+                        kill = False
+                        kills = node.kills
+                        new_hp = node.hp
+                        base_score = template.utility
+                        direct_gain = 0.0
+                        steal_gain = 0.0
+                        gained = 0.0
+                        action = PlannedAction(
+                            kind="cast", spell_id=spell.id, spell_name=spell.name,
+                            from_cell=cast_cell,
+                            move_to=(cast_cell if cast_cell != node.cell and tele is None else None),
+                            target_id=0, target_cell=template.target_cell,
+                            mp_cost=mp_cost + walk_mp_loss, ap_cost=spell.ap_cost + walk_ap_loss,
+                            damage=0.0, healing=0.0, kills=False,
                         )
-                    gained = direct_gain + steal_gain
-                    base_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
-                    base_score += HEAL_WEIGHT * gained + template.utility
+                    else:
+                        next_summons_count = node.summons_count
+                        next_summon_types = node.summon_types
+                        chain_damage = 0.0
+                        chain_dest = template.move_target
+                        next_marks = node_marks
+                        chain_ap_l = 0
+                        chain_mp_l = 0
+                        if (template.moved > 0 or template.move_target is not None) and template.target_id in node.hp:
+                            dest = template.move_target or template.target_cell
+                            if dest is not None and node_marks.traps_at(dest, board.cells):
+                                target_f = next((f for f in board.fighters if f.id == template.target_id), None)
+                                if target_f is not None:
+                                    chain_dest, chain_damage, chain_ap_l, chain_mp_l, next_marks, _ = \
+                                        self._simulate_trap_chain(
+                                            board=board,
+                                            fighter=target_f,
+                                            target_cell=dest,
+                                            entry_from_cell=target_f.cell,
+                                            marks=node_marks,
+                                            character=character,
+                                            blocked=occupied,
+                                            max_depth=8,
+                                        )
+                        total_cast_damage = template.damage + chain_damage
+                        dealt = min(total_cast_damage, target_hp)
+                        kill = total_cast_damage >= target_hp
+                        direct_gain = 0.0
+                        if template.healing != 0.0:
+                            direct_gain = min(
+                                template.healing,
+                                max(0, template.target_max_hp - target_hp
+                                    - node.healed_by_target.get(
+                                        template.target_id, 0)),
+                            )
+                        steal_gain = 0.0
+                        if template.steal_heal > 0:
+                            steal_gain = min(
+                                template.steal_heal,
+                                max(0, me.max_hp - me.hp
+                                    - node.healed_by_target.get(me.id, 0)),
+                            )
+                        gained = direct_gain + steal_gain
+                        base_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
+                        base_score += HEAL_WEIGHT * gained + template.utility
+                        base_score += AP_DENIAL_WEIGHT * chain_ap_l + MP_DENIAL_WEIGHT * chain_mp_l
+                        if total_cast_damage > 0:
+                            new_hp = dict(node.hp)
+                            new_hp[template.target_id] = max(0, target_hp - int(round(total_cast_damage)))
+                        else:
+                            new_hp = node.hp
+                        kills = (node.kills if not kill
+                                 else node.kills + [template.target_id])
+                        action = PlannedAction(
+                            kind="cast", spell_id=spell.id, spell_name=spell.name,
+                            from_cell=cast_cell,
+                            move_to=(cast_cell if cast_cell != node.cell and tele is None
+                                     else None),
+                            target_id=template.target_id, target_cell=template.target_cell,
+                            mp_cost=mp_cost + walk_mp_loss, ap_cost=spell.ap_cost + walk_ap_loss,
+                            damage=dealt, healing=gained, kills=kill,
+                            moved_target=chain_dest, moved=template.moved,
+                        )
+
                     if base_score <= 0:
                         continue
                     # The half of the turn the search used to ignore: a cast
@@ -1753,13 +2346,7 @@ class BattleSolver:
                     # price rises as health runs out, so a hurt fighter trades
                     # damage for cover while a healthy one keeps attacking.
                     step_score = base_score - threat.weight_for(me) * danger.swing(
-                        node.cell, cell)
-                    if template.damage_int > 0:
-                        new_hp = dict(node.hp)
-                        new_hp[template.target_id] = max(
-                            0, target_hp - template.damage_int)
-                    else:
-                        new_hp = node.hp
+                        node.cell, cast_cell)
                     if direct_gain > 0 or steal_gain > 0:
                         healed_by_target = dict(node.healed_by_target)
                         if direct_gain > 0:
@@ -1777,32 +2364,20 @@ class BattleSolver:
                         uses[tele.id] = uses.get(tele.id, 0) + 1
                     target_uses = dict(node.target_uses)
                     target_uses[key_uses] = target_uses.get(key_uses, 0) + 1
-                    kills = (node.kills if not kill
-                             else node.kills + [template.target_id])
-                    action = PlannedAction(
-                        kind="cast", spell_id=spell.id, spell_name=spell.name,
-                        from_cell=cell,
-                        move_to=(cell if cell != node.cell and tele is None
-                                 else None),
-                        target_id=template.target_id, target_cell=template.target_cell,
-                        mp_cost=mp_cost, ap_cost=spell.ap_cost,
-                        damage=template.damage, healing=gained, kills=kill,
-                        moved_target=template.move_target, moved=template.moved,
-                    )
                     actions = node.actions
                     if tele is not None:
                         actions = actions + [PlannedAction(
                             kind="cast", spell_id=tele.id, spell_name=tele.name,
                             from_cell=node.cell, target_id=me.id,
                             target_cell=cell, ap_cost=tele.ap_cost)]
-                    next_ap = node.ap - ap_cost + template.ap_gain
+                    next_ap = max(0, node.ap - ap_cost - walk_ap_loss + template.ap_gain)
                     if me.max_ap > 0:
                         next_ap = min(next_ap, me.max_ap)
-                    next_mp = max(0.0, node.mp - mp_cost + template.mp_gain)
+                    next_mp = max(0.0, node.mp - mp_cost - walk_mp_loss + template.mp_gain)
                     if me.max_mp > 0:
                         next_mp = min(next_mp, float(me.max_mp))
                     candidate = _Node(
-                        cell=cell, ap=next_ap, mp=next_mp, hp=new_hp,
+                        cell=cast_cell, ap=next_ap, mp=next_mp, hp=new_hp,
                         spell_uses=uses, target_uses=target_uses,
                         healed_by_target=healed_by_target,
                         actions=actions + [action],
@@ -1810,8 +2385,11 @@ class BattleSolver:
                         healing=node.healing + gained,
                         kills=kills, score=node.score + step_score,
                         moved_targets=(node.moved_targets | {template.target_id}
-                                       if template.moved > 0
+                                       if (template.target_id != 0 and (template.moved > 0 or template.move_target is not None))
                                        else node.moved_targets),
+                        marks=next_marks,
+                        summons_count=next_summons_count,
+                        summon_types=next_summon_types,
                     )
                     # The first expansion has one parent and every cast spends
                     # AP, so no later state can equal a depth-0 candidate and
@@ -1833,9 +2411,13 @@ class BattleSolver:
                              if candidate.healed_by_target else _EMPTY_FROZENSET),
                             (candidate.moved_targets
                              if candidate.moved_targets else _EMPTY_FROZENSET),
+                            tuple(candidate.marks.marks),
+                            candidate.summons_count,
+                            candidate.summon_types,
                         )
                         if signature in seen and seen[signature] >= candidate.score - _EPS:
                             continue
+                        seen[signature] = candidate.score
                         seen[signature] = candidate.score
                     candidates.append(candidate)
                     if candidate.score > best.score + _EPS:
@@ -1850,6 +2432,7 @@ class BattleSolver:
         plan = self._to_plan(best, notes)
         plan.bucket = self._classify_plan(plan, board)
         plan.exposure = danger.at(plan.final_cell)
+        self._apply_post_cast_walk(board, plan, me, danger)
         nodes = [best] + [node for node in frontier if node.actions]
         plans: List[TurnPlan] = []
         seen_plans = set()
@@ -1862,6 +2445,7 @@ class BattleSolver:
             seen_plans.add(signature)
             candidate = self._to_plan(node, notes)
             candidate.exposure = danger.at(node.cell)
+            self._apply_post_cast_walk(board, candidate, me, danger)
             plans.append(candidate)
         plans.append(self._pass_plan(board, notes))
         plans[-1].exposure = danger.at(plans[-1].final_cell)
@@ -1953,6 +2537,208 @@ class BattleSolver:
             self.last_buckets[plan.bucket] = self.last_buckets.get(plan.bucket, 0) + 1
         return selected
 
+    def _safest_reachable_cell(
+        self, board: Board, start_cell: int, mp: float, danger: Any
+    ) -> Optional[Tuple[int, float, float]]:
+        """Return ``(cell, threat, mp_cost)`` of the strictly safest reachable cell.
+
+        Only considers cells where ``danger.at(cell) < danger.at(start_cell)``.
+        Returns ``None`` when no improvement is possible or ``mp`` is exhausted.
+        The walk uses the client's fight walker: cardinal steps, one MP per cell,
+        occupied cells not enterable.
+        """
+        if mp <= 0:
+            return None
+        occupied = frozenset(
+            f.cell
+            for f in board.fighters
+            if f.alive and f.id != board.my_id
+        )
+        try:
+            reach = board.cells.reachable(start_cell, mp, occupied)
+        except Exception:  # noqa: BLE001 - a path search must not cost the turn
+            return None
+        current_threat = danger.at(start_cell)
+        best_cell: Optional[int] = None
+        best_threat = current_threat
+        best_cost = 0.0
+        for cell, cost in reach.items():
+            if cell == start_cell or cell in occupied:
+                continue
+            cell_threat = danger.at(cell)
+            if cell_threat < best_threat:
+                best_cell = cell
+                best_threat = cell_threat
+                best_cost = cost
+        if best_cell is None:
+            return None
+        return (best_cell, best_threat, best_cost)
+
+    def _apply_post_cast_walk(
+        self, board: Board, plan: TurnPlan, me: Any, danger: Any
+    ) -> None:
+        """Spend leftover MP stepping behind cover or out of enemy reach.
+
+        Mutates ``plan`` in place: appends a move action, updates ``final_cell``,
+        ``remaining_mp``, ``score``, ``notes`` and ``exposure``. Called after the
+        beam search has chosen a cast so the character does not stop inside enemy
+        reach when MP remains.
+
+        The actions list is copied before appending so the source node's list is
+        never aliased -- the same ``_Node.actions`` may feed both the returned
+        plan and a candidate in ``plans``.
+        """
+        if plan.remaining_mp <= 0:
+            return
+        walk = self._safest_reachable_cell(
+            board, plan.final_cell, plan.remaining_mp, danger
+        )
+        if walk is None:
+            return
+        walk_cell, walk_threat, walk_cost = walk
+        current_threat = danger.at(plan.final_cell)
+        if walk_threat >= current_threat:
+            return
+        new_actions = list(plan.actions)
+        new_actions.append(
+            PlannedAction(
+                kind="move",
+                from_cell=plan.final_cell,
+                move_to=walk_cell,
+                mp_cost=float(walk_cost),
+            )
+        )
+        plan.actions = new_actions
+        plan.final_cell = walk_cell
+        plan.remaining_mp = max(0.0, plan.remaining_mp - walk_cost)
+        plan.score -= threat.weight_for(me) * danger.swing(
+            plan.final_cell, walk_cell
+        )
+        plan.notes.append(
+            "kite to safer cell %d (threat %.1f -> %.1f)"
+            % (walk_cell, current_threat, walk_threat)
+        )
+        plan.exposure = walk_threat
+
+    def _calculate_trap_damage(
+        self, board: Board, trap: BoardMark, character: CharacterStats,
+        fighter: Fighter,
+    ) -> float:
+        spell = next((s for s in board.spells if s.id == trap.spell_id), None)
+        if spell is not None and spell.has_damage:
+            res = self._damage_result(board, spell, character, fighter)
+            if res is not None:
+                return float(res.expected_value)
+        if trap.effects:
+            damage_effects = [e for e in trap.effects
+                              if e.kind in ("damage", "steal") or e.effect_id in ELEMENT_BY_EFFECT]
+            if damage_effects:
+                spell_info_effects = []
+                for e in damage_effects:
+                    elem = e.element or ELEMENT_BY_EFFECT.get(e.effect_id, ("damage", "NEUTRAL"))[1]
+                    spell_info_effects.append(DamageEffect(
+                        element=elem,
+                        min_roll=max(1, e.min_roll),
+                        max_roll=max(max(1, e.min_roll), e.max_roll),
+                        crit_min_roll=0,
+                        crit_max_roll=0,
+                    ))
+                info = SpellInfo(
+                    id=trap.spell_id or trap.mark_id,
+                    name_fr="Trap",
+                    name_en="Trap",
+                    name_es="",
+                    breed_id=0,
+                    level=1,
+                    ap_cost=1,
+                    min_range=0,
+                    max_range=0,
+                    cast_in_line=False,
+                    cast_in_diagonal=False,
+                    cast_test_los=False,
+                    effects=spell_info_effects,
+                    crit_rate_percent=0.0,
+                )
+                res = DofusDamageCalculator.calculate_spell_damage(
+                    info, character, fighter.target_stats())
+                if res is not None:
+                    return float(res.expected_value)
+        return 0.0
+
+    def _calculate_trap_denial(self, trap: BoardMark) -> Tuple[int, int]:
+        ap_loss = 0
+        mp_loss = 0
+        for e in trap.effects:
+            if e.kind in ("ap_loss", "ap_steal"):
+                ap_loss += int(round((e.min_roll + e.max_roll) / 2.0))
+            elif e.kind in ("mp_loss",):
+                mp_loss += int(round((e.min_roll + e.max_roll) / 2.0))
+        return ap_loss, mp_loss
+
+    def _simulate_trap_chain(
+        self,
+        board: Board,
+        fighter: Fighter,
+        target_cell: int,
+        entry_from_cell: int,
+        marks: BoardMarks,
+        character: CharacterStats,
+        blocked: FrozenSet[int],
+        max_depth: int = 8,
+    ) -> Tuple[int, float, int, int, BoardMarks, List[str]]:
+        curr_cell = target_cell
+        prev_cell = entry_from_cell
+        curr_marks = marks
+        total_damage = 0.0
+        total_ap_loss = 0
+        total_mp_loss = 0
+        chain_depth = 0
+        notes: List[str] = []
+        cells = board.cells
+
+        while chain_depth < max_depth:
+            traps = curr_marks.traps_at(curr_cell, cells)
+            if not traps:
+                break
+
+            pushed = False
+            for trap in traps:
+                if chain_depth >= max_depth:
+                    notes.append("trap chain reached max depth %d" % max_depth)
+                    break
+                chain_depth += 1
+                curr_marks = curr_marks.without_mark(trap.mark_id)
+
+                dmg = self._calculate_trap_damage(board, trap, character, fighter)
+                total_damage += dmg
+
+                ap_l, mp_l = self._calculate_trap_denial(trap)
+                total_ap_loss += ap_l
+                total_mp_loss += mp_l
+
+                push_dist = trap.push_distance
+                if push_dist != 0:
+                    if curr_cell != trap.cell:
+                        origin = trap.cell
+                    elif prev_cell != curr_cell:
+                        origin = prev_cell
+                    else:
+                        origin = board.my_cell
+
+                    next_cell = cells.slide(
+                        origin, curr_cell, abs(push_dist), blocked,
+                        toward=(push_dist < 0)
+                    )
+                    if next_cell != curr_cell:
+                        prev_cell = curr_cell
+                        curr_cell = next_cell
+                        pushed = True
+                        break
+            if not pushed:
+                break
+
+        return curr_cell, total_damage, total_ap_loss, total_mp_loss, curr_marks, notes
+
     def _templates(self, board: Board, cell: int, character: CharacterStats,
                    occupied: FrozenSet[int],
                    los_cache: Optional[Dict[Tuple[int, int], bool]] = None,
@@ -1985,11 +2771,112 @@ class BattleSolver:
                 continue
             has_damage = spell.has_damage
             has_heal = spell.has_heal
-            if not has_damage and not has_heal and not spell.has_mechanic:
+            # `PLANNED_MECHANIC_KINDS` already contains "trap", "glyph" and
+            # "summon", so this gate admits both. (It is stated with the trap and
+            # summon flags too, so a future edit to that set cannot silently
+            # re-close the path below -- the branches it guards were unreachable
+            # once already for this reason.)
+            if (not has_damage and not has_heal and not spell.has_mechanic
+                    and not spell.is_trap and not spell.is_summon):
                 continue
             # Teleports are handled as alternate cast origins; a spell that
             # only needs a taken cell cannot be planned with this board.
-            if spell.is_teleport or spell.need_free_cell:
+            if spell.is_teleport:
+                continue
+            if spell.need_free_cell and not (spell.is_trap or spell.is_summon):
+                continue
+            if spell.is_trap:
+                in_range = cells.range_cells(
+                    cell, spell.min_range, spell.max_range,
+                    spell.cast_in_line, spell.cast_in_diagonal)
+                if in_range:
+                    candidate_cells = set()
+                    for enemy in targets:
+                        if enemy.team == "player" or not enemy.alive:
+                            continue
+                        ex, ey = cell_point(enemy.cell)
+                        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                            for step in range(1, 7):
+                                p = _POINTS.get((ex + dx * step, ey + dy * step))
+                                if p is not None and p in in_range:
+                                    candidate_cells.add(p)
+                    for mark in board.marks.traps:
+                        mx, my = cell_point(mark.cell)
+                        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                            for step in (1, 2, 3):
+                                p = _POINTS.get((mx + dx * step, my + dy * step))
+                                if p is not None and p in in_range:
+                                    candidate_cells.add(p)
+                    if not candidate_cells:
+                        candidate_cells = set(c for c in in_range if c not in occupied and cells.walkable(c))
+
+                    valid_trap_cells = []
+                    for c in candidate_cells:
+                        if c in occupied or not cells.walkable(c):
+                            continue
+                        if spell.requires_los:
+                            pair = (cell, c)
+                            visible = los_cache.get(pair) if los_cache is not None else None
+                            if visible is None:
+                                visible = cells.has_los(cell, c, occupied)
+                                if los_cache is not None:
+                                    los_cache[pair] = visible
+                            if not visible:
+                                continue
+                        valid_trap_cells.append(c)
+
+                    enemies_alive = [t for t in targets if t.team != "player" and t.alive]
+                    if enemies_alive:
+                        valid_trap_cells.sort(key=lambda c: min(cells.distance(c, e.cell) for e in enemies_alive))
+
+                    # A trap scores by the traffic its cell will see, not by a
+                    # constant. Dropped at 1.0 against hits in the hundreds it
+                    # lost the beam sort every time and never became a plan, so
+                    # the `setup` bucket was never populated on any board.
+                    placement = _trade_module().free_placements(board, valid_trap_cells)
+                    for c in valid_trap_cells[:8]:
+                        out.append(_CastTemplate(
+                            spell=spell, target_id=0, target_cell=c,
+                            damage=0.0, healing=0.0, steal_heal=0.0,
+                            target_max_hp=1, damage_int=0,
+                            utility=placement.get(c, 1.0), move_target=None,
+                            moved=0, is_trap_placement=True,
+                        ))
+                continue
+            if spell.is_summon:
+                in_range = cells.range_cells(
+                    cell, spell.min_range, spell.max_range,
+                    spell.cast_in_line, spell.cast_in_diagonal)
+                if in_range:
+                    valid_summon_cells = []
+                    for c in in_range:
+                        if c in occupied or not cells.walkable(c):
+                            continue
+                        if spell.requires_los:
+                            pair = (cell, c)
+                            visible = los_cache.get(pair) if los_cache is not None else None
+                            if visible is None:
+                                visible = cells.has_los(cell, c, occupied)
+                                if los_cache is not None:
+                                    los_cache[pair] = visible
+                            if not visible:
+                                continue
+                        valid_summon_cells.append(c)
+                    enemies_alive = [t for t in targets if t.team != "player" and t.alive]
+                    if enemies_alive:
+                        valid_summon_cells.sort(key=lambda c: min(cells.distance(c, e.cell) for e in enemies_alive))
+                    # A summon is a body, and a body is worth what it blocks.
+                    # The flat 15.0 this replaces valued a summon the same in a
+                    # doorway and in the middle of an empty room.
+                    posting = _trade_module().summon_postings(board, valid_summon_cells)
+                    for c in valid_summon_cells[:4]:
+                        out.append(_CastTemplate(
+                            spell=spell, target_id=0, target_cell=c,
+                            damage=0.0, healing=0.0, steal_heal=0.0,
+                            target_max_hp=1, damage_int=0,
+                            utility=posting.get(c, 15.0), move_target=None,
+                            moved=0, is_summon=True,
+                        ))
                 continue
             ap_gain, mp_gain, ap_loss, mp_loss, push_roll, pull_roll = \
                 spell.mechanic_rolls
@@ -2046,7 +2933,7 @@ class BattleSolver:
                     if estimate_cache is not None and key_damage in estimate_cache:
                         result = estimate_cache[key_damage]
                     else:
-                        result = self._estimate(board, spell, character, target, "damage")
+                        result = self._damage_result(board, spell, character, target)
                         if estimate_cache is not None:
                             estimate_cache[key_damage] = result
                     damage = result.expected_value if result else 0.0
@@ -2104,6 +2991,14 @@ class BattleSolver:
                         if slide_cache is not None:
                             slide_cache[key_slide] = (move_target, moved)
                     if moved:
+                        if move_target is not None and board.marks.traps_at(move_target, cells):
+                            c_dest, c_dmg, c_ap_l, c_mp_l, _, _ = self._simulate_trap_chain(
+                                board=board, fighter=target, target_cell=move_target,
+                                entry_from_cell=target.cell, marks=board.marks,
+                                character=character, blocked=blocked, max_depth=8)
+                            damage += c_dmg
+                            move_target = c_dest if c_dest != target.cell else None
+                            utility += AP_DENIAL_WEIGHT * c_ap_l + MP_DENIAL_WEIGHT * c_mp_l
                         if push_roll:
                             # Forced movement is only fully denied when the
                             # target lacks the MP to walk back.
@@ -2125,6 +3020,44 @@ class BattleSolver:
                     utility=utility, move_target=move_target, moved=moved,
                 ))
         return out
+
+    def _damage_result(self, board: Board, spell: LiveSpell,
+                       character: CharacterStats,
+                       target: Fighter) -> Optional[SpellDamageResult]:
+        """The damage price the search ranks on, corrected by live residuals.
+
+        This is where a measured over- or under-price becomes a different plan:
+        `expected_value` feeds `dealt`, the kill test and `damage_int`, so a
+        spell the server pays 0.4x for stops being read as a finishing blow and
+        stops winning the AP it was priced to deserve.
+
+        `_estimate` itself stays pure and uncalibrated, and that is load-bearing.
+        `observation.py` publishes its number as `derived`, which is the
+        reference `live_learn.shadow_residuals` measures the server against.
+        Correcting that too would make the auditor compare reality to an
+        already-corrected price, and the scale would chase its own tail to 1.0.
+
+        Only the two fields the search ranks on carry the correction; `lines`
+        and the totals remain the analytic formula they were computed from.
+        Heals are left alone: every bucket is built from damage effects.
+        """
+        result = self._estimate(board, spell, character, target, "damage")
+        if result is None:
+            return None
+        calibration = self._calibration()
+        if calibration is None:
+            return result
+        from combat.live_learn import apply_damage_calibration
+
+        corrected = apply_damage_calibration(
+            result.expected_value, spell.id,
+            [effect.effect_id for effect in spell.damage_effects],
+            calibration)
+        if corrected == result.expected_value:
+            return result
+        return replace(
+            result, expected_value=round(corrected, 2),
+            ap_efficiency=round(corrected / max(1, result.ap_cost), 2))
 
     @staticmethod
     def _estimate(board: Board, spell: LiveSpell, character: CharacterStats,

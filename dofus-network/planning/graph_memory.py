@@ -26,6 +26,7 @@ what the planner already considers possible.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,11 +35,108 @@ from planning.experience import BetaRate, LogNormalDuration
 from planning.kb import REPO_ROOT
 from planning.trace import Trace
 
+from agent.inert_attribution import first_failure, LAYERS  # noqa: E402  (import after planning modules is intentional; agent.inert_attribution imports only stdlib)
+
+# Inert failure layers that must NOT poison the DecisionGraph posterior.
+# These are infra/client/sensing faults, not genuine gameplay outcomes.
+# Taken directly from ``agent.inert_attribution.LAYERS``.
+INERT_LAYERS = frozenset({
+    "dispatch:no_client",
+    "dispatch:failed",
+    "sensing:stale",
+    "client:dialog",
+})
+
 DEFAULT_GRAPH = REPO_ROOT / "data" / "kb" / "decision_graph.json"
 
 # A route that fails this many times below a level gets a structural constraint.
 BLOCK_MIN_ATTEMPTS = 4
 BLOCK_MAX_SUCCESS = 0.25
+
+# BOCPD thresholds.
+# When the posterior predictive probability of an observed outcome falls below
+# this, a change point is suspected; after CONFIRM_RUNS consecutive surprises
+# the posterior is reset to the prior.
+BOCPD_SURPRISE_THRESHOLD = 0.05
+BOCPD_CONFIRM_RUNS = 3
+
+
+def _row_from_trace(trace: Trace) -> Dict[str, Any]:
+    """Build a minimal row dict for ``agent.inert_attribution.first_failure``.
+
+    ``first_failure`` reads ``refused``/``error`` text and classifies by keyword,
+    then falls back to ``signals(row)`` (``ok``, ``repeat_streak``, ``obs_age_ms``,
+    etc.). Traces carry the failure reason as a string, so we feed it into both
+    ``refused`` and ``error`` to get the same keyword classification the corpus
+    report uses.
+    """
+    reason = trace.outcome.reason or ""
+    return {
+        "refused": reason,
+        "error": reason,
+        "ok": trace.outcome.signal != "verified",
+    }
+
+
+def classify_outcome(trace: Trace) -> str:
+    """Classify a trace's outcome using ``agent.inert_attribution.first_failure``.
+
+    ``first_failure`` only detects ``sensing:stale`` via ``obs_age_ms`` in
+    ``signals()``, which traces don't carry. We short-circuit on the reason text
+    for that case so stale observations are still gated out.
+    """
+    reason = trace.outcome.reason or ""
+    if "stale" in reason.lower():
+        return "sensing:stale"
+    return first_failure(_row_from_trace(trace))
+
+
+def is_inert_layer(layer: str) -> bool:
+    """True when ``layer`` is an infra/client/sensing fault that must not update the graph."""
+    return layer in INERT_LAYERS
+
+
+class BOCPD:
+    """Bayesian Online Change-Point Detection for a single posterior.
+
+    Tracks the run length of consecutive observations that are consistent with
+    the current posterior. When the posterior predictive probability of an
+    observed outcome falls below ``BOCPD_SURPRISE_THRESHOLD`` for
+    ``BOCPD_CONFIRM_RUNS`` consecutive observations, a change point is declared
+    and the posterior is reset to its prior.
+
+    This lets gear upgrades or level-ups rapidly reset stale failure priors:
+    after a level-up, a previously-impossible route starts succeeding, the
+    predictive probability of the old (low) success rate drops, and the prior
+    is reset so the edge is re-evaluated from scratch.
+    """
+
+    def __init__(self) -> None:
+        self.run_length = 0
+        self.surprise_run = 0
+
+    def observe(self, predictive_prob: float) -> bool:
+        """Feed one observation's posterior predictive probability.
+
+        Returns ``True`` when a change point was detected and the posterior
+        should be reset.
+        """
+        if predictive_prob < BOCPD_SURPRISE_THRESHOLD:
+            self.surprise_run += 1
+        else:
+            self.surprise_run = 0
+        self.run_length += 1
+
+        if self.surprise_run >= BOCPD_CONFIRM_RUNS:
+            self.run_length = 0
+            self.surprise_run = 0
+            return True
+        return False
+
+    def reset(self) -> None:
+        """Reset the change-point detector (called after a posterior reset)."""
+        self.run_length = 0
+        self.surprise_run = 0
 
 
 def entity_key(action: str, entity: Dict[str, Any]) -> Optional[str]:
@@ -73,6 +171,7 @@ class Edge:
     last_ts: float = 0.0
     discovered: bool = False        # learned at runtime, not in the static cache
     notes: List[str] = field(default_factory=list)
+    bocpd: BOCPD = field(default_factory=BOCPD)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -89,16 +188,18 @@ class Edge:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "Edge":
-        edge = cls(key=payload["key"], action=payload.get("action", "?"))
-        if isinstance(payload.get("success"), dict):
-            edge.success = BetaRate.from_dict(payload["success"])
-        if isinstance(payload.get("time"), dict):
-            edge.time = LogNormalDuration.from_dict(payload["time"])
-        edge.attempts = int(payload.get("attempts") or 0)
-        edge.blocked_below = payload.get("blocked_below")
-        edge.last_ts = float(payload.get("last_ts") or 0.0)
-        edge.discovered = bool(payload.get("discovered"))
-        edge.notes = list(payload.get("notes") or [])
+        edge = cls(
+            key=payload["key"],
+            action=payload.get("action", "?"),
+            success=BetaRate.from_dict(payload.get("success", {})),
+            time=LogNormalDuration.from_dict(payload.get("time", {})),
+            attempts=int(payload.get("attempts") or 0),
+            blocked_below=payload.get("blocked_below"),
+            last_ts=float(payload.get("last_ts") or 0.0),
+            discovered=bool(payload.get("discovered")),
+            notes=list(payload.get("notes") or []),
+        )
+        edge.bocpd = BOCPD()
         return edge
 
 
@@ -146,7 +247,19 @@ class DecisionGraph:
         return edge
 
     def update_from_trace(self, trace: Trace) -> Optional[Dict[str, Any]]:
-        """Fold one action into the graph. Returns what changed, for the trace."""
+        """Fold one action into the graph. Returns what changed, for the trace.
+
+        Infra/client/sensing failures (``dispatch:*``, ``sensing:stale``,
+        ``client:dialog``) are gated out by ``agent.inert_attribution`` so they
+        cannot poison a valid edge's posterior. Only genuine gameplay outcomes
+        update the world graph.
+
+        Bayesian Online Change-Point Detection (BOCPD) runs on every accepted
+        observation: when the posterior predictive probability of the observed
+        outcome stays below threshold for ``BOCPD_CONFIRM_RUNS`` consecutive
+        observations, the posterior is reset to its prior. This lets gear
+        upgrades or level-ups rapidly reset stale failure priors.
+        """
         if trace.outcome is None:
             return None
         if self.sources_allowed is not None and trace.source not in self.sources_allowed:
@@ -155,11 +268,34 @@ class DecisionGraph:
         key = entity_key(trace.action, trace.entity)
         if key is None:
             return None
+
+        # Gate: inert failures must not reshape the world graph.
+        layer = classify_outcome(trace)
+        if is_inert_layer(layer):
+            self.rejected += 1
+            return None
+
         edge = self._edge(key, trace.action)
 
         achieved = trace.outcome.achieved
         if achieved is None:
             return None   # unverified: no success signal, but time may still help
+
+        # BOCPD: compute the posterior predictive probability *before* updating,
+        # so a sudden string of surprises can trigger a prior reset.
+        if achieved:
+            predictive = edge.success.mean()
+        else:
+            predictive = 1.0 - edge.success.mean()
+        if edge.bocpd.observe(predictive):
+            # Change point detected: reset both posteriors to their priors.
+            edge.success = BetaRate(2.0, 2.0)
+            edge.time = LogNormalDuration(10.0, 2.0)
+            edge.bocpd.reset()
+            edge.notes.append(
+                "change point: posterior reset after %d surprises"
+                % BOCPD_CONFIRM_RUNS)
+
         edge.attempts += 1
         edge.success.update(1.0 if achieved else 0.0, 1.0, trace.ts)
         edge.last_ts = trace.ts

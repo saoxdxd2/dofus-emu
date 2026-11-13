@@ -463,6 +463,174 @@ def fit_isotonic(probs: Sequence[float], labels: Sequence[float]) -> Isotonic:
     return Isotonic(blocks=[(lo, hi, pos / w) for lo, hi, w, pos in blocks])
 
 
+# -- hierarchical Bayes log-odds tracker -----------------------------------
+
+@dataclass
+class HierarchicalLogOddsTracker:
+    """Hierarchical Bayes log-odds tracker for online recalibration.
+
+    Tracks:
+    1. Global era shift mu_t: adapts to the macro base rate of world movement
+       (e.g. 22.0% train -> 64.2% val -> 46.6% test) with exponential forgetting lambda.
+    2. Per-tool random effect delta_j: tool-specific deviation from global log-odds,
+       with Bayesian shrinkage (shrinkage factor kappa_j) toward the global prior.
+       Sparse tools (small effective sample size n_j) shrink heavily to the global
+       era shift; abundant tools (large n_j) rely on their own empirical log-odds.
+    """
+
+    decay_lambda: float = 0.99
+    prior_base_rate: float = 0.220
+    prior_weight: float = 20.0
+    shrinkage_m: float = 15.0
+    smoothing_eps: float = 1e-4
+
+    global_n: float = 0.0
+    global_s: float = 0.0
+    tool_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
+
+    def global_base_rate(self) -> float:
+        """Posterior mean of the global base rate."""
+        prior_s = self.prior_weight * self.prior_base_rate
+        total_n = self.global_n + self.prior_weight
+        if total_n <= 0.0:
+            return self.prior_base_rate
+        return (self.global_s + prior_s) / total_n
+
+    def global_log_odds(self) -> float:
+        """Global log-odds mu_t."""
+        return logit(self.global_base_rate())
+
+    def global_era_shift(self) -> float:
+        """Global era shift relative to the reference prior: mu_t - logit(prior_base_rate)."""
+        return self.global_log_odds() - logit(self.prior_base_rate)
+
+    def tool_stats(self, tool: str) -> Dict[str, float]:
+        """Compute Bayesian posterior statistics for a specific tool."""
+        mu_t = self.global_log_odds()
+        prior_mu = logit(self.prior_base_rate)
+        g_rate = self.global_base_rate()
+
+        counts = self.tool_counts.get(tool)
+        if not counts or counts.get("n", 0.0) <= 0.0:
+            return {
+                "n": 0.0,
+                "s": 0.0,
+                "rate": g_rate,
+                "kappa": 0.0,
+                "delta": 0.0,
+                "intercept": mu_t,
+                "shift": mu_t - prior_mu,
+            }
+
+        n = float(counts["n"])
+        s = float(counts["s"])
+        kappa = n / (n + self.shrinkage_m)
+        smoothed_rate = (s + self.smoothing_eps * g_rate) / (n + self.smoothing_eps)
+        tool_log_odds = logit(smoothed_rate)
+
+        delta = kappa * (tool_log_odds - mu_t)
+        b_j = mu_t + delta
+        shift = b_j - prior_mu
+
+        return {
+            "n": round(n, 4),
+            "s": round(s, 4),
+            "rate": round(s / n if n > 0 else g_rate, 4),
+            "kappa": round(kappa, 4),
+            "delta": round(delta, 6),
+            "intercept": round(b_j, 6),
+            "shift": round(shift, 6),
+        }
+
+    def update(self, tool: str, moved: bool) -> None:
+        """Record an online observation with exponential forgetting."""
+        lam = max(0.0, min(1.0, float(self.decay_lambda)))
+        y = 1.0 if moved else 0.0
+
+        # Update global counts
+        self.global_n = self.global_n * lam + 1.0
+        self.global_s = self.global_s * lam + y
+
+        # Update target tool
+        counts = self.tool_counts.setdefault(tool, {"n": 0.0, "s": 0.0})
+        counts["n"] = counts["n"] * lam + 1.0
+        counts["s"] = counts["s"] * lam + y
+
+        # Decay other tracked tools
+        for name, c in self.tool_counts.items():
+            if name != tool:
+                c["n"] *= lam
+                c["s"] *= lam
+
+    def update_batch(self, tools: Sequence[str], moved_flags: Sequence[bool]) -> None:
+        for t, m in zip(tools, moved_flags):
+            self.update(t, m)
+
+    def recalibrate_logit(self, tool: str, z: float, slope: float = 1.0) -> float:
+        """Recalibrate logit z for tool under the posterior shift."""
+        stats = self.tool_stats(tool)
+        shift = stats["shift"]
+        return float(slope) * float(z) + shift
+
+    def recalibrate_prob(self, tool: str, p: float, slope: float = 1.0) -> float:
+        """Recalibrate probability p for tool under the posterior shift."""
+        z = logit(p)
+        return sigmoid(self.recalibrate_logit(tool, z, slope=slope))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "decay_lambda": self.decay_lambda,
+            "prior_base_rate": self.prior_base_rate,
+            "prior_weight": self.prior_weight,
+            "shrinkage_m": self.shrinkage_m,
+            "smoothing_eps": self.smoothing_eps,
+            "global_n": round(self.global_n, 4),
+            "global_s": round(self.global_s, 4),
+            "tool_counts": {
+                k: {"n": round(v["n"], 4), "s": round(v["s"], 4)}
+                for k, v in sorted(self.tool_counts.items())
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "HierarchicalLogOddsTracker":
+        inst = cls(
+            decay_lambda=float(raw.get("decay_lambda", 0.99)),
+            prior_base_rate=float(raw.get("prior_base_rate", 0.220)),
+            prior_weight=float(raw.get("prior_weight", 20.0)),
+            shrinkage_m=float(raw.get("shrinkage_m", 15.0)),
+            smoothing_eps=float(raw.get("smoothing_eps", 1e-4)),
+            global_n=float(raw.get("global_n", 0.0)),
+            global_s=float(raw.get("global_s", 0.0)),
+        )
+        counts = {}
+        for k, v in (raw.get("tool_counts") or {}).items():
+            counts[k] = {"n": float(v.get("n", 0.0)), "s": float(v.get("s", 0.0))}
+        inst.tool_counts = counts
+        return inst
+
+
+def fit_hierarchical(
+    logits: Sequence[float],
+    labels: Sequence[float],
+    groups: Sequence[Optional[str]],
+    decay_lambda: float = 0.99,
+    prior_base_rate: float = 0.220,
+    prior_weight: float = 20.0,
+    shrinkage_m: float = 15.0,
+) -> HierarchicalLogOddsTracker:
+    tracker = HierarchicalLogOddsTracker(
+        decay_lambda=decay_lambda,
+        prior_base_rate=prior_base_rate,
+        prior_weight=prior_weight,
+        shrinkage_m=shrinkage_m,
+    )
+    for g, yi in zip(groups, labels):
+        if g is not None:
+            tracker.update(str(g), bool(yi))
+    return tracker
+
+
 # -- the fitted bundle -----------------------------------------------------
 
 @dataclass
@@ -473,10 +641,17 @@ class Calibrator:
     global_: Optional[Platt] = None
     isotonic: Optional[Isotonic] = None
     groups: Dict[str, Platt] = field(default_factory=dict)
+    hierarchical: Optional[HierarchicalLogOddsTracker] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def apply_logit(self, z: float, group: Optional[str] = None) -> float:
         if self.method == "identity":
+            if self.hierarchical is not None and group:
+                return self.hierarchical.recalibrate_logit(group, z)
+            return sigmoid(z)
+        if self.method == "hierarchical":
+            if self.hierarchical is not None:
+                return sigmoid(self.hierarchical.recalibrate_logit(group or "", z))
             return sigmoid(z)
         if self.method == "isotonic":
             base = sigmoid(z)
@@ -485,10 +660,16 @@ class Calibrator:
         if model is None:
             model = self.global_
         if model is None:
-            return sigmoid(z)
-        return model.apply_logit(z)
+            base_p = sigmoid(z)
+        else:
+            base_p = model.apply_logit(z)
+        if self.hierarchical is not None and group:
+            return self.hierarchical.recalibrate_prob(group, base_p)
+        return base_p
 
     def apply(self, p: float, group: Optional[str] = None) -> float:
+        if self.method == "hierarchical" and self.hierarchical is not None:
+            return self.hierarchical.recalibrate_prob(group or "", p)
         return self.apply_logit(logit(p), group)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -497,19 +678,22 @@ class Calibrator:
             "global": self.global_.to_dict() if self.global_ else None,
             "isotonic": self.isotonic.to_dict() if self.isotonic else None,
             "groups": {k: v.to_dict() for k, v in sorted(self.groups.items())},
+            "hierarchical": self.hierarchical.to_dict() if self.hierarchical else None,
             "meta": self.meta,
         }
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "Calibrator":
         method = str(raw.get("method") or "identity")
-        if method not in METHODS:
+        if method not in METHODS and method != "hierarchical":
             method = "identity"
         return cls(
             method=method,
             global_=(Platt.from_dict(raw["global"]) if raw.get("global") else None),
             isotonic=(Isotonic.from_dict(raw["isotonic"]) if raw.get("isotonic") else None),
             groups={k: Platt.from_dict(v) for k, v in (raw.get("groups") or {}).items()},
+            hierarchical=(HierarchicalLogOddsTracker.from_dict(raw["hierarchical"])
+                          if raw.get("hierarchical") else None),
             meta=dict(raw.get("meta") or {}),
         )
 
@@ -532,6 +716,11 @@ def fit(logits: Sequence[float], labels: Sequence[float],
     if method == "temperature":
         return Calibrator(method="temperature", global_=fit_temperature(z, y, ridge=ridge),
                           meta={"rows": len(z), "intercept_pinned": True})
+    if method == "hierarchical":
+        grp_list = list(groups) if groups is not None else [None] * len(z)
+        tracker = fit_hierarchical(z, y, grp_list)
+        return Calibrator(method="hierarchical", hierarchical=tracker,
+                          meta={"rows": len(z)})
     if method != "platt":
         raise ValueError("unknown calibration method %r (known: %s)"
                          % (method, ", ".join(METHODS)))
@@ -671,7 +860,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     from agent.foresight import load as load_net
     net = load_net(args.model / "foresight.json")
     if net is None:
-        logger.debug("no artifact at %s" % (args.model / "foresight.json"), file=sys.stderr)
+        print("no artifact at %s" % (args.model / "foresight.json"), file=sys.stderr)
         return 2
     net.attach_calibration(None)  # fit against the raw logits, never the sidecar's output
 
@@ -679,15 +868,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     rows = [r for r in rows if r.get("at")]
     rows.sort(key=lambda r: float(r["at"]))
     if len(rows) < 200:
-        logger.debug("not enough actionable rows (%d) to calibrate" % len(rows), file=sys.stderr)
+        print("not enough actionable rows (%d) to calibrate" % len(rows), file=sys.stderr)
         return 2
     logits, labels, groups = _score_rows(net, rows)
     if not logits:
-        logger.debug("the artifact scored no rows", file=sys.stderr)
+        print("the artifact scored no rows", file=sys.stderr)
         return 2
 
     if args.backtest:
-        logger.debug(json.dumps(backtest(logits, labels, groups, folds=args.backtest,
+        print(json.dumps(backtest(logits, labels, groups, folds=args.backtest,
                                   window=args.folds_window, min_group=args.min_group),
                          indent=1))
         return 0
@@ -731,7 +920,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     out["shipped"] = {"method": args.method,
                       "report": evaluate(shipped_probs, rep_y),
                       "reliability_report": reliability(shipped_probs, rep_y)}
-    logger.debug(json.dumps(out, indent=1))
+    print(json.dumps(out, indent=1))
     if args.write:
         # The shipped artifact must be fitted on the *recent* era, not the whole corpus. The
         # corpus contains an era in which `nav.goto` moved the character 17.3% of the time and a
@@ -751,7 +940,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                          .get("summary") if len(logits) >= 2500 else None),
         })
         path = save(args.model / "calibration.json", shipped)
-        logger.debug("wrote %s (fitted on the last %d rows, base rate %.3f)"
+        print("wrote %s (fitted on the last %d rows, base rate %.3f)"
               % (path, tail, sum(ry) / len(ry)))
     return 0
 

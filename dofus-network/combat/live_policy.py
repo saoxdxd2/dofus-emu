@@ -102,10 +102,13 @@ class LivePolicy:
         # defaults to the level prior, which is what keeps every benchmark and test
         # independent of whatever `models/threat_model.json` happens to contain.
         from combat import threat as _threat
+        from combat import live_learn as _live_learn
 
         self.solver = BattleSolver(beam_width=int(beam_width),
                                    max_actions=int(max_actions),
-                                   memory=_threat.default_memory)
+                                   memory=_threat.default_memory,
+                                   enemy_turn_price=_live_learn.enemy_turn_price,
+                                   damage_calibration=_live_learn.default_damage_calibration)
         self.plan_k = max(2, int(beam_width))
         # Set per request from the observation contract; False until then.
         self._value_ready = False

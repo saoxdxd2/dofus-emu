@@ -263,6 +263,139 @@ class MoveEditTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
 
+class TacticalMoveIntentTests(unittest.TestCase):
+    """5-class tactical cell-intent basis with directed LOS and resistance."""
+
+    def test_hold_when_final_cell_matches_my_cell(self):
+        cells = {(5, 9): 4}
+        board = _FakeBoard(5, cells)
+        self.assertEqual(wsp.teacher_move_class(board, 9, 5, n_classes=5), 3)
+        self.assertEqual(wsp.teacher_move_intent(board, 9, 5), 3)
+
+    def test_distance_based_close_and_kite(self):
+        cells = {(5, 9): 4, (7, 9): 2, (3, 9): 6}
+        board = _FakeBoard(5, cells)
+        # 5 -> 7 closes distance (4 -> 2)
+        self.assertEqual(wsp.teacher_move_class(board, 9, 7, n_classes=5), 0)
+        # 5 -> 3 opens distance (4 -> 6)
+        self.assertEqual(wsp.teacher_move_class(board, 9, 3, n_classes=5), 4)
+
+    def test_lateral_step_at_equal_distance(self):
+        cells = {(5, 9): 4, (6, 9): 4}
+        board = _FakeBoard(5, cells)
+        # 5 -> 6 keeps distance at 4 -> lateral flank
+        self.assertEqual(wsp.teacher_move_class(board, 9, 6, n_classes=5), 2)
+
+    def test_step_to_break_los_with_mock_los(self):
+        class _MockLosCells:
+            def __init__(self, los_map, distances):
+                self._los = los_map
+                self._distances = distances
+            def has_los(self, a, b):
+                return self._los.get((a, b), False)
+            def distance(self, a, b):
+                return self._distances[(a, b)]
+
+        class _MockBoard:
+            def __init__(self, my_cell, los_map, distances):
+                self.my_cell = my_cell
+                self.cells = _MockLosCells(los_map, distances)
+                self.enemies = []
+
+        # Enemy at 9 had LOS to 5, but does NOT have LOS to 6
+        los = {(9, 5): True, (9, 6): False}
+        distances = {(5, 9): 4, (6, 9): 3}  # Even though distance decreased, breaking LOS takes priority!
+        board = _MockBoard(5, los, distances)
+        self.assertEqual(wsp.teacher_move_intent(board, 9, 6), 1)
+
+    def test_lateral_flank_to_gain_los(self):
+        class _MockLosCells:
+            def __init__(self, los_map, distances):
+                self._los = los_map
+                self._distances = distances
+            def has_los(self, a, b):
+                return self._los.get((a, b), False)
+            def distance(self, a, b):
+                return self._distances[(a, b)]
+
+        class _MockBoard:
+            def __init__(self, my_cell, los_map, distances):
+                self.my_cell = my_cell
+                self.cells = _MockLosCells(los_map, distances)
+                self.enemies = []
+
+        # Player at 5 did NOT have LOS to 9, but at 6 HAS LOS to 9
+        los = {(5, 9): False, (6, 9): True}
+        distances = {(5, 9): 4, (6, 9): 4}
+        board = _MockBoard(5, los, distances)
+        self.assertEqual(wsp.teacher_move_intent(board, 9, 6), 2)
+
+    def test_map_field_tactical_intent_and_resistance_gradient(self):
+        from combat.map_field import MapField
+        mf = MapField.from_map_id(100139008)
+        self.assertEqual(mf.tactical_intent(200, 200, 250), 3)
+        grad = mf.resistance_gradient(200, 201, 250)
+        self.assertIsInstance(grad, float)
+
+
+class MoveRidgeLinearProbeTests(unittest.TestCase):
+    """Exact closed-form ridge linear-probe warm start in weight space."""
+
+    def test_solve_move_linear_probe_exact_recovery(self):
+        rng = np.random.default_rng(42)
+        N, D, K = 64, 8, 5
+        hidden = rng.normal(size=(N, D))
+        teacher = rng.integers(0, K, size=N)
+        mask = np.ones((N, K), bool)
+
+        W, b, report = wsp.solve_move_linear_probe(
+            hidden, teacher, move_mask=mask, split_share=0.75,
+            alphas=(1e-4, 1e-2, 1.0, 10.0), n_classes=K
+        )
+        self.assertEqual(W.shape, (D, K))
+        self.assertEqual(b.shape, (K,))
+        self.assertEqual(report["n_classes"], K)
+        self.assertGreaterEqual(report["chosen"]["train_agreement"], 0.2)
+
+    def test_edit_move_head_ridge_method_writes_checkpoint(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = pathlib.Path(temp.name)
+        source = root / "source.pkl"
+        output = root / "edited_ridge.pkl"
+        cache = root / "cache.npz"
+
+        payload = {"params": {
+            "move": (np.zeros((4, 5), dtype=np.float32), np.zeros(5, np.float32)),
+            "sentinel": np.array([42.], dtype=np.float32),
+        }}
+        source.write_bytes(pickle.dumps(payload))
+
+        rng = np.random.default_rng(7)
+        N = 32
+        hidden = rng.normal(size=(N, 4)).astype(np.float32)
+        teacher = rng.integers(0, 5, size=N)
+        mask = np.ones((N, 5), bool)
+
+        arrays = {
+            "hidden": hidden,
+            "move_mask": mask,
+            "teacher_move": teacher,
+            "head_move": np.zeros(N, int),
+            "checkpoint_path": np.asarray(str(source)),
+            "checkpoint_sha256": np.asarray(hashlib.sha256(source.read_bytes()).hexdigest()),
+        }
+        np.savez_compressed(cache, **arrays)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = wsp.edit(cache, "move", output, None, [0.01, 1.0], method="ridge")
+        self.assertEqual(code, 0)
+        saved = pickle.loads(output.read_bytes())
+        self.assertEqual(saved["weight_space_program"]["head"], "move")
+        self.assertEqual(saved["weight_space_program"]["method"], "ridge")
+        self.assertEqual(saved["params"]["move"][0].shape, (4, 5))
+
+
 class PvmHarnessTests(unittest.TestCase):
     """`--harness pvm` is the instrument that can say a win rate; the mirror cannot."""
 

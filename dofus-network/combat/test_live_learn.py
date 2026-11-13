@@ -282,3 +282,260 @@ class StorageAndIncrementalAuditorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
+
+
+# ---------------------------------------------------------------------------
+# Multi-slot: one process, two fights in flight at the same time
+# ---------------------------------------------------------------------------
+
+
+def _slot_board(my_id, hp, round_no, fight_id):
+    """A board as a *different* account's slot would publish it."""
+    board = _board(hp=hp, round_no=round_no, fight_id=fight_id)
+    board["my_id"] = my_id
+    board["fighters"][0]["id"] = my_id
+    return board
+
+
+class MultiSlotTests(unittest.TestCase):
+    """Two slots alternate turns through one process.
+
+    `combat_ai_server.py` is a single process serving every running slot, and
+    both `LiveLearner` and `_ThreatObserver` used to keep exactly one scalar
+    "current fight". With two slots in combat the boards interleave A, B, A, B,
+    so the single slot of memory was overwritten before it could ever be read:
+
+    * the learner saw `prev.fight_id != cur.fight_id` on every call and credited
+      nothing at all (`self.credited == 0`), i.e. multi-account mode learned
+      nothing;
+    * the threat observer reset its `_log` on every turn, so every message was
+      "new" and the same monster hits were folded in again and again.
+
+    Both are silent: no error, no wrong-looking number, just a model that never
+    improves.
+    """
+
+    def test_two_slots_alternating_both_learn(self):
+        with tempfile.TemporaryDirectory(prefix="live-learn-multi-") as tmp:
+            learner = LiveLearner(model_path=Path(tmp) / "m.json",
+                                  rows_path=Path(tmp) / "r.jsonl")
+            # Slot 1 fight 875, slot 2 fight 876. Each publishes a turn in turn.
+            hp_a, hp_b = 140.0, 140.0
+            for round_no in range(1, 6):
+                hp_a -= 10.0
+                learner.observe(_slot_board(ME, hp_a, round_no, 875))
+                hp_b -= 10.0
+                learner.observe(_slot_board(ME + 1, hp_b, round_no, 876))
+            # Four creditable turns per slot (the first board of each has no
+            # predecessor), so eight in total.
+            self.assertEqual(learner.credited, 8,
+                             "credited %d, skipped %d" % (learner.credited,
+                                                          learner.skipped))
+
+    def test_a_second_slot_does_not_break_the_first_slots_credit(self):
+        """The damage credited must be that slot's own, not the other's."""
+        with tempfile.TemporaryDirectory(prefix="live-learn-multi-") as tmp:
+            rows_path = Path(tmp) / "r.jsonl"
+            learner = LiveLearner(model_path=Path(tmp) / "m.json",
+                                  rows_path=rows_path)
+            learner.observe(_slot_board(ME, 140.0, 1, 875))
+            learner.observe(_slot_board(ME + 1, 300.0, 1, 876))
+            # Slot 1 takes 44, slot 2 takes 7 in the same wall-clock window.
+            learner.observe(_slot_board(ME, 96.0, 2, 875))
+            learner.observe(_slot_board(ME + 1, 293.0, 2, 876))
+            rows = [json.loads(line) for line in
+                    rows_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            damages = sorted(row["damage"] for row in rows)
+            self.assertEqual(damages, [7.0, 44.0], rows)
+            by_fight = {row["fight_id"]: row["damage"] for row in rows}
+            self.assertEqual(by_fight, {875: 44.0, 876: 7.0})
+
+    def test_a_finished_slot_does_not_inherit_the_other_slots_memory(self):
+        """Slot 2's first board must not be paired with slot 1's last board."""
+        with tempfile.TemporaryDirectory(prefix="live-learn-multi-") as tmp:
+            learner = LiveLearner(model_path=Path(tmp) / "m.json",
+                                  rows_path=Path(tmp) / "r.jsonl")
+            learner.observe(_slot_board(ME, 140.0, 1, 875))
+            # A brand-new fight on the *other* slot arrives before slot 1's next
+            # turn: it has no predecessor and must be skipped, not credited
+            # across fights.
+            learner.observe(_slot_board(ME + 1, 260.0, 1, 877))
+            self.assertEqual(learner.credited, 0)
+            self.assertEqual(learner.skipped, 2)
+
+    def test_the_memory_is_bounded(self):
+        """A long-running process must not accumulate one entry per fight."""
+        from combat.live_learn import MAX_TRACKED_FIGHTS
+
+        with tempfile.TemporaryDirectory(prefix="live-learn-multi-") as tmp:
+            learner = LiveLearner(model_path=Path(tmp) / "m.json",
+                                  rows_path=Path(tmp) / "r.jsonl")
+            for fight in range(MAX_TRACKED_FIGHTS * 3):
+                learner.observe(_slot_board(ME, 140.0, 1, fight))
+            self.assertLessEqual(len(learner._prev_by_fight), MAX_TRACKED_FIGHTS)
+
+    def test_concurrent_slots_do_not_lose_a_credit(self):
+        """`observe` is called from the HTTP handler, so it can be concurrent."""
+        import threading
+
+        with tempfile.TemporaryDirectory(prefix="live-learn-multi-") as tmp:
+            learner = LiveLearner(model_path=Path(tmp) / "m.json",
+                                  rows_path=Path(tmp) / "r.jsonl")
+
+            def slot(fight, account):
+                hp = 400.0
+                for round_no in range(1, 41):
+                    hp -= 1.0
+                    learner.observe(_slot_board(account, hp, round_no, fight))
+
+            threads = [threading.Thread(target=slot, args=(900 + i, ME + i))
+                       for i in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            # 40 boards per slot, one of which is the first and credits nothing.
+            self.assertEqual(learner.credited, 4 * 39,
+                             "credited %d" % learner.credited)
+
+
+class ThreatObserverMultiSlotTests(unittest.TestCase):
+    """The same interleave, on the per-monster threat table.
+
+    The failure here is worse than a dropped credit: a reset `_log` makes every
+    message look new, so one monster hit is folded in on every turn it survives.
+    A fight's twelve hits were counted ten to forty times, which does not read as
+    a bug -- it reads as a monster that hits much harder than it does.
+    """
+
+    @staticmethod
+    def _payload(fight_id, my_id, messages, names):
+        return {"fight_id": fight_id, "my_id": my_id,
+                "fighters": [{"id": my_id, "name": "me", "is_me": True},
+                             {"id": -1, "name": names[0]},
+                             {"id": -2, "name": names[1]}],
+                "battle_log": messages}
+
+    @staticmethod
+    def _hit(source, target, loss):
+        return [{"type": "GameActionFightSpellCastMessage", "source": source,
+                 "cell": 100, "destination_cell": 110},
+                {"type": "GameActionFightLifePointsLostMessage", "source": source,
+                 "target": target, "loss": loss}]
+
+    def test_two_slots_do_not_relearn_each_others_messages(self):
+        from combat.combat_ai_server import _ThreatObserver
+
+        with tempfile.TemporaryDirectory(prefix="threat-multi-") as tmp:
+            observer = _ThreatObserver(path=Path(tmp) / "threat.json")
+            names = ("Ragnarock", "Clobberstone")
+            me_a, me_b = ME, ME + 1
+            log_a, log_b = [], []
+            learned = 0
+            for _round in range(6):
+                # Slot 1's monster lands one new hit, then slot 2's does.
+                log_a = log_a + self._hit(-1, me_a, 12)
+                learned += observer.observe(
+                    self._payload(875, me_a, list(log_a), names))
+                log_b = log_b + self._hit(-2, me_b, 9)
+                learned += observer.observe(
+                    self._payload(876, me_b, list(log_b), names))
+            # Six hits per slot, one per round, and nothing counted twice.
+            self.assertEqual(learned, 12, "learned %d hits for 12 real ones"
+                             % learned)
+
+    def test_one_slot_replaying_its_own_log_still_learns_once(self):
+        from combat.combat_ai_server import _ThreatObserver
+
+        with tempfile.TemporaryDirectory(prefix="threat-single-") as tmp:
+            observer = _ThreatObserver(path=Path(tmp) / "threat.json")
+            names = ("Ragnarock", "Clobberstone")
+            log = []
+            learned = 0
+            for _round in range(5):
+                log = log + self._hit(-1, ME, 12)
+                learned += observer.observe(self._payload(875, ME, list(log), names))
+                # The page polls more than once per turn; a repeat is not a hit.
+                observer.observe(self._payload(875, ME, list(log), names))
+            self.assertEqual(learned, 5, "learned %d for 5 real hits" % learned)
+
+    def test_its_memory_is_bounded(self):
+        from combat.combat_ai_server import _MAX_TRACKED_FIGHTS, _ThreatObserver
+
+        with tempfile.TemporaryDirectory(prefix="threat-multi-") as tmp:
+            observer = _ThreatObserver(path=Path(tmp) / "threat.json")
+            names = ("Ragnarock", "Clobberstone")
+            for fight in range(_MAX_TRACKED_FIGHTS * 3):
+                observer.observe(self._payload(fight, ME, self._hit(-1, ME, 5),
+                                               names))
+            self.assertLessEqual(len(observer._logs), _MAX_TRACKED_FIGHTS)
+
+
+class ShadowResidualStreamTests(unittest.TestCase):
+    """`shadow_residuals` must pair a cast with *its own* fight's board.
+
+    Sorting the interleaved rows of two slots by time put fight A's pending
+    casts next to fight B's baseline HP, so a hit landed in A was priced against
+    a board from B. The number that comes out is a real number about nothing.
+    """
+
+    @staticmethod
+    def _row(my_id, fight_id, time, target_hp, *, cast=None, round_no=1):
+        fighters = [{"id": my_id, "is_me": True, "hp": 140, "max_hp": 140},
+                    {"id": -1, "hp": target_hp, "max_hp": 500, "level": 8,
+                     "name": "Ragnarock", "spells": [
+                         {"id": 442, "effects": [{"kind": "damage",
+                                                  "min": 10, "max": 10}]}]}]
+        row = {"my_id": my_id, "fight_id": fight_id, "time": time,
+               "round": round_no, "observation": {"fight": {"fight_id": fight_id},
+                                                  "self": fighters[0],
+                                                  "enemies": [fighters[1]]},
+               "decision": {"action": {}}}
+        if cast is not None:
+            row["decision"]["action"] = {"type": "cast", "spellId": 442,
+                                         "targetId": -1}
+        return row
+
+    def test_a_cast_is_paired_with_its_own_fights_update(self):
+        from combat.live_learn import shadow_residuals
+
+        # Two slots alternate. Each casts exactly 10 damage; each target loses
+        # exactly 10. A correct pairing gives every residual 0.0.
+        rows = [
+            self._row(ME, 875, 1.0, 500, cast=True, round_no=1),
+            self._row(ME + 1, 876, 1.1, 500, cast=True, round_no=1),
+            self._row(ME, 875, 1.2, 490, round_no=2),
+            self._row(ME + 1, 876, 1.3, 490, round_no=2),
+        ]
+        out = shadow_residuals(rows)
+        self.assertEqual(len(out), 2, out)
+        for item in out:
+            self.assertAlmostEqual(item["residual"], 0.0, places=4,
+                                   msg="crossed streams: %r" % (item,))
+
+    def test_each_residual_is_tagged_with_the_fight_it_belongs_to(self):
+        from combat.live_learn import shadow_residuals
+
+        rows = [
+            self._row(ME, 875, 1.0, 500, cast=True, round_no=1),
+            self._row(ME + 1, 876, 1.1, 500, cast=True, round_no=1),
+            self._row(ME, 875, 1.2, 400, round_no=2),
+            self._row(ME + 1, 876, 1.3, 450, round_no=2),
+        ]
+        out = shadow_residuals(rows)
+        by_fight = {item["fight_id"]: item for item in out}
+        self.assertEqual(sorted(by_fight), [875, 876])
+        self.assertAlmostEqual(by_fight[875]["actual"], 100.0, places=4)
+        self.assertAlmostEqual(by_fight[876]["actual"], 50.0, places=4)
+
+    def test_a_single_fight_is_unaffected_by_the_grouping(self):
+        from combat.live_learn import shadow_residuals
+
+        rows = [
+            self._row(ME, 875, 1.0, 500, cast=True, round_no=1),
+            self._row(ME, 875, 1.1, 400, round_no=2),
+        ]
+        out = shadow_residuals(rows)
+        self.assertEqual(len(out), 1)
+        self.assertAlmostEqual(out[0]["actual"], 100.0, places=4)
+        self.assertAlmostEqual(out[0]["residual"], 90.0, places=4)

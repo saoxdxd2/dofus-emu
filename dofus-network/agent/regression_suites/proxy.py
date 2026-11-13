@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent.regression import REPO_ROOT, OPTIONAL_IMPORTS, check, section
+from agent.regression_suites.common import REPO_ROOT, OPTIONAL_IMPORTS, check, section
 
 
 def test_command_routing_and_bridge_fast_fail() -> None:

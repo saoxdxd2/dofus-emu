@@ -792,7 +792,12 @@ class Autopilot:
         # and the `fight.estimate` tool, so a step and its refusal cannot disagree.
         # Reuse the canonical connection (and its bounded name cache) instead of
         # opening a second handle to the same 42 MiB read-only database.
-        self.fights = FightAdvisor(store=self.knowledge)
+        try:
+            from combat.live_learn import enemy_turn_price as _enemy_turn_price
+        except Exception:  # noqa: BLE001 - no learner means the level/AP prior
+            _enemy_turn_price = None
+        self.fights = FightAdvisor(store=self.knowledge,
+                                   enemy_turn_price=_enemy_turn_price)
         self.fight_log = FightOutcomeLog()
         self._character_at = 0.0     # last accepted sheet
         self._character_try = 0.0    # last attempt, successful or not
@@ -4944,7 +4949,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             state / ("objectives.%s.json" % (args.instance or "default")),
             instance=args.instance or "default")
     except Exception as exc:  # noqa: BLE001 - never block a run on the ledger
-        logger.debug("[autopilot] objective ledger unavailable: %s: %s" % (type(exc).__name__, exc))
+        print("[autopilot] objective ledger unavailable: %s: %s" % (type(exc).__name__, exc))
     try:
         from planning.experience import ExperienceStore
 
@@ -4952,16 +4957,16 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         pilot.experience = ExperienceStore(log_path=state / "experience.jsonl",
                                            snapshot_path=state / "posteriors.json")
         if len(pilot.experience):
-            logger.debug("[autopilot] experience store: %d posterior(s), %d event(s) seen"
+            print("[autopilot] experience store: %d posterior(s), %d event(s) seen"
                   % (len(pilot.experience), pilot.experience.events_seen))
         # The store is only worth writing if something reads it: seed the repair table with what
         # earlier sessions measured, so a new run starts from that evidence instead of from nothing.
         seeded = pilot.controller.seed_from_store(pilot.experience)
         if seeded:
-            logger.debug("[autopilot] repair table seeded with %d row(s) from the experience store"
+            print("[autopilot] repair table seeded with %d row(s) from the experience store"
                   % seeded)
     except Exception as exc:  # noqa: BLE001 - never block a run on the store
-        logger.debug("[autopilot] experience store unavailable: %s: %s" % (type(exc).__name__, exc))
+        print("[autopilot] experience store unavailable: %s: %s" % (type(exc).__name__, exc))
     try:
         # G126. Reuse the store above: a second ExperienceStore would fork the
         # learning state. All of the stack's files go to app data, not data/kb,
@@ -4970,10 +4975,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
         pilot.schedule_tap = attach_schedule_tap(pilot.experience)
         if pilot.schedule_tap is not None:
-            logger.debug("[autopilot] schedule tap: recording live outcomes into %s"
+            print("[autopilot] schedule tap: recording live outcomes into %s"
                   % pilot.schedule_tap.root)
     except Exception as exc:  # noqa: BLE001 - never block a run on the planner
-        logger.debug("[autopilot] schedule tap unavailable: %s: %s" % (type(exc).__name__, exc))
+        print("[autopilot] schedule tap unavailable: %s: %s" % (type(exc).__name__, exc))
     try:
         summary = pilot.run()
     except KeyboardInterrupt:
@@ -4987,9 +4992,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             try:
                 pilot.experience.save()
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[autopilot] experience store not saved: %s: %s"
+                print("[autopilot] experience store not saved: %s: %s"
                       % (type(exc).__name__, exc))
-    logger.debug(json.dumps(summary, ensure_ascii=False))
+    print(json.dumps(summary, ensure_ascii=False))
     return 0
 
 

@@ -70,6 +70,14 @@ jobs:
           python tools/codegen_schemas.py --check
           git diff --exit-code desktop/generated/contracts.cs dofus-network/generated/contracts.py scripts/contracts_gen.go scripts/contracts.generated.js
 
+      # storage/ has its own tests and none of the tools/gate.py suites reach
+      # them: the append store, the msgpack payload format and the DB lock are
+      # only exercised here. Discovered rather than named so a new module in the
+      # package is covered without editing this file.
+      - name: Storage suite (append store, payloads, locking)
+        working-directory: dofus-network
+        run: python -m unittest discover -s storage -t . -v
+
       - name: Reject scratch error logs (*_err.txt)
         run: |
           python -c "import pathlib, sys; errs = [str(p) for p in pathlib.Path('.').rglob('*_err.txt') if not any(part.startswith('.') for part in p.parts)]; sys.exit(1 if errs else 0)"

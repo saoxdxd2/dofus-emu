@@ -15,6 +15,30 @@ measurement rather than taste: on these level-200 builds seat 1 wins essentially
 every decided game (`seat1_win` 1.0, verdict `seat_dominated`), so a win/loss
 value has no variance to learn from and cannot rank two good policies.
 
+HP differential buys variance but not immunity. Seat 1's initiative shifts the
+whole return distribution upward, so a model regressing the differential still
+spends capacity on "which seat is this" -- and a plan that merely lets seat 1 act
+first outscores a plan that is actually better. That is the v3 confound, and
+``duel`` is the objective that removes it by construction:
+
+``paired``        Every board is played twice from the *same* seed with the two
+                  seats exchanged, so within a pair the seat is a constant and
+                  the only thing that varies is which side holds it. The pair
+                  is the unit, not the game; a single game cannot separate seat
+                  from plan, and averaging games from one assignment reports the
+                  seat bias as skill.
+``dueling``       The symlog two-hot logits are decomposed as
+                  ``Q(s, p) = V_seat(s) + A(s, p)``. ``V_seat`` is the state's
+expected return for *this seat* -- it absorbs build and initiative, i.e. the
+                  part no decision can change. ``A`` carries the plan, and is
+                  centred per board so it has no board-level offset to learn, so
+                  all of the head's capacity goes to the within-board ordering.
+``cvar``          Plans are ranked by the lower tail of the predicted
+                  distribution, ``CVaR_alpha = E[return | return <= Q_alpha]``,
+                  not its mean. Two plans with the same mean are not the same
+                  gamble, and the one whose worst 15% is better is the one that
+                  does not lose from a board deficit.
+
 The stabilisers are not decoration. Each one exists because a plain regression
 fails on this target:
 
@@ -42,6 +66,7 @@ fails on this target:
                   bound; it keeps generated games in a sane state distribution
                   instead of wandering.
 
+    python -m combat.duel_value --objective duel --games 400 --out models/duel_value_duel.pkl
     python -m combat.duel_value --games 400 --out models/duel_value_nn.pkl
     python -m combat.duel_value --evaluate models/duel_value_nn.pkl
 """
@@ -80,6 +105,15 @@ BLOCK = 17
 GEOMETRY = 6
 GLOBAL = 3
 FEATURES = 2 * BLOCK + GEOMETRY + GLOBAL
+
+#: The tail the policy optimises instead of the mean. 0.15 is the bound the
+#: duelling corpus is scored against; it is a parameter because the right tail
+#: depends on the HP the character has left (see :func:`cvar_of`).
+CVAR_ALPHA = 0.15
+#: Half-width of the advantage head's output before it is added to the value,
+#: in symlog units. It bounds ``A`` to the support, so an advantage can never
+#: push the summed logits into a region the two-hot target does not occupy.
+ADVANTAGE_BOUND = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -523,13 +557,252 @@ def generate_ranked(games: int, k: int = 6, rollouts: int = 1, seed: int = 7,
 
 
 # ---------------------------------------------------------------------------
+# paired side-swap corpus
+# ---------------------------------------------------------------------------
+
+
+def seat_of(state: Any, actor_id: int) -> int:
+    """1 or 2 -- which seat ``actor_id`` holds in ``state``.
+
+    `make_duel` binds seat 1 to ``fighters[0]`` and seat 2 to ``fighters[1]``,
+    and every state is rebuilt from the same seed per pair, so the seat is a
+    pure function of the id rather than a property that has to travel through
+    the corpus.
+    """
+    return 1 if int(actor_id) == int(state.fighters[0].id) else 2
+
+
+def _paired_chunk(job: Tuple[int, int, int, int, int, int, int, int]
+                  ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+                             Dict[str, Any]]:
+    """Worker body for :func:`generate_paired`.
+
+    One board, two games. The board is rebuilt from ``board_seed`` for each
+    half and the continuation rng restarts from ``board_seed + 1``, so the two
+    games differ in exactly one thing: which fighter the policy controls. The
+    solver's beam is deterministic given the board, so both halves are asked to
+    rank the *same* candidate set -- if they were not, a pair would be comparing
+    different decisions and the seat term would absorb the difference.
+    """
+    start, count, seed, k, rollouts, max_rounds, rows, snapshots = job
+    from combat.battle_solver import BattleSolver
+    from combat.duel import (DEFAULT_DATA, advance_turn, apply_plan, make_duel,
+                             plans_for)
+    from combat.duel_benchmark import sample_pair
+    from combat.normal_build_duel import DEFAULT_MAP
+
+    cells = _load_cells(DEFAULT_MAP)
+    data, levels = _load_table(DEFAULT_DATA)
+    pool = list(range(min(rows, len(levels))))
+    solver = BattleSolver(beam_width=8, max_actions=2)
+    rng = random.Random(seed)
+
+    feats: List[np.ndarray] = []
+    groups: List[int] = []
+    returns: List[float] = []
+    seats: List[int] = []
+    pairs: List[int] = []
+    stats = {"built": 0, "pairs": 0, "unpaired": 0, "flat": 0,
+             "snapshots": 0}
+    group = 0
+    pair = 0
+    for _ in range(count):
+        row_a, row_b = sample_pair(levels, pool, rng)
+        board_seed = rng.randrange(1 << 30)
+        halves: List[List[Tuple[Any, int, List[Any]]]] = []
+        # The swap is the *builds*, not the walking order. `make_duel` binds
+        # seat 1 to its first row and seat 2 to its second, and the encounter's
+        # engagement cells come from the board seed, so passing the rows
+        # reversed puts build B in seat 1 on the same board -- while passing
+        # them the same way twice (the first version of this loop) rebuilds an
+        # identical fight and both halves are seat 1.
+        for first, second in ((row_a, row_b), (row_b, row_a)):
+            walk = make_duel(data, first, second, cells,
+                             random.Random(board_seed), max_rounds=max_rounds)
+            if walk is None:
+                break
+            taken: List[Tuple[Any, int, List[Any]]] = []
+            while not walk.done:
+                walk.turns += 1
+                actor = walk.actor
+                plans = plans_for(walk, solver, k)
+                if not plans:
+                    break
+                taken.append((walk.clone(), actor.id, plans))
+                apply_plan(walk, plans[0])
+                if walk.done:
+                    break
+                advance_turn(walk)
+                if walk.done:
+                    break
+            halves.append(taken)
+        if len(halves) != 2:
+            stats["unpaired"] += 1
+            continue
+        stats["built"] += 1
+        # Pair by *turn number*, not by list position. The two halves are the
+        # same board from opposite seats, but a fight that ends a turn earlier in
+        # one half shifts every later index; zipping by position then compares
+        # turn 5 of one game with turn 4 of the other. Each snapshot carries its
+        # own `turns`, so the only honest pairing is the one whose turn counters
+        # are equal.
+        by_turn = [{snap.turns: (snap, aid, plans, seat_of(snap, aid))
+                    for snap, aid, plans in half} for half in halves]
+        # Same turn *and* opposite seats. Swapping the builds swaps initiative
+        # with them, so in a fight where B has the higher initiative the same
+        # build acts first in both halves and turn N is seat 2 twice. Pairing on
+        # the turn alone then silently pairs one seat with itself.
+        shared = sorted(turn for turn in set(by_turn[0]) & set(by_turn[1])
+                        if by_turn[0][turn][3] != by_turn[1][turn][3])
+        if not shared:
+            stats["unpaired"] += 1
+            continue
+        wanted = min(max(1, snapshots), len(shared))
+        chosen = np.unique(np.linspace(0, len(shared) - 1, wanted).round()
+                           .astype(int))
+        used_here = 0
+        for turn_index in chosen:
+            turn = shared[int(turn_index)]
+            # halves[0] walks from fighters[0]'s side, halves[1] from
+            # fighters[1]'s, both rebuilt from the same board seed, so this turn
+            # is the same decision point seen from seat 1 and seat 2. Both halves
+            # are emitted under one `pair` id or neither is: a half-pair teaches
+            # the seat term from one side only, which is the confound this corpus
+            # exists to remove.
+            # Each half is its own group -- the two seats are offered different
+            # candidate lists, because the solver plans from whichever fighter
+            # is holding the side -- but both halves of one pick share a `pair`
+            # id, which is what makes the seat gap measurable.
+            staged: List[Tuple[np.ndarray, float, int, int]] = []
+            half_group = group
+            for snapshot, actor_id, plans, _seat in (by_turn[0][turn],
+                                                     by_turn[1][turn]):
+                if len(plans) < 2:
+                    staged = []
+                    break
+                truths = rollout_truth(snapshot, actor_id, plans, solver, rng,
+                                       max_rounds, k, rollouts)
+                if len(set(round(t, 6) for t in truths)) < 2:
+                    stats["flat"] += 1
+                    staged = []
+                    break
+                actor = snapshot.by_id(actor_id)
+                seat = seat_of(snapshot, actor_id)
+                for plan, truth in zip(plans, truths):
+                    clone = snapshot.clone()
+                    apply_plan(clone, plan)
+                    staged.append((encode(clone, actor), float(truth), seat,
+                                   half_group))
+                half_group += 1
+            if not staged:
+                continue
+            for row, truth, seat, gid in staged:
+                feats.append(row)
+                groups.append(gid)
+                returns.append(truth)
+                seats.append(seat)
+                pairs.append(pair)
+            group = half_group
+            pair += 1
+            used_here += 1
+        if used_here:
+            stats["pairs"] += 1
+            stats["snapshots"] += used_here
+    X = (np.stack(feats).astype(np.float32) if feats
+         else np.zeros((0, FEATURES), np.float32))
+    return (X, np.asarray(groups, dtype=np.int32),
+            np.asarray(returns, dtype=np.float32),
+            np.asarray(seats, dtype=np.int8),
+            np.asarray(pairs, dtype=np.int32), stats)
+
+
+def generate_paired(games: int, k: int = 6, rollouts: int = 1, seed: int = 7,
+                    max_rounds: int = 12, rows: int = 4096, workers: int = 0,
+                    snapshots: int = 3
+                    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+                               np.ndarray, Dict[str, Any]]:
+    """Paired, side-swapped counterfactual corpus.
+
+    Returns ``(X, groups, returns, seats, pairs, meta)``. Every board
+    contributes two groups -- one per seat assignment -- over the same candidate
+    structure, and ``pairs`` names the decision point both groups describe, so
+    the two views of one board can be compared with each other and not only
+    with their own plans.
+
+    ``returns`` are seat-relative (``outcome(state, actor_id)``), which is what
+    makes the pair meaningful: the same physical result is a positive return for
+    the seat that won it and a negative one for the seat that lost, so the
+    board-level offset a single assignment bakes in cancels. What remains is the
+    seat term ``V_seat``, and separating it is the point -- it is the part of
+    the return that no plan can change.
+    """
+    workers = workers or min(8, (os.cpu_count() or 1))
+    workers = max(1, min(workers, max(1, games)))
+    if workers == 1:
+        X, groups, returns, seats, pairs, stats = _paired_chunk(
+            (0, games, seed, k, rollouts, max_rounds, rows, snapshots))
+        return X, groups, returns, seats, pairs, {
+            "objective": "duel", "games": games, "workers": 1, **stats,
+            "samples": int(len(returns)),
+            "boards": int(len(set(groups.tolist()))),
+            "decision_points": int(len(set(pairs.tolist())))}
+
+    import multiprocessing as mp
+
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("XLA_FLAGS",
+                          "--xla_cpu_multi_thread_eigen=false "
+                          "intra_op_parallelism_threads=1")
+
+    chunk = max(1, games // workers)
+    jobs = []
+    for index in range(workers):
+        count = chunk if index < workers - 1 else games - chunk * (workers - 1)
+        jobs.append((index * chunk, count, seed + 10007 * index, k, rollouts,
+                     max_rounds, rows, snapshots))
+    context = mp.get_context("spawn")
+    with context.Pool(workers) as pool:
+        results = pool.map(_paired_chunk, jobs)
+
+    xs, gs, rs, ss, ps = [], [], [], [], []
+    offset = pair_offset = 0
+    totals = {"built": 0, "pairs": 0, "unpaired": 0, "flat": 0,
+              "snapshots": 0}
+    for X, groups, returns, seats, pairs, stats in results:
+        if len(X) == 0:
+            continue
+        xs.append(X)
+        gs.append(groups + offset)
+        rs.append(returns)
+        ss.append(seats)
+        ps.append(pairs + pair_offset)
+        offset += int(groups.max()) + 1 if len(groups) else 0
+        pair_offset += int(pairs.max()) + 1 if len(pairs) else 0
+        for key in totals:
+            totals[key] += int(stats[key])
+    if not xs:
+        return (np.zeros((0, FEATURES), np.float32), np.zeros((0,), np.int32),
+                np.zeros((0,), np.float32), np.zeros((0,), np.int8),
+                np.zeros((0,), np.int32),
+                {"objective": "duel", "games": games, "workers": workers,
+                 "samples": 0, **totals})
+    return (np.concatenate(xs), np.concatenate(gs), np.concatenate(rs),
+            np.concatenate(ss), np.concatenate(ps),
+            {"objective": "duel", "games": games, "workers": workers,
+             "samples": int(sum(len(r) for r in rs)), "boards": int(offset),
+             "decision_points": int(pair_offset), **totals})
+
+
+# ---------------------------------------------------------------------------
 # model
 # ---------------------------------------------------------------------------
 
 
 def init_params(seed: int = 0, hidden: int = 256, layers: int = 3,
                 features: int = FEATURES, bins: int = BINS,
-                score_head: bool = False) -> Dict[str, Any]:
+                score_head: bool = False,
+                dueling_head: bool = False) -> Dict[str, Any]:
     """He-initialised residual MLP. Numpy init so training and serving agree.
 
     ``score_head`` adds an unbounded scalar output, and a residual path from the
@@ -566,6 +839,20 @@ def init_params(seed: int = 0, hidden: int = 256, layers: int = 3,
         params["w_score"] = np.zeros((hidden, 1), np.float32)
         params["b_score"] = np.zeros((1,), np.float32)
         params["hp_gain"] = np.ones((1,), np.float32)
+    if dueling_head:
+        # The decomposition Q(s, p) = V_seat(s) + A(s, p), both in symlog units.
+        #
+        # `v_seat` is a table of two distributions, indexed by the seat, and is
+        # the only part of the head allowed to depend on which side of the board
+        # the actor sits. `adv_w`/`adv_b` produce the plan advantage. They start
+        # at zero -- the same reason `w_score` does -- so the untrained model's
+        # Q is exactly V_seat and every plan on a board ties. A ranker that has
+        # learned nothing must be inert, not arbitrary: an inert head is measured
+        # (spread 0.0) and caught, an arbitrary one silently reorders plans.
+        params["v_seat"] = np.zeros((2, bins), np.float32)
+        params["v_bias"] = np.zeros((bins,), np.float32)
+        params["adv_w"] = np.zeros((hidden, bins), np.float32)
+        params["adv_b"] = np.zeros((bins,), np.float32)
     for index in range(layers):
         params["ln%d_w" % index] = np.ones((hidden,), np.float32)
         params["ln%d_b" % index] = np.zeros((hidden,), np.float32)
@@ -598,12 +885,12 @@ def _layernorm(x: Any, weight: Any, bias: Any, eps: float = 1e-5) -> Any:
     return (x - mean) * (1.0 / XP.sqrt(var + eps)) * weight + bias
 
 
-def forward(params: Dict[str, Any], features: Any) -> Any:
-    """Output of the head: categorical logits, or a scalar score.
+def trunk(params: Dict[str, Any], features: Any) -> Any:
+    """The shared representation every head reads.
 
-    Which one is decided by the parameters, not by a flag, so a checkpoint is
-    self-describing: ``w_score`` present means the listwise objective trained it
-    and the output is an unbounded score.
+    Split out of :func:`forward` so the dueling path can reuse exactly the same
+    trunk -- the decomposition has to differ in the *head*, or ``V`` and ``A``
+    would be reading two different encodings and the sum would mean nothing.
     """
     h = _layernorm(features, params["norm_w"], params["norm_b"])
     h = relu(h @ params["w_in"] + params["b_in"])
@@ -612,6 +899,42 @@ def forward(params: Dict[str, Any], features: Any) -> Any:
         block = relu(block @ params["w1_%d" % index] + params["b1_%d" % index])
         block = block @ params["w2_%d" % index] + params["b2_%d" % index]
         h = h + params["ls_%d" % index] * block
+    return h
+
+
+def _seated(table: Any, seat: Any) -> Any:
+    """Row ``seat - 1`` of a ``[2, ...]`` parameter table, for any seat shape."""
+    index = XP.clip(XP.asarray(seat, dtype=XP.int32) - 1, 0, 1)
+    return table[index]
+
+
+def forward(params: Dict[str, Any], features: Any, seat: Any = None) -> Any:
+    """Output of the head: categorical logits, or a scalar score.
+
+    Which one is decided by the parameters, not by a flag, so a checkpoint is
+    self-describing: ``w_score`` means the listwise objective trained it and the
+    output is an unbounded score; ``v_seat`` means the dueling objective trained
+    it and the output is symlog two-hot logits summing a seat value and a plan
+    advantage.
+
+    ``seat`` is required by the dueling head and ignored by the others. It is a
+    separate argument rather than a feature column on purpose: a seat one-hot in
+    the encoder would be learnable through the shared trunk, which is exactly
+    the confound the decomposition exists to remove.
+    """
+    h = trunk(params, features)
+    if "v_seat" in params:
+        if seat is None:
+            raise ValueError("a dueling head needs the seat it is scoring for; "
+                             "forward(params, features, seat=1)")
+        seat_rows = XP.asarray(seat, dtype=XP.int32).reshape(-1) - 1
+        seat_rows = XP.clip(seat_rows, 0, 1)
+        value = params["v_seat"][seat_rows] + params["v_bias"]
+        advantage = h @ params["adv_w"] + params["adv_b"]
+        # A is scaled into +-ADVANTAGE_BOUND by tanh so an advantage cannot push
+        # the summed logits past the support; the target only ever lives there.
+        advantage = ADVANTAGE_BOUND * XP.tanh(advantage)
+        return value + advantage
     if "w_score" in params:
         # The residual carries the successor's HP differential through with a
         # gain of 1 at initialisation, so the model starts at the greedy
@@ -628,13 +951,76 @@ def value_of(logits: Any) -> Any:
     return symexp(XP.sum(probabilities * centres, axis=-1))
 
 
-def predict(params: Dict[str, Any], features: np.ndarray) -> np.ndarray:
+def distribution_of(logits: Any) -> Any:
+    """Bin probabilities of the two-hot head, shape ``[..., BINS]``."""
+    return XP.exp(log_softmax(logits, axis=-1))
+
+
+def cvar_of(logits: Any, alpha: float = CVAR_ALPHA) -> Any:
+    """Lower-tail CVaR of the return distribution, in return units.
+
+    ``CVaR_alpha = E[R | R <= Q_alpha(R)]`` -- the mean of the worst ``alpha``
+    of outcomes, which is the quantity a plan is judged on here rather than its
+    mean. Two plans can have the same expected return and completely different
+    downside; the mean cannot tell them apart and a low-HP character cares about
+    nothing else. This is the standard coherent risk measure (Rockafellar &
+    Uryasev), and on a categorical distribution it has a closed form: sort the
+    bins by return, walk the CDF, and take the mass-weighted average of the part
+    below the ``alpha`` quantile, with the boundary bin contributing only its
+    share.
+
+    Computed on the *return* scale (through symexp), not on symlog, because the
+    tail being averaged is a tail of HP, not of a compressed coordinate. Averaging
+    in symlog space would understate a blowout: symlog compresses exactly the
+    region CVaR is supposed to see.
+
+    Identical in numpy and jax: no sorting primitive is used (the support is
+    already sorted, and the bins are indexed in that order), only cumsum, so it
+    can sit inside a jitted loss and be evaluated on a plain array.
+    """
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("cvar alpha must be in (0, 1], got %r" % (alpha,))
+    probabilities = XP.exp(log_softmax(logits, axis=-1))
+    centres = symexp(XP.asarray(support()))
+    cumulative = XP.cumsum(probabilities, axis=-1)
+    # Mass of each bin that falls strictly below the alpha quantile, plus the
+    # fraction of the bin that straddles it. Clipping the CDF to alpha and
+    # differencing gives exactly that weight, and is branch-free:
+    #   weight_i = min(cum_i, alpha) - min(cum_{i-1}, alpha)
+    clipped = XP.minimum(cumulative, alpha)
+    earlier = XP.concatenate([XP.zeros_like(clipped[..., :1]), clipped[..., :-1]],
+                             axis=-1)
+    weight = clipped - earlier
+    total = XP.sum(weight, axis=-1)
+    # total is alpha unless the distribution is degenerate at alpha -> 0, which
+    # `minimum` handles: every bin gets zero weight only if alpha <= 0, which is
+    # rejected above. The guard is for a null row in a padded batch.
+    total = XP.maximum(total, 1e-12)
+    return XP.sum(weight * centres, axis=-1) / total
+
+
+def predict(params: Dict[str, Any], features: np.ndarray,
+            seat: Any = None) -> np.ndarray:
     if len(features) == 0:
         return np.zeros((0,), np.float32)
-    out = forward(params, XP.asarray(features))
+    out = forward(params, XP.asarray(features), seat=seat)
+    if "v_seat" in params:
+        return np.asarray(value_of(out), dtype=np.float32)
     if "w_score" in params:
         return np.asarray(out[:, 0], dtype=np.float32)
     return np.asarray(value_of(out), dtype=np.float32)
+
+
+def predict_cvar(params: Dict[str, Any], features: np.ndarray, seat: Any = None,
+                 alpha: float = CVAR_ALPHA) -> np.ndarray:
+    """Lower-tail CVaR per row, in return units. Needs a two-hot head."""
+    if len(features) == 0:
+        return np.zeros((0,), np.float32)
+    out = forward(params, XP.asarray(features), seat=seat)
+    if "v_seat" not in params and "w_score" in params:
+        raise ValueError("a scalar score head has no distribution to take a "
+                         "tail of; train with --objective duel or value")
+    return np.asarray(cvar_of(out, alpha), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1398,345 @@ def train_listwise(X: np.ndarray, groups: np.ndarray, returns: np.ndarray,
     return {"params": served, "report": report}
 
 
+def _tail_targets(values: np.ndarray, mask: np.ndarray, alpha: float) -> np.ndarray:
+    """Per row, the mean of the worst ``alpha`` of that board's measured returns.
+
+    Computed from the measured returns directly, not from the decoded two-hot
+    target: the head is being taught what the tail *is*, so deriving the target
+    from the encoding would make the objective a reconstruction of itself.
+    """
+    order = np.argsort(np.where(mask > 0, values, 1e9), axis=1, kind="stable")
+    sorted_values = np.take_along_axis(values, order, axis=1)
+    count = np.maximum(mask.sum(axis=1, keepdims=True), 1.0)
+    keep = np.maximum(np.round(count * alpha), 1.0)
+    positions = np.arange(values.shape[1])[None, :]
+    weight = positions < keep
+    total = np.where(weight, sorted_values, 0.0).sum(axis=1)
+    return (total / keep.reshape(-1)).astype(np.float32)
+
+
+def _seat_slots(groups: np.ndarray, seats: np.ndarray, ids: np.ndarray,
+                width: int) -> np.ndarray:
+    """The seat of the row filling each ``[G, K]`` slot, 0 on padding.
+
+    Built with the same sort/unique walk `dense_groups` uses, so the slot
+    numbering cannot drift from the one the features were packed with.
+    """
+    order = np.argsort(groups, kind="stable")
+    _, starts, counts = np.unique(groups[order], return_index=True,
+                                  return_counts=True)
+    # `ids` is sorted by `np.unique`, and `dense_groups` emits its rows in that
+    # same order, so slot i corresponds to the i-th unique group.
+    lookup = {int(gid): slot for slot, gid in enumerate(ids)}
+    out = np.zeros((len(ids), width), np.int32)
+    for gid, start, count in zip(ids, starts, counts):
+        rows = order[start:start + count]
+        out[lookup[int(gid)], :len(rows)] = np.asarray(seats, np.int32)[rows]
+    return out
+
+
+def train_dueling(X: np.ndarray, groups: np.ndarray, returns: np.ndarray,
+                  seats: np.ndarray, pairs: Optional[np.ndarray] = None,
+                  epochs: int = 60, batch: int = 32,
+                  lr: float = 3e-3, hidden: int = 256, layers: int = 3,
+                  seed: int = 0, ema: float = 0.995, clip: float = 1.0,
+                  temp: float = 0.08, alpha: float = CVAR_ALPHA,
+                  verbose: bool = True) -> Dict[str, Any]:
+    """Fit the dueling distributional head on paired, side-swapped boards.
+
+    The head predicts a full distribution of the return, so one model answers
+    both "what is the mean" and "what is the worst 15%" without retraining. Its
+    logits are decomposed as ``Q(s, p) = V_seat(s) + A(s, p)``:
+
+    * ``V_seat`` is a table indexed by the seat. It is the *only* parameter that
+      can read which side the actor holds, so every seat-dependent part of the
+      return -- build and initiative included, not just the opening initiative
+      roll -- has one place to go and no way to leak into the plan ranking.
+    * ``A`` reads the shared trunk and carries the plan. It is bounded by
+      ``tanh`` into +-``ADVANTAGE_BOUND`` so an advantage cannot move the summed
+      logits into bins the target never occupies.
+
+    The loss has three terms, all on the same dense ``[G, K]`` layout:
+
+    ``cross``   two-hot cross-entropy against each plan's measured outcome. This
+                is what teaches the *shape* of the return, not just an order.
+    ``listwise`` conditional logit on the board's softmaxed returns. This is the
+                within-board signal, and it is what makes the head rank at all.
+    ``0.1 * downside`` |CVaR_alpha(predicted) - CVaR_alpha(measured)|. Without
+                it the second moment the policy reads is never fitted directly:
+                a two-hot head trained only on cross-entropy reproduces the mean
+                well and its tail is whatever the bins happen to imply.
+
+    The split is by **board**. ``generate_paired`` emits two groups per physical
+    board (one per seat assignment), and they are separate groups here, so the
+    two halves of a pair can land on opposite sides of the split. That is
+    intended: a validation number taken on one arbitrary assignment is exactly
+    the seat-biased measurement this construction exists to remove.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    if len(X) == 0:
+        raise SystemExit("no samples: generate paired duels first")
+
+    Xd, mask, td, ids = dense_groups(groups, X, returns)
+    seats = np.asarray(seats, np.int32)
+    sd = _seat_slots(groups, seats, ids, Xd.shape[1])
+    q = _soft_targets(td, mask, temp)
+    tail = _tail_targets(td, mask, alpha)
+
+    # Percentile scaling, then symlog, then two-hot -- the order `train` uses and
+    # for the same reason: two-hot before scaling puts the mass in two centre
+    # bins and the head never sees the tails it is asked to predict.
+    scale = float(np.percentile(np.abs(returns), 95)) or 1.0
+    normalised = np.clip(returns / scale, -1.0, 1.0)
+    encoded = two_hot(symlog(normalised))
+    T = np.zeros((len(ids), Xd.shape[1], BINS), np.float32)
+    order = np.argsort(groups, kind="stable")
+    _, starts, counts = np.unique(groups[order], return_index=True,
+                                  return_counts=True)
+    for slot in range(len(ids)):
+        rows = order[starts[slot]:starts[slot] + counts[slot]]
+        T[slot, :len(rows)] = encoded[rows]
+
+    rng = np.random.default_rng(seed)
+    board_order = rng.permutation(len(ids))
+    split = int(len(board_order) * 0.85)
+    train_idx, val_idx = board_order[:split], board_order[split:]
+
+    pair_rows = (np.asarray(pairs, np.int32) if pairs is not None
+                 else np.arange(len(returns), dtype=np.int32))
+    report: Dict[str, Any] = {
+        "objective": "duel",
+        "samples": int(len(returns)),
+        "boards": int(len(ids)),
+        "pairs": int(len(set(pair_rows.tolist()))),
+        "train_boards": int(len(train_idx)),
+        "val_boards": int(len(val_idx)),
+        "mean_plans": round(float(mask.sum(axis=1).mean()), 3),
+        "temp": temp,
+        "alpha": alpha,
+        "scale": scale,
+        "seat1_rows": int((seats == 1).sum()),
+        "seat2_rows": int((seats == 2).sum()),
+        "return_std_within": round(float(np.mean([
+            td[i][mask[i] > 0].std() for i in range(len(ids))])), 4),
+    }
+
+    params = init_params(seed, hidden, layers, dueling_head=True)
+    ema_params = tree_map(lambda a: np.array(a, copy=True), params)
+    adam_m = tree_map(lambda a: jnp.zeros_like(jnp.asarray(a)), params)
+    adam_v = tree_map(lambda a: jnp.zeros_like(jnp.asarray(a)), params)
+
+    def loss_fn(p, batch_x, batch_seat, batch_t, batch_mask, batch_q, batch_tail):
+        flat = forward(p, batch_x.reshape(-1, batch_x.shape[-1]),
+                       seat=batch_seat.reshape(-1))
+        logits = flat.reshape(batch_x.shape[0], batch_x.shape[1], -1)
+        cross = -jnp.sum(batch_t * log_softmax(logits, axis=-1), axis=-1)
+        cross = jnp.sum(cross * batch_mask) / jnp.maximum(jnp.sum(batch_mask), 1.0)
+        values = value_of(logits)
+        values = jnp.where(batch_mask > 0, values, -1e9)
+        log_p = values - jax.nn.logsumexp(values, axis=1, keepdims=True)
+        listwise = -jnp.sum(batch_q * log_p * batch_mask) / batch_x.shape[0]
+        # A board's tail is one number, but it is compared against every plan's
+        # predicted tail, so it has to broadcast across the plan axis.
+        predicted_tail = cvar_of(logits, alpha)
+        want_tail = batch_tail[:, None]
+        downside = jnp.sum(jnp.abs(predicted_tail - want_tail) * batch_mask) \
+            / jnp.maximum(jnp.sum(batch_mask), 1.0)
+        return cross + listwise + 0.1 * downside
+
+    grad_fn = jax.jit(jax.value_and_grad(loss_fn))
+    steps_per_epoch = max(1, math.ceil(len(train_idx) / batch))
+    step = 0
+    rate = 0.0
+    history: List[Dict[str, Any]] = []
+    best_ce = float("inf")
+    best_epoch = 0
+    best_params: Optional[Dict[str, Any]] = None
+
+    for epoch in range(1, epochs + 1):
+        np.random.default_rng(seed + epoch).shuffle(train_idx)
+        total = 0.0
+        seen = 0
+        for start in range(0, len(train_idx), batch):
+            chunk = train_idx[start:start + batch]
+            if len(chunk) == 0:
+                continue
+            seen += 1
+            loss, grads = grad_fn(params, jnp.asarray(Xd[chunk]),
+                                  jnp.asarray(sd[chunk]), jnp.asarray(T[chunk]),
+                                  jnp.asarray(mask[chunk]), jnp.asarray(q[chunk]),
+                                  jnp.asarray(tail[chunk]))
+            step += 1
+            warm = min(1.0, step / max(1, 0.05 * steps_per_epoch * epochs))
+            rate = lr * warm * 0.5 * (1.0 + math.cos(math.pi * epoch / epochs))
+            norm = jnp.sqrt(sum(jnp.sum(jnp.square(g))
+                                for g in jax.tree_util.tree_leaves(grads)))
+            factor = jnp.minimum(1.0, clip / (norm + 1e-12))
+            grads = jax.tree_util.tree_map(lambda g: g * factor, grads)
+            m = jax.tree_util.tree_map(lambda m, g: 0.9 * m + 0.1 * g, adam_m, grads)
+            v = jax.tree_util.tree_map(lambda v, g: 0.999 * v + 0.001 * g * g,
+                                       adam_v, grads)
+            mh = jax.tree_util.tree_map(lambda x: x / (1 - 0.9 ** step), m)
+            vh = jax.tree_util.tree_map(lambda x: x / (1 - 0.999 ** step), v)
+            params = jax.tree_util.tree_map(
+                lambda p, mh, vh: p - rate * mh / (jnp.sqrt(vh) + 1e-8),
+                params, mh, vh)
+            adam_m, adam_v = m, v
+            decay = min(ema, (1.0 + step) / (10.0 + step))
+            ema_params = jax.tree_util.tree_map(
+                lambda e, p: decay * e + (1.0 - decay) * p, ema_params, params)
+            total += float(loss)
+
+        averaged = {key: np.asarray(value) for key, value in ema_params.items()}
+        metrics = _duel_metrics(averaged, Xd[val_idx], sd[val_idx], td[val_idx],
+                                mask[val_idx], temp, alpha)
+        row = {"epoch": epoch, "train_loss": round(total / max(1, seen), 5),
+               "val_ce": round(metrics["ce"], 5),
+               "val_top1": round(metrics["top1"], 4),
+               "val_spearman": round(metrics["mean_spearman"], 4),
+               "val_cvar_top1": round(metrics["cvar_top1"], 4),
+               "seat_gap": round(metrics["seat_gap"], 4),
+               "lr": round(rate, 6)}
+        history.append(row)
+        if metrics["ce"] < best_ce:
+            best_ce = metrics["ce"]
+            best_epoch = epoch
+            best_params = {key: np.array(value, copy=True)
+                           for key, value in averaged.items()}
+        if verbose and (epoch == 1 or epoch % 10 == 0 or epoch == epochs):
+            logger.debug(json.dumps(row))
+
+    served = best_params if best_params is not None else {
+        key: np.asarray(value) for key, value in ema_params.items()}
+    final = _duel_metrics(served, Xd[val_idx], sd[val_idx], td[val_idx],
+                          mask[val_idx], temp, alpha)
+    report.update({
+        "history": history,
+        "config": {"hidden": hidden, "layers": layers, "epochs": epochs,
+                   "batch": batch, "lr": lr, "ema": ema, "temp": temp,
+                   "alpha": alpha},
+        "val_ce": float(best_ce),
+        "best_epoch": best_epoch,
+        "val_top1": final["top1"],
+        "val_spearman": final["mean_spearman"],
+        "val_cvar_top1": final["cvar_top1"],
+        "seat_gap": final["seat_gap"],
+        "paired": paired_seat_gap(served, X, returns, seats, pair_rows),
+        "spread": float(np.std(predict(served, X, seat=seats))),
+    })
+    return {"params": served, "report": report}
+
+
+def paired_seat_gap(params: Dict[str, Any], X: np.ndarray, rows_truth: np.ndarray,
+                    seats: np.ndarray, pairs: np.ndarray) -> Dict[str, float]:
+    """How much of the ranking is seat, measured on real pairs.
+
+    For every pair -- one board, one decision point, both seats -- the two
+    halves are asked to rank their own candidates. ``plan_rank_spread`` is the
+    mean absolute difference between the *predicted* values that the same
+    physical plans receive from the two seats: if the decomposition works it is
+    small, because the seat can only move ``V_seat``, which is constant across
+    the board's plans and therefore cannot reorder them.
+
+    ``measured_gap`` is the same statistic on the *true* returns. It is the
+    control: it should be large when the builds are seat-separated. A model
+    whose spread is small while the truth's is large has attributed the seat
+    effect to the one term that cannot decide anything, which is exactly the
+    intended behaviour, and not to the plan.
+    """
+    values = np.asarray(predict(params, X, seat=seats), dtype=np.float64)
+    truth = np.asarray(rows_truth, dtype=np.float64)
+    rank_gaps: List[float] = []
+    truth_gaps: List[float] = []
+    for pid in np.unique(pairs):
+        rows = np.flatnonzero(pairs == pid)
+        seat1 = rows[seats[rows] == 1]
+        seat2 = rows[seats[rows] == 2]
+        if len(seat1) == 0 or len(seat2) == 0:
+            continue
+        # Sorted value vectors: order-free, and it does not assume the two
+        # halves were offered the same plans -- which the solver's beam does not
+        # guarantee once the boards diverge mid-fight.
+        first, second = np.sort(values[seat1]), np.sort(values[seat2])
+        width = min(len(first), len(second))
+        rank_gaps.append(float(np.mean(np.abs(first[:width] - second[:width]))))
+        tfirst, tsecond = np.sort(truth[seat1]), np.sort(truth[seat2])
+        truth_gaps.append(float(np.mean(np.abs(tfirst[:width] - tsecond[:width]))))
+    if not rank_gaps:
+        return {"plan_rank_spread": float("nan"), "measured_gap": float("nan"),
+                "pairs": 0}
+    return {"plan_rank_spread": round(float(np.mean(rank_gaps)), 4),
+            "measured_gap": round(float(np.mean(truth_gaps)), 4),
+            "pairs": len(rank_gaps)}
+
+
+def _duel_metrics(params: Dict[str, Any], Xd: np.ndarray, sd: np.ndarray,
+                  td: np.ndarray, mask: np.ndarray, temp: float,
+                  alpha: float) -> Dict[str, float]:
+    """Held-out board metrics for the dueling head, including the seat gap.
+
+    ``seat_gap`` is the diagnostic the decomposition is judged by: the distance
+    between the two seat rows of ``V_sub`` alone, decoded to return units. It is
+    expected to be large when the builds are seat-separated -- that is the
+    separation being *absorbed*, where it cannot influence a decision -- and it
+    is measured separately from the ranking so the two can never be confused.
+    """
+    if len(Xd) == 0:
+        return {"ce": float("nan"), "top1": float("nan"),
+                "mean_spearman": float("nan"), "cvar_top1": float("nan"),
+                "seat_gap": float("nan"), "boards": 0}
+    width = Xd.shape[1]
+    flat_x = Xd.reshape(-1, Xd.shape[-1])
+    logits = np.asarray(forward(params, XP.asarray(flat_x),
+                                seat=XP.asarray(sd.reshape(-1))))
+    logits = logits.reshape(Xd.shape[0], width, -1)
+
+    scores = np.asarray(value_of(XP.asarray(logits)))
+    cvar = np.asarray(cvar_of(XP.asarray(logits), alpha))
+    scores = np.where(mask > 0, scores, -1e9)
+    cvar = np.where(mask > 0, cvar, -1e9)
+
+    q = _soft_targets(td, mask, temp)
+    scaled = scores - scores.max(axis=1, keepdims=True)
+    weight = np.exp(scaled) * mask
+    p = weight / np.maximum(weight.sum(axis=1, keepdims=True), 1e-12)
+    ce = float(-np.sum(q * np.log(p + 1e-9)) / max(1, len(Xd)))
+
+    hits = cvar_hits = 0
+    rhos: List[float] = []
+    for slot in range(len(Xd)):
+        alive = mask[slot] > 0
+        truth = td[slot][alive]
+        best = float(truth.max())
+        hits += int(abs(float(truth[int(np.argmax(scores[slot][alive]))]) - best) < 1e-9)
+        pick = int(np.argmax(cvar[slot][alive]))
+        cvar_hits += int(abs(float(truth[pick]) - best) < 1e-9)
+        if truth.std() > 0 and len(truth) > 1:
+            ra = _average_ranks(scores[slot][alive])
+            rb = _average_ranks(truth)
+            ra = ra - ra.mean()
+            rb = rb - rb.mean()
+            denominator = math.sqrt(float((ra * ra).sum() * (rb * rb).sum()))
+            if denominator > 0:
+                rhos.append(float((ra * rb).sum() / denominator))
+
+    centre_values = np.asarray(symexp(support()))
+    table = np.asarray(params["v_seat"], np.float64) + np.asarray(params["v_bias"])[None, :]
+    by_seat = []
+    for row in table:
+        weights = np.exp(row - row.max())
+        weights /= weights.sum()
+        by_seat.append(float((weights * centre_values).sum()))
+    seat_gap = abs(by_seat[0] - by_seat[1])
+
+    return {"ce": ce, "top1": hits / float(len(Xd)),
+            "cvar_top1": cvar_hits / float(len(Xd)),
+            "mean_spearman": float(np.mean(rhos)) if rhos else float("nan"),
+            "seat_gap": seat_gap, "boards": int(len(Xd))}
+
+
 # ---------------------------------------------------------------------------
 # policy
 # ---------------------------------------------------------------------------
@@ -1019,7 +1744,8 @@ def train_listwise(X: np.ndarray, groups: np.ndarray, returns: np.ndarray,
 
 def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
                            trust: float = 0.5, tie_break: float = 1e-4,
-                           margin: float = 0.0) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
+                           margin: float = 0.0, alpha: float = CVAR_ALPHA,
+                           risk: str = "auto") -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Greedy one-step lookahead over the solver's candidate plans.
 
     Each candidate is applied, the successor is encoded, and the plan whose
@@ -1050,8 +1776,33 @@ def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
     comparable temperature. A model trained with :func:`train_listwise` produces
     a conditional-logit score in arbitrary units -- only its ordering is
     identified -- so it must be served with ``trust=0``.
+
+    ``risk`` selects the statistic a plan is ranked by. ``"cvar"`` (the default,
+    and the reason the dueling head exists) takes the mean of the predicted
+    distribution's worst ``alpha``; ``"mean"`` takes its expectation and is kept
+    for reproducing the earlier results. Only a head with a distribution can do
+    the first: a scalar score is raised, because silently falling back to the
+    mean would turn a risk-aware configuration into the thing it replaced
+    without saying so. The two agree in ordering only when every plan on the
+    board has the same spread, which is not the case this policy is placed in.
+
+    Terminal plans are scored by their exact return under either statistic, as
+    before: a finished game has no distribution left to take a tail of.
     """
     params = tree_map(XP.asarray, params)
+    dueling = "v_seat" in params
+    if risk not in ("auto", "cvar", "mean"):
+        raise ValueError("risk must be 'auto', 'cvar' or 'mean', got %r" % (risk,))
+    if risk == "cvar" and not dueling:
+        # An explicit request for a tail the head cannot express is a caller
+        # error: silently serving the mean would make a risk-aware configuration
+        # quietly become the thing it replaced.
+        raise ValueError("risk='cvar' needs a distributional head; this checkpoint "
+                         "has none. Train with --objective duel, or ask for "
+                         "risk='mean'.")
+    if risk == "auto":
+        risk = "cvar" if dueling else "mean"
+
 
     def policy(state: Any, actor: Any, plans: Sequence[Any], rng: random.Random,
                _model: Any = None) -> Any:
@@ -1071,7 +1822,17 @@ def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
         values = np.zeros(len(plans), dtype=np.float64)
         pending = [index for index, row in enumerate(rows) if row is not None]
         if pending:
-            predicted = predict(params, np.stack([rows[i] for i in pending]))
+            batch = np.stack([rows[i] for i in pending])
+            if dueling:
+                # The seat is a property of the actor, not of the plan: every
+                # candidate on this board is being judged from the same side.
+                seat = np.full(len(pending), seat_of(state, actor.id), np.int32)
+                if risk == "cvar":
+                    predicted = predict_cvar(params, batch, seat=seat, alpha=alpha)
+                else:
+                    predicted = predict(params, batch, seat=seat)
+            else:
+                predicted = predict(params, batch)
             for slot, index in enumerate(pending):
                 values[index] = float(predicted[slot])
         for index, value in enumerate(exact):
@@ -1097,7 +1858,9 @@ def make_policy_for_params(params: Dict[str, Any], temperature: float = 0.15,
 
 
 def make_policy(path: Path, temperature: float = 0.15, trust: float = 0.5,
-                tie_break: float = 1e-4, margin: float = 0.0) -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
+                tie_break: float = 1e-4, margin: float = 0.0,
+                alpha: float = CVAR_ALPHA,
+                risk: str = "auto") -> Callable[[DuelState, Duelist, Sequence[TurnPlan], random.Random], TurnPlan]:
     """Load a checkpoint and build its lookahead policy.
 
     Thin wrapper over :func:`make_policy_for_params`; the checkpoint also carries
@@ -1107,7 +1870,8 @@ def make_policy(path: Path, temperature: float = 0.15, trust: float = 0.5,
     with Path(path).open("rb") as handle:
         payload = pickle.load(handle)
     return make_policy_for_params(payload["params"], temperature=temperature,
-                                  trust=trust, tie_break=tie_break, margin=margin)
+                                  trust=trust, tie_break=tie_break, margin=margin,
+                                  alpha=alpha, risk=risk)
 
 
 def evaluate(policy_a: Any, policy_b: Any, games: int = 200, seed: int = 11,
@@ -1274,10 +2038,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="conservative-improvement gate in units of the "
                              "candidate score spread; deviate from the solver "
                              "only when the advantage clears it")
-    parser.add_argument("--objective", choices=("value", "rank"), default="rank",
+    parser.add_argument("--objective", choices=("value", "rank", "duel"),
+                        default="rank",
                         help="'value' regresses the absolute return (the objective "
                              "that could not rank); 'rank' is the conditional "
-                             "logit on within-board comparisons")
+                             "logit on within-board comparisons and a scalar "
+                             "score; 'duel' is the distributional dueling head on "
+                             "paired side-swapped boards, and the only one that "
+                             "can be ranked by CVaR")
+    parser.add_argument("--cvar-alpha", type=float, default=CVAR_ALPHA,
+                        help="tail mass the policy optimises (0.15 = the worst "
+                             "15%% of the predicted return distribution)")
+    parser.add_argument("--risk", choices=("auto", "cvar", "mean"), default="auto",
+                        help="statistic a plan is ranked by at serving time; 'auto' "
+                             "means CVaR for a duel head and the mean otherwise")
     parser.add_argument("--k", type=int, default=6)
     parser.add_argument("--rollouts", type=int, default=1,
                         help="rollouts per plan when building the ranked corpus")
@@ -1304,13 +2078,45 @@ def main(argv: Optional[List[str]] = None) -> int:
                                     "val_nll", "val_top1", "val_spearman",
                                     "spread", "best_epoch", "final_epoch_ce")}))
         policy = make_policy(args.evaluate, trust=args.trust,
-                             margin=args.margin)
+                             margin=args.margin, alpha=args.cvar_alpha,
+                             risk=args.risk)
         result = evaluate(policy, solver_policy, games=args.bench_games,
                           seed=args.seed, name_a="neural_value", name_b="solver")
         logger.debug("benchmark", json.dumps(result, indent=1))
         return 0
 
-    if args.objective == "rank":
+    if args.objective == "duel":
+        if args.corpus is not None and args.corpus.exists():
+            blob = np.load(args.corpus)
+            X, groups, returns = blob["X"], blob["groups"], blob["returns"]
+            if "seats" not in blob or "pairs" not in blob:
+                raise SystemExit("%s predates the paired corpus (no 'seats'/'pairs'); "
+                                 "delete it and regenerate" % args.corpus)
+            seats, pairs = blob["seats"], blob["pairs"]
+            meta = json.loads(str(blob["meta"]))
+            logger.debug("paired corpus (cached)", json.dumps(meta))
+        else:
+            X, groups, returns, seats, pairs, meta = generate_paired(
+                args.games, k=args.k, rollouts=args.rollouts, seed=args.seed,
+                workers=args.workers, snapshots=args.snapshots)
+            logger.debug("paired counterfactual", json.dumps(meta))
+            if args.corpus is not None:
+                args.corpus.parent.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(args.corpus, X=X, groups=groups,
+                                    returns=returns, seats=seats, pairs=pairs,
+                                    meta=np.asarray(json.dumps(meta)))
+        fitted = train_dueling(X, groups, returns, seats, pairs=pairs,
+                               epochs=args.epochs,
+                               hidden=args.hidden, layers=args.layers,
+                               seed=args.seed, temp=args.temp,
+                               alpha=args.cvar_alpha)
+        report = fitted["report"]
+        logger.debug("duel fit", json.dumps({key: report[key] for key in
+                                 ("boards", "samples", "seat1_rows", "seat2_rows",
+                                  "val_ce", "val_top1", "val_spearman",
+                                  "val_cvar_top1", "seat_gap", "best_epoch",
+                                  "spread")}))
+    elif args.objective == "rank":
         if args.corpus is not None and args.corpus.exists():
             blob = np.load(args.corpus)
             X, groups, returns = blob["X"], blob["groups"], blob["returns"]

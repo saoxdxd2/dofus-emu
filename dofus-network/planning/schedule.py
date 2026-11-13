@@ -115,6 +115,19 @@ class ScheduleManager:
         self._persist()
         return self.plan
 
+    def abort(self, reason: str = "falsified") -> None:
+        """Cancel the active plan and reset to idle/unplanned state."""
+        self.plan = None
+        self.goal = None
+        self.goal_text = ""
+        self.leaf_cache = []
+        self.pointer = 0
+        if self.state_file.exists():
+            try:
+                self.state_file.unlink()
+            except OSError:
+                pass
+
     def restore(self) -> Optional[Plan]:
         """Reload the goal, then re-plan against the current economy state."""
         if not self.state_file.exists():

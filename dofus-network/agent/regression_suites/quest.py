@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from agent.regression import REPO_ROOT, check, section
+from agent.regression_suites.common import REPO_ROOT, check, section
 
 
 def test_objective_buckets() -> None:

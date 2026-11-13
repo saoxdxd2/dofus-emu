@@ -570,14 +570,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                   history=calibrator.parent / "fight_calibrator.history.jsonl",
                   pointer=calibrator.parent / "fight_calibrator.incumbent.json")
     if args.rollback:
-        logger.debug(json.dumps(rollback(paths), indent=1, sort_keys=True))
+        print(json.dumps(rollback(paths), indent=1, sort_keys=True))
         return 0
     if args.shadow_report:
-        logger.debug(json.dumps(shadow_report(paths, filters), indent=1, sort_keys=True))
+        print(json.dumps(shadow_report(paths, filters), indent=1, sort_keys=True))
         return 0
     write = bool(args.run)
     verdict = run(paths, write=write, force=bool(args.force), filters=filters)
-    logger.debug(json.dumps(verdict, indent=1, sort_keys=True, default=str))
+    print(json.dumps(verdict, indent=1, sort_keys=True, default=str))
     return 0
 
 

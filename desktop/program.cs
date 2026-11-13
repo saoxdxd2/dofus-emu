@@ -399,7 +399,7 @@ namespace DofusFarm
                         req.Timeout = 1000;
                         using (var resp = req.GetResponse()) { }
                     }
-                    catch { }
+                    catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                     Thread.Sleep(250);
                 }
             });

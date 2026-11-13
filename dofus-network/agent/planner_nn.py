@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional
 from agent.features import DELIVER_TYPES, FIGHT_TYPES, required_map
 from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 from agent import consult_gate
+from agent.calibration import HierarchicalLogOddsTracker
+from agent.objective_ledger import ObjectiveLedger
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "models" / "tool_policy.onnx"))
@@ -139,7 +141,7 @@ class NNPlanner(QuestPlanner):
 
     def __init__(self, model_path: Optional[Path] = None,
                  tool_penalty: Optional[Dict[str, float]] = None,
-                 stack_mode: str = "shadow",
+                 stack_mode: Optional[str] = None,
                  stack_path: Optional[Path] = None,
                  **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -184,7 +186,36 @@ class NNPlanner(QuestPlanner):
         # tool bias. The planner records each tool call's outcome here, and
         # apply_tool_bias subtracts the live penalty on top of the fitted bias.
         self.bias_tracker = ToolBiasTracker()
-        self.stack_mode = stack_mode if stack_mode in ("off", "shadow", "act") else "shadow"
+        self.calibration_tracker = HierarchicalLogOddsTracker()
+        # Per-objective ledger: tracks which hypotheses (tool + args) have been
+        # refuted for the current objective, so the policy head never retries them.
+        self.ledger = ObjectiveLedger(
+            path=REPO_ROOT / "data" / "kb" / "objective_ledger.json",
+            instance="planner_nn",
+        )
+        # `act` by default, because `shadow` computes the stack's ranking on
+        # every step and then throws it away -- five features and the cluster
+        # context paid for, and the policy's own argmax returned regardless.
+        #
+        # Acting is safe to default on because the artifact cannot be promoted
+        # by this setting: `ToolStack.active` requires *both* `payload["active"]`
+        # and `gate["passed"]`, so a model that did not clear its held-out gate
+        # stays a shadow no matter what mode is asked for (see the `stack.active`
+        # term on the return below). `shadow` therefore remains the right mode
+        # for a *fitted but uncalibrated* artifact: it keeps logging the
+        # proposal next to the policy's choice so the two can be compared.
+        #
+        # The environment variable exists so a run can be pinned without
+        # touching the caller: DOFUS_STACK_MODE=shadow is the one-line way to
+        # re-measure the stack without letting it move the character.
+        requested = stack_mode
+        if requested is None:
+            requested = os.environ.get("DOFUS_STACK_MODE", "act")
+        requested = str(requested).strip().lower()
+        self.stack_mode = requested if requested in ("off", "shadow", "act") else "act"
+        self.stack_mode_source = ("argument" if stack_mode is not None else
+                                  "env" if os.environ.get("DOFUS_STACK_MODE") else
+                                  "default")
         self.stack_path = Path(stack_path) if stack_path else None
         self.stack = None
         self.foresight = None
@@ -307,7 +338,7 @@ class NNPlanner(QuestPlanner):
         return self._descriptor_matrix
 
     def _ensure_stack(self) -> None:
-        if self._stack_loaded or self.stack_mode == "off":
+        if getattr(self, "_stack_loaded", False) or getattr(self, "stack_mode", "act") == "off":
             return
         self._stack_loaded = True
         from agent.ensemble import ToolStack
@@ -321,6 +352,36 @@ class NNPlanner(QuestPlanner):
             self.stack_note = "foresight unavailable; policy alone"
         else:
             self.stack_note = self.stack.note
+
+    def recalibrate_move_prob(self, tool: str, p: float) -> float:
+        """Recalibrate predicted move_prob under the hierarchical Bayes tracker."""
+        tracker = getattr(self, "calibration_tracker", None)
+        if tracker is not None:
+            return tracker.recalibrate_prob(tool, p)
+        return p
+
+    def tool_cost(self, tool: str) -> float:
+        """Expected execution cost of a tool.
+
+        Combines 1.0 base step cost with empirical latency and failure penalty
+        from bias_tracker when available. Bounded below by 0.1 to guarantee
+        positive finite cost.
+        """
+        base = 1.0
+        tracker = getattr(self, "bias_tracker", None)
+        if tracker is not None and hasattr(tracker, "_events"):
+            events = getattr(tracker, "_events", {}).get(tool, [])
+            window = getattr(tracker, "window_seconds", 300.0)
+            now = time.time()
+            cutoff = now - window
+            recent = [e for e in events if e[0] >= cutoff]
+            if recent:
+                avg_lat = sum(e[1] for e in recent) / len(recent)
+                fail_rate = sum(1 for e in recent if e[2]) / len(recent)
+                lat_weight = getattr(tracker, "latency_penalty_per_sec", 0.5)
+                fail_weight = getattr(tracker, "failure_penalty", 1.0)
+                return max(0.1, base + avg_lat * lat_weight + fail_rate * fail_weight)
+        return base
 
     def _stack_choice(self, x: Any, logits: Any) -> Optional[Dict[str, Any]]:
         if self.stack_mode == "off":
@@ -349,23 +410,55 @@ class NNPlanner(QuestPlanner):
             streak = getattr(self.tracker, "streak", 0)
             preempted = False
             top_tool = ranked[0]["tool"]
-            top_p = cells.get(top_tool, {}).get("move_prob", 1.0)
-            max_p = max((cells.get(r["tool"], {}).get("move_prob", 0.0) for r in ranked), default=0.0)
-            all_inert = (max_p < 0.20)
+
+            # Compute recalibrated move_prob for each candidate tool under the hierarchical posterior
+            recalibrated: Dict[str, float] = {}
+            for r in ranked:
+                t = r["tool"]
+                raw_p = cells.get(t, {}).get("move_prob", 0.0)
+                recalibrated[t] = self.recalibrate_move_prob(t, raw_p)
+
+            top_p = recalibrated.get(top_tool, 1.0)
+            max_p = max(recalibrated.values(), default=0.0)
+
+            # Dynamic inert threshold adapting to the recalibrated global era base rate
+            tracker = getattr(self, "calibration_tracker", None)
+            if tracker is not None:
+                base_rate = tracker.global_base_rate()
+                inert_thresh = max(0.05, min(0.25, base_rate * 0.5))
+            else:
+                inert_thresh = 0.20
+
+            all_inert = (max_p < inert_thresh)
+
+            ratio_top = 0.0
             if streak >= 1:
-                if top_p < 0.20:
-                    for alt in ranked[1:]:
-                        alt_tool = alt["tool"]
-                        alt_p = cells.get(alt_tool, {}).get("move_prob", 0.0)
-                        if alt_p >= 0.25:
-                            chosen = alt
-                            preempted = True
-                            break
-                    if not preempted and all_inert:
-                        last_tool = getattr(self.tracker, "last_tool", None)
-                        if last_tool != "state.snapshot":
-                            chosen = {"tool": "state.snapshot", "score": 0.0}
-                            preempted = True
+                # Top tool has failed consecutively 'streak' times.
+                # Under Bayesian updating, expected progress is discounted by consecutive failures:
+                exp_progress_top = top_p / (1.0 + float(streak))
+                cost_top = self.tool_cost(top_tool)
+                ratio_top = exp_progress_top / cost_top
+
+                # Bayes-optimal decision rule: switch to alt whenever
+                # E[progress(alt)] / cost(alt) > E[progress(top)] / cost(top)
+                # and alt offers non-inert progress (alt_p >= inert_thresh)
+                for alt in ranked[1:]:
+                    alt_tool = alt["tool"]
+                    alt_p = recalibrated.get(alt_tool, 0.0)
+                    if alt_p < inert_thresh:
+                        continue
+                    cost_alt = self.tool_cost(alt_tool)
+                    ratio_alt = alt_p / cost_alt
+                    if ratio_alt > ratio_top:
+                        chosen = alt
+                        preempted = True
+                        break
+
+                if not preempted and all_inert:
+                    last_tool = getattr(self.tracker, "last_tool", None)
+                    if last_tool != "state.snapshot":
+                        chosen = {"tool": "state.snapshot", "score": 0.0}
+                        preempted = True
             self.last_stack = {
                 "mode": self.stack_mode,
                 "active": bool(self.stack.active),
@@ -373,6 +466,7 @@ class NNPlanner(QuestPlanner):
                 "preempted": preempted,
                 "all_inert": all_inert,
                 "max_move_prob": round(float(max_p), 4),
+                "top_ratio": round(float(ratio_top), 4) if streak >= 1 else None,
                 "scores": [{key: row[key] for key in ("tool", "score")}
                            for row in ranked[:5]],
             }
@@ -439,9 +533,9 @@ class NNPlanner(QuestPlanner):
             except Exception:  # noqa: BLE001 - legality must never break planning
                 pass
             # The dedicated model also predicts whether this step advances the
-            # objective. It is not used to decide here -- it is recorded, because a
-            # value that is logged can be calibrated against outcomes later, and a
-            # value that is never read is decoration.
+            # objective. Recorded for calibration and checked below as a progress-gate
+            # veto: when self.last_value < 0.25 (or streak >= 2), the agent defers.
+            self.last_value = None
             if len(outputs) > 1 and getattr(outputs[1], "size", 0):
                 try:
                     raw = float(outputs[1].reshape(-1)[0])
@@ -450,6 +544,25 @@ class NNPlanner(QuestPlanner):
                     self.last_value = None
             scores = apply_tool_bias(logits, self.tools, self.tool_penalty,
                                      self.bias_tracker.live_penalty(self.tools))
+            # Repeat-streak preemption: regardless of stack_mode, never re-issue
+            # the tool that has just failed, nor any tool the objective ledger
+            # has refuted. In shadow mode the stack's veto is not applied to the
+            # returned tool (line 535 gates on stack_mode == "act"), so this is
+            # the only place the streak can stop a repeated bad choice.
+            streak = getattr(self.tracker, "streak", 0)
+            if streak >= 1:
+                last_tool = getattr(self.tracker, "last_tool", None)
+                if last_tool is not None and last_tool in self.tools:
+                    scores[self.tools.index(last_tool)] = float("-inf")
+                if self.ledger is not None:
+                    try:
+                        rec = self.ledger.sync(obs)
+                        if rec is not None:
+                            for hyp in rec.hypotheses:
+                                if hyp.refuted and hyp.tool in self.tools:
+                                    scores[self.tools.index(hyp.tool)] = float("-inf")
+                    except Exception:  # noqa: BLE001 - ledger must never break planning
+                        pass
             policy_tool = self.tools[int(max(range(len(scores)),
                                              key=lambda i: scores[i]))]
             stacked = self._stack_choice(x[0], logits)
@@ -473,8 +586,13 @@ class NNPlanner(QuestPlanner):
             # is a property of one model's logit scale; `applies_to` checks the hash
             # so a new architecture acts on its own answer instead of being judged
             # by a threshold nobody measured for it.
-            if consult_gate.applies_to(self.model_sha256, self.arch) \
-                    and consult_gate.should_defer(gap=self.last_margin):
+            # Value-head and repeat-streak veto: defer to deterministic rules when the
+            # value head predicts low objective progress (< 0.25) or when consecutive
+            # failures accumulate (streak >= 2), rescuing the agent before wasting steps.
+            if (consult_gate.applies_to(self.model_sha256, self.arch) \
+                    and consult_gate.should_defer(gap=self.last_margin)) \
+                    or (self.last_value is not None and self.last_value < 0.25) \
+                    or streak >= 2:
                 self.last_deferral = self.last_margin
                 return None
             return policy_tool
@@ -493,13 +611,53 @@ class NNPlanner(QuestPlanner):
                   obs: Dict[str, Any]) -> Dict[str, Any]:
         return args_for_tool(tool, quest, obj, obs)
 
-    def note_result(self, tool: str, latency_s: float, failed: bool) -> None:
-        """Record a tool call's outcome for the adaptive bias tracker.
+    def note_result(self, tool: str, *args, **kwargs) -> None:
+        """Record a tool call's outcome for adaptive bias and calibration tracking.
 
-        Call this after executing a chosen tool so the sliding-window penalty
-        reflects live latency and failure rate on the current host.
+        Accepts either:
+          note_result(tool, latency_s: float, failed: bool)
+        or:
+          note_result(tool, ok: bool, note: str, obs: Dict[str, Any], detail=None)
         """
-        self.bias_tracker.record(tool, latency_s, failed)
+        latency_s = 0.0
+        failed = False
+        moved = True
+
+        if len(args) >= 2 and isinstance(args[0], (int, float)) and not isinstance(args[0], bool) and isinstance(args[1], bool):
+            latency_s = float(args[0])
+            failed = bool(args[1])
+            moved = not failed
+        elif len(args) >= 1 and isinstance(args[0], bool):
+            ok = bool(args[0])
+            failed = not ok
+            note = str(args[1]) if len(args) > 1 else ""
+            obs = args[2] if len(args) > 2 else {}
+            moved = ok and (note in ("advanced", "moved", "ok") or not note.startswith("noop"))
+            latency_s = float(kwargs.get("latency_s", 0.0))
+            if hasattr(super(), "note_result"):
+                try:
+                    super().note_result(tool, ok, note, obs, kwargs.get("detail"))
+                except Exception:
+                    pass
+        elif "failed" in kwargs or "latency_s" in kwargs:
+            latency_s = float(kwargs.get("latency_s", 0.0))
+            failed = bool(kwargs.get("failed", False))
+            moved = not failed
+        elif "ok" in kwargs:
+            ok = bool(kwargs.get("ok", True))
+            failed = not ok
+            moved = ok
+
+        if "moved" in kwargs and kwargs["moved"] is not None:
+            moved = bool(kwargs["moved"])
+
+        tracker = getattr(self, "bias_tracker", None)
+        if tracker is not None and hasattr(tracker, "record"):
+            tracker.record(tool, latency_s, failed)
+
+        cal_tracker = getattr(self, "calibration_tracker", None)
+        if cal_tracker is not None and hasattr(cal_tracker, "update"):
+            cal_tracker.update(tool, moved)
 
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:

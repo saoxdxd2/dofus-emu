@@ -459,18 +459,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     pf = Preflight(args.touch_dir, slots=args.slots, lang=args.lang)
     plan = pf.plan(args.dungeon, args.level, args.player_class, args.distance)
     if args.json:
-        logger.debug(json.dumps(plan, indent=1, sort_keys=True, default=str))
+        print(json.dumps(plan, indent=1, sort_keys=True, default=str))
     else:
-        logger.debug("%s (dungeon %d, optimal level %s): %s"
+        print("%s (dungeon %d, optimal level %s): %s"
               % (plan["dungeon"], plan["dungeon_id"], plan["dungeon_optimal_level"],
                  plan["verdict"]))
         for reason in plan["reasons"]:
-            logger.debug("  - %s" % reason)
-        logger.debug("  simulated outcome: %s after %s team turns"
+            print("  - %s" % reason)
+        print("  simulated outcome: %s after %s team turns"
               % (plan["estimate_and_verification"]["verified_outcome"],
                  plan["estimate_and_verification"]["verified_turns"]))
         for line in plan["limitations"]:
-            logger.debug("  limitation: %s" % line)
+            print("  limitation: %s" % line)
     return 0
 
 

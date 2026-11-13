@@ -24,17 +24,21 @@ spell list on 2026-11-10) the model falls back in two steps, in this order:
 2. **prior** -- one hit worth ``level * 1.5`` at range ``5 + MP``, which is the
    level-8 group's measured output rather than a guess about the client.
 
-The number is used as a *relative* price between cells on the same board, so an
-error in the absolute scale moves every candidate together and cancels. That is
-why this can ship before the learned table has any rows.
+The number is used as a *relative* price between cells on the same board, but it
+is subtracted from a damage score, so the absolute scale decides how much damage
+the character will trade for cover. `turn_price` closes that gap: when
+`live_learn` has measured what this group actually took off us in one enemy turn,
+the profiles are rescaled so their output on the current cell matches it. The
+geometry -- who reaches which cell -- is untouched; only the scale moves.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -110,6 +114,14 @@ def weight_for(me: Any) -> float:
 # still leaves a 44-damage cast (the measured output of spell 61) winning at the
 # shipped weight.
 MAX_PRICED_SWING = 60.0
+
+# Bounds on the rescale toward a measured enemy turn. Same band
+# `live_learn._finalise_bucket` applies to a residual ratio, and for a reason
+# specific to this one: a turn where nothing reached us credits 0 damage, and
+# scaling the whole model by 0 would delete the cover reasoning this module
+# exists to provide. The floor keeps a quiet turn from reading as a safe board.
+MIN_TURN_SCALE = 0.25
+MAX_TURN_SCALE = 4.0
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -375,7 +387,8 @@ class ThreatModel:
     """
 
     def __init__(self, board: "Board", memory: Optional[ThreatMemory] = None,
-                 occupied: Optional[frozenset] = None) -> None:
+                 occupied: Optional[frozenset] = None,
+                 turn_price: Optional[float] = None) -> None:
         self.board = board
         self.cells = board.cells
         me = board.me
@@ -391,6 +404,40 @@ class ThreatModel:
             self.enemies.append(self._profile(fighter, me, memory))
         self._cache: Dict[int, float] = {}
         self._open = 0.0
+        self.turn_price: Optional[float] = None
+        self.turn_scale = 1.0
+        if turn_price is not None:
+            self._rescale_to_turn(float(turn_price))
+
+    def _rescale_to_turn(self, price: float) -> None:
+        """Match the model's output on the current cell to a measured turn.
+
+        `live_learn` measures what the group took off us between two boards: one
+        number for the whole enemy turn, with no spell id attached. The profiles
+        above are priors, so their absolute scale is the unverified part. One
+        factor applied to every enemy corrects exactly that and leaves the
+        geometry -- who reaches which cell, and therefore which cell is safer --
+        bit for bit as it was.
+
+        The cell I am standing on is the right reference: the board arrives after
+        the enemy turn and before I move, so it is where the measured damage
+        landed.
+
+        A cell nothing can reach has no identifiable scale. Zero measured against
+        zero predicted says nothing about the monsters, so the model is left
+        alone rather than being told the group is harmless.
+        """
+        here = self.board.my_cell
+        if here is None or not math.isfinite(price) or price < 0.0:
+            return
+        predicted = self.at(here)
+        if predicted <= 0.0:
+            return
+        scale = min(MAX_TURN_SCALE, max(MIN_TURN_SCALE, price / predicted))
+        self.enemies = [replace(t, damage=t.damage * scale) for t in self.enemies]
+        self._cache.clear()
+        self.turn_price = price
+        self.turn_scale = scale
 
     # -- construction -----------------------------------------------------
     def _profile(self, fighter: "Fighter", me: Optional["Fighter"],
@@ -528,12 +575,16 @@ class ThreatModel:
             ],
             "here": round(self.at(self.board.my_cell), 2) if self.board.my_cell is not None else None,
             "total_output": round(sum(t.total for t in self.enemies), 2),
+            "turn_price": self.turn_price,
+            "turn_scale": round(self.turn_scale, 4),
         }
 
 
 def build(board: "Board", memory: Optional[ThreatMemory] = None,
-          occupied: Optional[frozenset] = None) -> ThreatModel:
-    return ThreatModel(board, memory=memory, occupied=occupied)
+          occupied: Optional[frozenset] = None,
+          turn_price: Optional[float] = None) -> ThreatModel:
+    return ThreatModel(board, memory=memory, occupied=occupied,
+                       turn_price=turn_price)
 
 
 _MEMORY: Optional[ThreatMemory] = None

@@ -131,6 +131,7 @@ class PlayerFacts:
     current_hp: float = 0.0
     max_hp: float = 0.0
     ap: int = 0
+    mp: int = 0
     dpt_by_element: Dict[str, float] = field(default_factory=dict)
     damage_lines: int = 0
     heal_per_turn: float = 0.0
@@ -546,6 +547,7 @@ def estimate_from_facts(
     bootstrap: bool = False,
     tutorial: bool = False,
     damage_calibration: Optional[Dict[str, Any]] = None,
+    enemy_turn_price: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Turn facts into a verdict. No client, no database, no I/O.
 
@@ -558,6 +560,11 @@ def estimate_from_facts(
     from real server deltas. It is applied to the player's damage before turns
     to kill are computed; without it the estimator trusts the advisor's spell
     price even when the live server has been paying a different one.
+
+    ``enemy_turn_price`` is the other side of the same ledger: what
+    `live_learn` measured this group costing us in one enemy turn. When it is
+    present it replaces the level/AP assumption entirely, which is the
+    difference between a gate that guesses and one that has watched the fight.
     """
     missing = list(dict.fromkeys(list(player.missing) + list(enemy.missing)))
     notes = list(dict.fromkeys(list(player.notes) + list(enemy.notes)))
@@ -608,14 +615,22 @@ def estimate_from_facts(
     if player.damage_per_turn <= 0:
         missing.append("player.no_damaging_spell")
 
+    incoming_source = "level_ap_heuristic"
     incoming = 0.0
-    for member in enemy.members:
-        level = max(0.0, float(member.level))
-        ap = _clamp(float(member.ap or INCOMING_AP_REFERENCE), 1.0, 20.0)
-        incoming += (INCOMING_BASE + INCOMING_PER_LEVEL * level) * (ap / INCOMING_AP_REFERENCE)
-    resist_values = [float(value) for value in player.resist_percent.values()]
-    average_resist = sum(resist_values) / len(resist_values) if resist_values else 0.0
-    incoming *= _clamp(1.0 - average_resist / 100.0, 0.05, 2.5)
+    if enemy_turn_price is not None:
+        # Measured, not assumed: the life this group actually took off us in one
+        # enemy turn, so it is already after resistances and armour. Applying the
+        # resist factor below to it as well would discount the same hit twice.
+        incoming = max(0.0, float(enemy_turn_price))
+        incoming_source = "live_learner"
+    else:
+        for member in enemy.members:
+            level = max(0.0, float(member.level))
+            ap = _clamp(float(member.ap or INCOMING_AP_REFERENCE), 1.0, 20.0)
+            incoming += (INCOMING_BASE + INCOMING_PER_LEVEL * level) * (ap / INCOMING_AP_REFERENCE)
+        resist_values = [float(value) for value in player.resist_percent.values()]
+        average_resist = sum(resist_values) / len(resist_values) if resist_values else 0.0
+        incoming *= _clamp(1.0 - average_resist / 100.0, 0.05, 2.5)
     net_incoming = max(0.0, incoming - max(0.0, float(player.heal_per_turn)))
     turns_to_die = (player_hp / net_incoming) if net_incoming > 0 else MAX_TURNS
     turns_to_die = _clamp(turns_to_die, 0.1, MAX_TURNS)
@@ -699,8 +714,12 @@ def estimate_from_facts(
         notes.append("tutorial authorisation: the scripted scenario guarantees this fight")
 
     if enemy.members:
-        notes.append("incoming damage is a level/AP heuristic; the monster DB has no "
-                     "spell damage")
+        if incoming_source == "live_learner":
+            notes.append("incoming damage is measured from live enemy turns and is "
+                         "already after resistances; the level/AP heuristic is not used")
+        else:
+            notes.append("incoming damage is a level/AP heuristic; the monster DB has no "
+                         "spell damage")
         notes.append("one target at a time; area damage is not credited")
         if player.heal_per_turn > 0:
             notes.append("healing is applied against incoming damage, not as a shield")
@@ -732,6 +751,7 @@ def estimate_from_facts(
         "hp_ratio": round(hp_ratio, 4),
         "expected_turns": round(expected_turns, 2),
         "incoming_per_turn": round(incoming, 1),
+        "incoming_source": incoming_source,
         "confidence": confidence,
         "missing": list(dict.fromkeys(missing)),
         "assumptions": list(dict.fromkeys(notes)),
@@ -902,6 +922,7 @@ def _player_facts(character, spells: Dict[int, Any]) -> PlayerFacts:
         current_hp=float(current_hp or 0.0),
         max_hp=float(character.max_hp or 0.0),
         ap=int(character.ap_budget),
+        mp=int(character.stat("movementPoints", "movement_points") or 0),
         dpt_by_element=dpt_by_element,
         damage_lines=damage_lines,
         heal_per_turn=float(heal_rotation.heal) / _HEAL_WEIGHT,
@@ -1045,6 +1066,7 @@ class FightAdvisor:
         calibrator_path: Path = DEFAULT_CALIBRATOR,
         damage_calibration_path: Path = DEFAULT_DAMAGE_CALIBRATION,
         damage_calibration: Optional[Dict[str, Any]] = None,
+        enemy_turn_price: Optional[Any] = None,
         min_p_win: float = MIN_P_WIN,
         max_hp_loss_fraction: float = MAX_HP_LOSS_FRACTION,
         allow_boss: bool = ALLOW_BOSS,
@@ -1057,9 +1079,12 @@ class FightAdvisor:
         self.calibrator = calibrator if calibrator is not None else FightCalibrator.load(
             self.calibrator_path)
         self.damage_calibration_path = Path(damage_calibration_path)
-        self.damage_calibration = (
-            damage_calibration if damage_calibration is not None
-            else self._load_damage_calibration())
+        self.damage_calibration = damage_calibration
+        # A callable taking the page's board shape and returning what one enemy
+        # turn costs, or None. Injected by the live entry points only: the
+        # estimator's arithmetic stays a pure function of its facts so a fixture
+        # cannot be answered differently because a live fight filled in a model.
+        self.enemy_turn_price = enemy_turn_price
         self.min_p_win = float(min_p_win)
         self.max_hp_loss_fraction = float(max_hp_loss_fraction)
         self.allow_boss = bool(allow_boss)
@@ -1194,10 +1219,82 @@ class FightAdvisor:
 
     def _load_damage_calibration(self) -> Optional[Dict[str, Any]]:
         try:
-            from combat.live_learn import load_damage_calibration
-            return load_damage_calibration(self.damage_calibration_path)
+            from combat import live_learn
+            if self.damage_calibration_path == live_learn.DEFAULT_DAMAGE_CALIBRATION:
+                return live_learn.default_damage_calibration()
+            return live_learn.load_damage_calibration(self.damage_calibration_path)
         except Exception:  # noqa: BLE001 - a missing calibration is not an error
             return None
+
+    def _current_damage_calibration(self) -> Optional[Dict[str, Any]]:
+        """An explicit override, or the file as it stands right now.
+
+        Read per estimate rather than once at construction: the advisor lives
+        for the whole session and the auditor rewrites the file mid-fight, so a
+        copy taken at startup would price every later group with the residuals
+        of an earlier one.
+        """
+        if self.damage_calibration is not None:
+            return self.damage_calibration
+        return self._load_damage_calibration()
+
+    def _price_board(self, player: PlayerFacts, enemy: EnemyFacts,
+                     observation: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The board the learner is asked to price, in the page's own shape.
+
+        A live fight board is used as it stands. Otherwise the advisor is
+        pricing a group *before* joining it, so the board is assembled from the
+        facts the estimate already has: the group at full life, the character's
+        live HP/AP/MP, round 0. Cells are unknown on a map snapshot, so the
+        distance feature reads 0 -- the one input a pre-fight price cannot know.
+        """
+        if isinstance(observation, dict):
+            live = observation.get("fighters")
+            if isinstance(live, list) and live:
+                return observation
+        fighters: List[Dict[str, Any]] = [{
+            "id": 0, "team": "player", "is_me": True, "alive": True,
+            "hp": player.current_hp or player.max_hp, "max_hp": player.max_hp,
+            "level": player.level, "ap": player.ap, "mp": player.mp, "cell": 0,
+        }]
+        for index, member in enumerate(enemy.members, start=1):
+            fighters.append({
+                "id": -index, "team": "enemy", "alive": True, "name": member.name,
+                "level": member.level, "hp": member.hp, "max_hp": member.hp,
+                "ap": member.ap, "mp": 0, "cell": 0,
+            })
+        return {"fight_id": None, "round": 0, "my_id": 0, "my_cell": 0,
+                "fighters": fighters}
+
+    def _enemy_turn_price(self, player: PlayerFacts, enemy: EnemyFacts,
+                          observation: Optional[Dict[str, Any]]) -> Optional[float]:
+        """The measured cost of one enemy turn from this group, or None."""
+        if self.enemy_turn_price is None or not enemy.members:
+            return None
+        try:
+            value = self.enemy_turn_price(self._price_board(player, enemy, observation))
+            if value is None:
+                return None
+            price = float(value)
+        except Exception:  # noqa: BLE001 - an unpriceable group keeps the heuristic
+            return None
+        return price if math.isfinite(price) and price >= 0.0 else None
+
+    def _learning_stamp(self) -> Tuple[Any, Any]:
+        """Freshness of the two live files, for the summary cache key.
+
+        Without it a map stood still on keeps serving the estimate priced
+        before the learner wrote a better model -- the same staleness
+        `threat.default_memory` exists to prevent.
+        """
+        if self.enemy_turn_price is None:
+            return (None, None)
+        try:
+            from combat import live_learn
+            return (live_learn.DEFAULT_MODEL.stat().st_mtime,
+                    live_learn.DEFAULT_DAMAGE_CALIBRATION.stat().st_mtime)
+        except Exception:  # noqa: BLE001 - an unreadable stamp is a constant one
+            return (None, None)
 
     def _player(self, observation: Optional[Dict[str, Any]] = None) -> PlayerFacts:
         """The player's side, priced once per character sheet.
@@ -1241,7 +1338,8 @@ class FightAdvisor:
             allow_boss=self.allow_boss,
             bootstrap=self.bootstrap,
             tutorial=bool(((observation or {}).get("tutorial") or {}).get("active")),
-            damage_calibration=self.damage_calibration,
+            damage_calibration=self._current_damage_calibration(),
+            enemy_turn_price=self._enemy_turn_price(player, enemy, observation),
         )
 
     def annotate(self, observation: Optional[Dict[str, Any]],
@@ -1268,7 +1366,7 @@ class FightAdvisor:
             map_id = position.get("map_id") if isinstance(position, dict) else None
         # HP belongs in the key: the same group is a different risk at 900 HP
         # than at 200, and the HP-loss rule reads the current value.
-        key = (_hp_of(observation), map_id, tuple(
+        key = (_hp_of(observation), map_id, self._learning_stamp(), tuple(
             (row.get("group_id"), tuple(row.get("monster_ids") or ()),
              tuple(member.get("level") for member in row.get("members") or []
                    if isinstance(member, dict)))

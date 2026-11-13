@@ -844,16 +844,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             # The report can carry a client field name, so the console has to be
             # UTF-8 before anything is printed.
             utf8_console()
-            logger.debug(json.dumps(report, ensure_ascii=False, indent=1))
+            print(json.dumps(report, ensure_ascii=False, indent=1))
             return 0
-        logger.debug("observations        %d (%d with a map block)"
+        print("observations        %d (%d with a map block)"
               % (report["observations"], report["with_map"]))
-        logger.debug("schema version      %d" % report["schema_version"])
-        logger.debug("unknown top-level   %s"
+        print("schema version      %d" % report["schema_version"])
+        print("unknown top-level   %s"
               % (", ".join("%s=%d" % kv for kv in report["unknown"].items()) or "none"))
-        logger.debug("unknown entity      %s"
+        print("unknown entity      %s"
               % (", ".join("%s=%d" % kv for kv in report["unknown_entity"].items()) or "none"))
-        logger.debug("dropped by slots    %s"
+        print("dropped by slots    %s"
               % (", ".join("%s=%d" % kv for kv in report["dropped"].items()) or "none"))
         return 0
 
@@ -861,7 +861,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.show and index >= args.show:
             break
         state = from_observation(obs)
-        logger.debug(json.dumps(state.to_dict(), ensure_ascii=False, separators=(",", ":")))
+        print(json.dumps(state.to_dict(), ensure_ascii=False, separators=(",", ":")))
     return 0
 
 

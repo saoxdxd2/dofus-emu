@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from agent.executor import ToolResult
 from planning.bandit import ARMS
 from planning.experience import ExperienceStore
+from planning.goal_compiler import parse_requirement_item
 from planning.live_tap import ARM_BY_TOOL, STATE_NAMES, attach
 from planning.schedule import STATE_FILE as REPO_SCHEDULE_STATE
 
@@ -199,6 +200,196 @@ class DecisionBoundaryTests(TapFixture):
         fresh = attach(self.store, root=self.root, env={})
         self.assertIsNotNone(fresh.manager.restore())
         self.assertIsNotNone(fresh.objective())
+
+
+class GoalCompilerStructuralTests(TapFixture):
+    def test_parse_requirement_item_formats(self):
+        # Leading quantity
+        self.assertEqual(
+            parse_requirement_item("2 Pointes de flèche du Bwork Archer"),
+            [("Pointes de flèche du Bwork Archer", 2)],
+        )
+        # Parenthetical note stripped
+        self.assertEqual(
+            parse_requirement_item("1 Gros boulet de canon (acheté à l'hôtel des forgerons)"),
+            [("Gros boulet de canon", 1)],
+        )
+        # Set / Panoply expansion
+        self.assertEqual(
+            parse_requirement_item("Panoplie du Wa Wabbit (Couronne, Cape, Bâton)"),
+            [
+                ("Couronne du Wa Wabbit", 1),
+                ("Cape du Wa Wabbit", 1),
+                ("Bâton du Wa Wabbit", 1),
+            ],
+        )
+        # Plain item with default quantity 1
+        self.assertEqual(parse_requirement_item("Huile de sésame"), [("Huile de sésame", 1)])
+
+    def test_condition_a_direct_quest_requirement_passes(self):
+        # acces_otomai step requirements include '1 Huile de sésame' (item 399)
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        res = self.tap.compile_prose(prose, obs)
+
+        self.assertTrue(res.verified)
+        self.assertEqual(res.item_id, 399)
+        self.assertTrue(res.direct_requirement)
+        self.assertFalse(res.recipe_dag_edge)
+        self.assertIsNotNone(res.goal)
+        self.assertEqual(res.goal.item_id, 399)
+        self.assertEqual(res.goal.qty, 1)
+
+        plan = self.tap.submit_prose_goal(prose, obs, level=60)
+        self.assertIsNotNone(plan)
+        self.assertIsNotNone(self.tap.objective())
+        s = self.tap.stats()["compiler"]
+        self.assertEqual(s["submitted"], 1)
+        self.assertEqual(s["verified"], 1)
+        self.assertEqual(s["rejected"], 0)
+
+    def test_condition_a_recipe_dag_edge_passes(self):
+        # Item 19740 (Paire de ciseaux en fer) is an ingredient in Huile de Sésame's recipe
+        prose = "Fabriquer 1 Paire de ciseaux en fer pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        res = self.tap.compile_prose(prose, obs)
+
+        self.assertTrue(res.verified)
+        self.assertEqual(res.item_id, 19740)
+        self.assertFalse(res.direct_requirement)
+        self.assertTrue(res.recipe_dag_edge)
+        self.assertEqual(res.recipe_root_id, 399)
+
+        plan = self.tap.submit_prose_goal(prose, obs, level=60)
+        self.assertIsNotNone(plan)
+        self.assertIsNotNone(self.tap.objective())
+
+    def test_condition_a_unrelated_item_is_rejected(self):
+        # Coiffe du Bouftou (2411) has zero relation to acces_otomai
+        prose = "Trouver 1 Coiffe du Bouftou pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        res = self.tap.compile_prose(prose, obs)
+
+        self.assertFalse(res.verified)
+        self.assertIsNone(res.goal)
+        self.assertIn("structural_falsification", res.verification_reason)
+
+        plan = self.tap.submit_prose_goal(prose, obs, level=60)
+        self.assertIsNone(plan)
+        self.assertIsNone(self.tap.objective())
+        s = self.tap.stats()["compiler"]
+        self.assertEqual(s["submitted"], 0)
+        self.assertEqual(s["rejected"], 1)
+
+    def test_condition_a_unresolved_prose_without_requirements_is_rejected(self):
+        prose = "Apporter 1 Huile de sésame pour une quete inventee"
+        res = self.tap.compile_prose(prose, {})
+        self.assertFalse(res.verified)
+        self.assertIsNone(self.tap.submit_prose_goal(prose, {}))
+
+
+class GoalCompilerRuntimeFalsifierTests(TapFixture):
+    def test_condition_b_inventory_progress_confirms_goal(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai", "inventory": {399: 0}}
+        plan = self.tap.submit_prose_goal(prose, obs, horizon_k=3)
+        self.assertIsNotNone(plan)
+        self.assertIsNotNone(self.tap.active_falsifier)
+        self.assertFalse(self.tap.active_falsifier.confirmed)
+
+        # Step 1: Inventory increases
+        self.tap.observe(
+            call("fight.pass"),
+            result("fight.pass"),
+            observation={"inventory": {399: 1}},
+        )
+        self.assertTrue(self.tap.active_falsifier.confirmed)
+        self.assertEqual(self.tap.active_falsifier.confirmation_reason, "inventory_delta:+1")
+        self.assertFalse(self.tap.active_falsifier.falsified)
+
+        # Step 2 & 3: Steps continue without inventory change; goal must NOT be aborted
+        for _ in range(4):
+            self.tap.observe(
+                call("fight.pass"),
+                result("fight.pass"),
+                observation={"inventory": {399: 1}},
+            )
+        self.assertIsNotNone(self.tap.objective())
+        self.assertEqual(self.tap.stats()["compiler"]["aborts"], 0)
+
+    def test_condition_b_quest_counter_progress_confirms_goal(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai", "quest_counter": 0}
+        self.tap.submit_prose_goal(prose, obs, horizon_k=3)
+
+        # Observation with higher quest_counter confirms goal via counter delta
+        self.tap.observe(
+            call("state.snapshot"),
+            result("state.snapshot"),
+            observation={"quest_counter": 1},
+        )
+        self.assertTrue(self.tap.active_falsifier.confirmed)
+        self.assertIn("quest_counter_delta", self.tap.active_falsifier.confirmation_reason)
+        self.assertEqual(self.tap.stats()["compiler"]["aborts"], 0)
+
+    def test_condition_b_quest_advance_success_confirms_goal(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        self.tap.submit_prose_goal(prose, obs, horizon_k=3)
+
+        # Successful quest.advance tool call confirms goal
+        self.tap.observe(
+            call("quest.advance"),
+            result("quest.advance"),
+            observation={},
+        )
+        self.assertTrue(self.tap.active_falsifier.confirmed)
+        self.assertEqual(self.tap.active_falsifier.confirmation_reason, "quest_advance_success")
+        self.assertEqual(self.tap.stats()["compiler"]["aborts"], 0)
+
+    def test_condition_b_no_progress_within_k_steps_triggers_auto_abort(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai", "inventory": {}}
+        self.tap.submit_prose_goal(prose, obs, horizon_k=3)
+        self.assertIsNotNone(self.tap.objective())
+
+        # Step 1: No progress
+        self.tap.observe(call("fight.pass"), result("fight.pass"), observation={"inventory": {}})
+        self.assertIsNotNone(self.tap.objective())
+
+        # Step 2: No progress
+        self.tap.observe(call("fight.pass"), result("fight.pass"), observation={"inventory": {}})
+        self.assertIsNotNone(self.tap.objective())
+
+        # Step 3: Horizon reached without progress -> auto-abort back to unguided base loop
+        self.tap.observe(call("fight.pass"), result("fight.pass"), observation={"inventory": {}})
+        self.assertIsNone(self.tap.objective())
+        self.assertIsNone(self.tap.manager.plan)
+        self.assertEqual(self.tap.stats()["compiler"]["aborts"], 1)
+        self.assertIsNotNone(self.tap.last_falsifier)
+        self.assertTrue(self.tap.last_falsifier.falsified)
+        self.assertTrue(self.tap.last_falsifier.aborted)
+
+    def test_condition_b_manual_abort_clears_plan_and_state(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        self.tap.submit_prose_goal(prose, obs, horizon_k=5)
+        self.assertIsNotNone(self.tap.objective())
+
+        self.tap.abort_goal(reason="manual_cancellation")
+        self.assertIsNone(self.tap.objective())
+        self.assertIsNone(self.tap.active_falsifier)
+        self.assertFalse(self.tap.paths["schedule_state.json"].exists())
+
+    def test_condition_b_malformed_observation_does_not_crash(self):
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        self.tap.submit_prose_goal(prose, obs, horizon_k=3)
+
+        # Observation with invalid inventory structure should not raise
+        self.tap.observe(call("ui.tap"), result("ui.tap"), observation={"inventory": "invalid_string"})
+        self.tap.observe(call("ui.tap"), result("ui.tap"), observation={"inventory": [1, 2, 3]})
+        self.assertEqual(self.tap.observed, 2)
 
 
 if __name__ == "__main__":

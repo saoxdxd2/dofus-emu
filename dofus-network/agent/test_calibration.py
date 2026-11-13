@@ -21,6 +21,7 @@ from pathlib import Path
 
 from agent.calibration import (
     Calibrator,
+    HierarchicalLogOddsTracker,
     Isotonic,
     Platt,
     auc,
@@ -29,6 +30,7 @@ from agent.calibration import (
     ece,
     evaluate,
     fit,
+    fit_hierarchical,
     fit_isotonic,
     fit_platt,
     fit_temperature,
@@ -396,6 +398,219 @@ class ShippedArtifactTests(unittest.TestCase):
         self.assertIn(raw["method"], ("identity", "temperature", "platt", "isotonic"))
         for name, pair in (raw.get("groups") or {}).items():
             self.assertGreater(pair["a"], 0.0, "group %s has a non-positive slope" % name)
+
+
+class HierarchicalLogOddsTrackerTests(unittest.TestCase):
+    def test_unseen_tool_shrinks_completely_to_global_prior(self):
+        tracker = HierarchicalLogOddsTracker(prior_base_rate=0.220, prior_weight=20.0, shrinkage_m=15.0)
+        stats = tracker.tool_stats("unseen.tool")
+        self.assertEqual(stats["n"], 0.0)
+        self.assertEqual(stats["kappa"], 0.0)
+        self.assertEqual(stats["delta"], 0.0)
+        self.assertAlmostEqual(stats["intercept"], tracker.global_log_odds(), places=6)
+        self.assertAlmostEqual(stats["shift"], 0.0, places=6)
+        # Recalibrating an unseen tool with no global shift leaves probability unchanged
+        self.assertAlmostEqual(tracker.recalibrate_prob("unseen.tool", 0.220), 0.220, places=6)
+
+    def test_abundant_tool_uses_empirical_rate(self):
+        tracker = HierarchicalLogOddsTracker(prior_base_rate=0.220, prior_weight=20.0, shrinkage_m=15.0)
+        # nav.goto moves 85% of the time over 200 observations (interleaved 17/20)
+        for i in range(200):
+            tracker.update("nav.goto", moved=(i % 20 < 17))
+
+        stats = tracker.tool_stats("nav.goto")
+        self.assertGreater(stats["n"], 50.0)
+        self.assertGreater(stats["kappa"], 0.85)  # Heavy weight on empirical observations
+        self.assertAlmostEqual(stats["rate"], 0.85, delta=0.05)
+        # Recalibrated probability for a 0.25 raw prediction shifts strongly upward
+        cal_p = tracker.recalibrate_prob("nav.goto", 0.25)
+        self.assertGreater(cal_p, 0.65)
+
+    def test_global_era_shift_adapts_to_base_rate_jump(self):
+        # Base rate jumps from 22% (train era) to 64% (val era)
+        tracker = HierarchicalLogOddsTracker(prior_base_rate=0.220, prior_weight=10.0, shrinkage_m=15.0)
+        self.assertAlmostEqual(tracker.global_base_rate(), 0.220, places=3)
+        self.assertAlmostEqual(tracker.global_era_shift(), 0.0, places=4)
+
+        # Ingest 100 new-era events with 64% success rate across varied tools (interleaved 16/25)
+        tools = ["nav.goto", "quest.advance", "inv.equip", "state.snapshot"]
+        for i in range(100):
+            tool = tools[i % len(tools)]
+            tracker.update(tool, moved=(i % 25 < 16))
+
+        self.assertGreater(tracker.global_base_rate(), 0.50)
+        self.assertGreater(tracker.global_era_shift(), 1.0)
+        # An unobserved tool benefits from the global era shift
+        unseen_cal = tracker.recalibrate_prob("never_seen_tool", 0.220)
+        self.assertGreater(unseen_cal, 0.45)
+
+    def test_exponential_forgetting_decays_old_observations(self):
+        tracker = HierarchicalLogOddsTracker(decay_lambda=0.90, prior_base_rate=0.220)
+        for _ in range(50):
+            tracker.update("stuck.tool", False)
+        stuck_stats = tracker.tool_stats("stuck.tool")
+        self.assertGreater(stuck_stats["n"], 5.0)
+
+        # Era changes: 60 observations on other tools with zero events on stuck.tool
+        for _ in range(60):
+            tracker.update("nav.goto", True)
+
+        decayed_stats = tracker.tool_stats("stuck.tool")
+        # 0.90^60 < 0.002, so old stuck observations decayed away
+        self.assertLess(decayed_stats["n"], 0.1)
+        self.assertLess(decayed_stats["kappa"], 0.02)
+
+    def test_serialization_round_trip(self):
+        tracker = HierarchicalLogOddsTracker(decay_lambda=0.95, prior_base_rate=0.30)
+        tracker.update("nav.goto", True)
+        tracker.update("nav.goto", False)
+        raw = tracker.to_dict()
+        again = HierarchicalLogOddsTracker.from_dict(raw)
+        self.assertEqual(again.decay_lambda, 0.95)
+        self.assertAlmostEqual(again.prior_base_rate, 0.30)
+        self.assertIn("nav.goto", again.tool_counts)
+        self.assertAlmostEqual(again.tool_stats("nav.goto")["n"],
+                               tracker.tool_stats("nav.goto")["n"], places=4)
+
+    def test_calibrator_hierarchical_bundle_round_trip(self):
+        tracker = HierarchicalLogOddsTracker()
+        tracker.update("nav.goto", True)
+        cal = Calibrator(method="hierarchical", hierarchical=tracker)
+        with tempfile.TemporaryDirectory() as tmp:
+            from agent.calibration import load, save
+            path = save(Path(tmp) / "calibration.json", cal)
+            again = load(path)
+            self.assertIsNotNone(again)
+            self.assertEqual(again.method, "hierarchical")
+            self.assertIsNotNone(again.hierarchical)
+            self.assertIn("nav.goto", again.hierarchical.tool_counts)
+
+
+class BayesOptimalDecisionRuleTests(unittest.TestCase):
+    def _make_planner(self, streak=0, tracker_events=None):
+        from agent.planner_nn import NNPlanner, ToolBiasTracker
+
+        class StubTracker:
+            def __init__(self, s):
+                self.streak = s
+                self.last_tool = None
+
+        class StubStack:
+            def __init__(self):
+                self.active = True
+                self.note = "stub stack"
+
+            def rank(self, logits, cells, tools, context=None):
+                return [{"tool": t, "score": float(len(tools) - i)} for i, t in enumerate(tools)]
+
+        class StubForesight:
+            def __init__(self, probs):
+                self.width = 42
+                self.probs = probs
+
+            def rank(self, x, tools):
+                return [{"tool": t, "move_prob": self.probs.get(t, 0.5)} for t in tools]
+
+        nn = NNPlanner.__new__(NNPlanner)
+        nn.tools = ["nav.goto", "quest.advance", "inv.list"]
+        nn.stack_mode = "act"
+        nn._stack_loaded = True
+        nn.stack = StubStack()
+        nn.tracker = StubTracker(streak)
+        nn.bias_tracker = ToolBiasTracker()
+        if tracker_events:
+            for t, lat, failed in tracker_events:
+                nn.bias_tracker.record(t, lat, failed)
+        nn.calibration_tracker = HierarchicalLogOddsTracker()
+        return nn
+
+    def test_bayes_optimal_preemption_replaces_hardcoded_cuts(self):
+        # Scenario where old cuts (top_p < 0.20 and alt_p >= 0.25) would fail to preempt:
+        # top_tool (nav.goto) has prob 0.22 (>= 0.20, so old code kept it)
+        # alt_tool (quest.advance) has prob 0.24 (< 0.25, so old code rejected it)
+        # But streak = 2: E[progress(top)] = 0.22 / 3 = 0.0733
+        # alt_tool has E[progress(alt)] = 0.24
+        # Since 0.24 > 0.0733, Bayes-optimal rule switches to quest.advance!
+        nn = self._make_planner(streak=2)
+        from agent.planner_nn import NNPlanner
+
+        class StubForesight:
+            width = 42
+            def rank(self, x, tools):
+                return [
+                    {"tool": "nav.goto", "move_prob": 0.22},
+                    {"tool": "quest.advance", "move_prob": 0.24},
+                    {"tool": "inv.list", "move_prob": 0.05},
+                ]
+
+        nn.foresight = StubForesight()
+        chosen = nn._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["tool"], "quest.advance")
+        self.assertTrue(nn.last_stack["preempted"])
+        self.assertGreater(nn.last_stack["scores"][0]["score"], 0)
+
+    def test_cost_aware_preemption_favors_cheap_alternatives(self):
+        # top_tool prob 0.20, streak = 1 -> E[progress(top)] = 0.20 / 2 = 0.10, cost = 1.0, ratio = 0.10
+        # alt_tool has prob 0.22
+        # Case A: alt_tool is very slow (latency = 6.0s -> cost = 1.0 + 3.0 = 4.0) -> ratio = 0.22 / 4.0 = 0.055 < 0.10
+        nn_slow = self._make_planner(streak=1, tracker_events=[("quest.advance", 6.0, False)] * 5)
+        class SlowForesight:
+            width = 42
+            def rank(self, x, tools):
+                return [
+                    {"tool": "nav.goto", "move_prob": 0.20},
+                    {"tool": "quest.advance", "move_prob": 0.22},
+                    {"tool": "inv.list", "move_prob": 0.05},
+                ]
+        nn_slow.foresight = SlowForesight()
+        chosen_slow = nn_slow._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])
+        self.assertEqual(chosen_slow["tool"], "nav.goto")
+        self.assertFalse(nn_slow.last_stack["preempted"])
+
+        # Case B: alt_tool is fast (cost = 1.0) -> ratio = 0.22 / 1.0 = 0.22 > 0.10 -> preempts!
+        nn_fast = self._make_planner(streak=1)
+        nn_fast.foresight = SlowForesight()
+        chosen_fast = nn_fast._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])
+        self.assertEqual(chosen_fast["tool"], "quest.advance")
+        self.assertTrue(nn_fast.last_stack["preempted"])
+
+    def test_streak_decay_forces_switch_on_repeated_failures(self):
+        # top_tool has high raw prob 0.60, alt has prob 0.25
+        class HighProbForesight:
+            width = 42
+            def rank(self, x, tools):
+                return [
+                    {"tool": "nav.goto", "move_prob": 0.60},
+                    {"tool": "quest.advance", "move_prob": 0.25},
+                    {"tool": "inv.list", "move_prob": 0.05},
+                ]
+
+        # Streak 1: E[top] = 0.60 / 2 = 0.30 > 0.25 -> top tool stays
+        nn1 = self._make_planner(streak=1)
+        nn1.foresight = HighProbForesight()
+        self.assertEqual(nn1._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])["tool"], "nav.goto")
+
+        # Streak 3: E[top] = 0.60 / 4 = 0.15 < 0.25 -> Bayes-optimal rule switches!
+        nn3 = self._make_planner(streak=3)
+        nn3.foresight = HighProbForesight()
+        self.assertEqual(nn3._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])["tool"], "quest.advance")
+
+    def test_all_inert_dynamic_fallback(self):
+        class InertForesight:
+            width = 42
+            def rank(self, x, tools):
+                return [
+                    {"tool": "nav.goto", "move_prob": 0.02},
+                    {"tool": "quest.advance", "move_prob": 0.02},
+                    {"tool": "inv.list", "move_prob": 0.01},
+                ]
+
+        nn = self._make_planner(streak=1)
+        nn.foresight = InertForesight()
+        chosen = nn._stack_choice([0.0] * 42, [1.0, 0.5, 0.1])
+        self.assertEqual(chosen["tool"], "state.snapshot")
+        self.assertTrue(nn.last_stack["all_inert"])
 
 
 if __name__ == "__main__":

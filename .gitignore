@@ -238,3 +238,4 @@ AGENTS.MD
 # ---------------------------------------------------------------------------
 /.build-cache.txt
 /builder/build-manifest.json
+/build/

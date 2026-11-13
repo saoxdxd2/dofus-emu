@@ -70,15 +70,102 @@ def reachable_after_walk(distance, mp, rmin, rmax):
     return max(1.0, distance - mp) <= rmax and distance + mp >= rmin
 
 
-def teacher_move_class(board, target_cell, final_cell):
-    """Which of the env's three move choices the teacher's plan implies.
+MOVE_INTENT_NAMES = (
+    "close_to_optimal_range",  # 0
+    "step_to_break_los",       # 1
+    "lateral_flank_los",       # 2
+    "hold",                    # 3
+    "kite_max_mp",             # 4
+)
 
-    The encounter model has no destination, only a direction: 0 closes the gap, 1 holds, 2 opens it,
-    and the whole MP bar is spent on it. So a plan is read as one of those three by comparing the
-    distance from the actor to the body it aims at, before and after the plan's walk.
+
+def teacher_move_intent(board, target_cell, final_cell, map_field=None) -> Optional[int]:
+    """Tactical cell-intent classification for 2D Spectral-LOS move head.
+
+    0: close_to_optimal_range (closing distance to target)
+    1: step_to_break_los (stepping behind obstacle breaking enemy directed line of sight)
+    2: lateral_flank_los (flanking to gain line of sight to target, or lateral step along resistance gradient)
+    3: hold (stationary on cell)
+    4: kite_max_mp (retreating / kiting away from target/threat)
     """
     if target_cell is None or final_cell is None:
         return None
+    my_cell = int(board.my_cell)
+    final_c = int(final_cell)
+    target_c = int(target_cell)
+
+    if final_c == my_cell:
+        return 3  # hold
+
+    # If map_field has tactical_intent method, delegate directly
+    if map_field is not None and hasattr(map_field, "tactical_intent"):
+        enemies = getattr(board, "enemies", ()) or ()
+        enemy_cells = [int(e.cell) for e in enemies if getattr(e, "alive", True) and getattr(e, "cell", None) is not None]
+        return map_field.tactical_intent(my_cell, final_c, target_c, enemy_cells=enemy_cells)
+
+    # If board.cells has flags and we can load MapField:
+    if hasattr(board, "cells") and hasattr(board.cells, "flags") and not hasattr(board.cells, "_distances"):
+        from combat.map_field import MapField
+        try:
+            mf = MapField.from_flags(board.cells.flags, map_id=getattr(board.cells, "map_id", None))
+            enemies = getattr(board, "enemies", ()) or ()
+            enemy_cells = [int(e.cell) for e in enemies if getattr(e, "alive", True) and getattr(e, "cell", None) is not None]
+            return mf.tactical_intent(my_cell, final_c, target_c, enemy_cells=enemy_cells)
+        except Exception:
+            pass
+
+    # Fallback when only basic LOS or distance is available:
+    def _check_los(origin, target):
+        if origin == target:
+            return True
+        if hasattr(board, "cells") and hasattr(board.cells, "has_los"):
+            try:
+                return bool(board.cells.has_los(origin, target))
+            except Exception:
+                pass
+        return None
+
+    enemies = getattr(board, "enemies", ()) or ()
+    threat_cells = [int(e.cell) for e in enemies if getattr(e, "alive", True) and getattr(e, "cell", None) is not None]
+    if not threat_cells and target_c != my_cell:
+        threat_cells = [target_c]
+
+    # Check step_to_break_los
+    if threat_cells:
+        had_los = [tc for tc in threat_cells if _check_los(tc, my_cell) is True]
+        have_los = [tc for tc in threat_cells if _check_los(tc, final_c) is True]
+        if target_c in threat_cells and _check_los(target_c, my_cell) is True and _check_los(target_c, final_c) is False:
+            return 1
+        if had_los and not have_los:
+            return 1
+
+    # Check lateral_flank_los (gained line of sight)
+    my_had_los = _check_los(my_cell, target_c)
+    my_have_los = _check_los(final_c, target_c)
+    if my_had_los is False and my_have_los is True:
+        return 2
+
+    # Distance check
+    d_before = board.cells.distance(my_cell, target_c)
+    d_after = board.cells.distance(final_c, target_c)
+    if d_after == d_before:
+        return 2  # lateral_flank_los
+    if d_after < d_before:
+        return 0  # close_to_optimal_range
+    return 4  # kite_max_mp
+
+
+def teacher_move_class(board, target_cell, final_cell, map_field=None, n_classes=3):
+    """Which of the move choices the teacher's plan implies.
+
+    n_classes=3: radial direction (0 closes gap, 1 holds, 2 opens gap).
+    n_classes=5: 2D tactical cell-intent basis (close_to_optimal_range, step_to_break_los,
+                 lateral_flank_los, hold, kite_max_mp).
+    """
+    if target_cell is None or final_cell is None:
+        return None
+    if n_classes == 5:
+        return teacher_move_intent(board, target_cell, final_cell, map_field=map_field)
     before = board.cells.distance(int(board.my_cell), int(target_cell))
     after = board.cells.distance(int(final_cell), int(target_cell))
     if after < before:
@@ -108,7 +195,13 @@ def cache_boards(boards_count, seed, checkpoint, out_path, data_path=None):
     data_sha256 = hashlib.sha256(data_path.read_bytes()).hexdigest()
     data = np.load(data_path)
     cells = pb.load_map(pathlib.Path(pb.DEFAULT_MAP))
+    from combat.map_field import MapField
+    try:
+        map_field = MapField.from_flags(cells.flags, map_id=getattr(cells, "map_id", 100139008))
+    except Exception:
+        map_field = None
     rng = random.Random(seed)
+    n_moves = payload["params"]["move"][0].shape[1] if "move" in payload.get("params", {}) else 3
 
     store = {key: [] for key in ("hidden", "spell_mask", "move_logits", "move_mask",
                                  "target_logits", "target_mask", "teacher_spell",
@@ -169,7 +262,8 @@ def cache_boards(boards_count, seed, checkpoint, out_path, data_path=None):
             aim_cell = (min(living, key=lambda c: board.cells.distance(
                 int(board.my_cell), int(c))) if living else None)
         teacher_move = teacher_move_class(board, aim_cell,
-                                         getattr(best, "final_cell", None))
+                                          getattr(best, "final_cell", None),
+                                          map_field=map_field, n_classes=n_moves)
         # The margin is measured over *legal* spells only: with one legal slot the masked-out
         # entries sit at -1e9 and a naive margin reports 1e9, which is the mask talking.
         legal = np.sort(spell_logits[spell_mask])
@@ -254,17 +348,18 @@ def cache_boards(boards_count, seed, checkpoint, out_path, data_path=None):
     head_move = arrays["head_move"].astype(int)
     teacher_move = arrays["teacher_move"].astype(int)
     move_legal = arrays["move_mask"].astype(bool)
+    n_moves = move_legal.shape[1] if move_legal.ndim > 1 else 3
     named = teacher_move >= 0
     move_rows = np.arange(n)
     move_fixable = int((named & (head_move != teacher_move)
-                        & move_legal[move_rows, np.clip(teacher_move, 0, 2)]).sum())
+                        & move_legal[move_rows, np.clip(teacher_move, 0, n_moves - 1)]).sum())
     ranked_moves = np.sort(arrays["move_logits"].astype(np.float64), axis=1)
     median_move_margin = (float(np.median(ranked_moves[:, -1] - ranked_moves[:, -2]))
                           if n else None)
     summary = {"boards": n, "classes": classes,
                "move_disagreements_teacher_legal": move_fixable,
-               "head_move_classes": np.bincount(head_move[named], minlength=3).tolist(),
-               "teacher_move_classes": np.bincount(teacher_move[named], minlength=3).tolist(),
+               "head_move_classes": np.bincount(head_move[named], minlength=n_moves).tolist(),
+               "teacher_move_classes": np.bincount(teacher_move[named], minlength=n_moves).tolist(),
                "fixable_in_weight_space": sum(v for k, v in classes.items()
                                               if k.endswith("legal") or k == "wrong_target"),
                "mask_forced": sum(v for k, v in classes.items() if k.endswith("masked")),
@@ -567,8 +662,111 @@ def edit_outcome_head(z, out_path, payload, etas, cache_path, head, method="mean
     return 0 if "wrote" in report else 1
 
 
-def edit_move_head(z, out_path, payload, etas, cache_path, split_share=0.75):
-    """Rank-1 move-head edit toward the direction the beam's walk implies.
+def solve_move_linear_probe(
+    hidden: np.ndarray,
+    teacher_move: np.ndarray,
+    move_mask: Optional[np.ndarray] = None,
+    split_share: float = 0.75,
+    alphas: Sequence[float] = (1e-4, 1e-3, 1e-2, 0.1, 1.0, 10.0, 100.0),
+    n_classes: int = 5,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Solve the exact ridge linear-probe warm start in weight space for the move head.
+
+    Minimizes:
+        L(W, b) = 1/N_tr || X_tr W + b - Y_tr ||_F^2 + alpha * scale/N_tr || W ||_F^2
+    over centered representations from trunk_actors.
+
+    Returns:
+        (W_best, b_best, report) where W is [D, n_classes], b is [n_classes].
+    """
+    hidden = np.asarray(hidden, dtype=np.float64)
+    teacher = np.asarray(teacher_move, dtype=int)
+    n = len(teacher)
+    split = max(1, int(n * split_share))
+    train_slice = slice(0, split)
+    heldout_slice = slice(split, n)
+
+    if move_mask is None:
+        mask = np.ones((n, n_classes), dtype=bool)
+    else:
+        mask = np.asarray(move_mask, dtype=bool)
+        if mask.shape[1] < n_classes:
+            mask = np.pad(mask, ((0, 0), (0, n_classes - mask.shape[1])), constant_values=True)
+
+    valid = (teacher >= 0) & (teacher < n_classes)
+    valid &= mask[np.arange(n), np.clip(teacher, 0, n_classes - 1)]
+    train_valid = valid[train_slice]
+    train_indices = np.where(train_valid)[0]
+    if len(train_indices) == 0:
+        raise ValueError("no valid training boards with legal teacher move")
+
+    X_tr = hidden[train_slice][train_indices]
+    y_tr = teacher[train_slice][train_indices]
+    D = X_tr.shape[1]
+
+    Y_tr = np.zeros((len(y_tr), n_classes), dtype=np.float64)
+    Y_tr[np.arange(len(y_tr)), y_tr] = 1.0
+
+    X_mean = np.mean(X_tr, axis=0)
+    Y_mean = np.mean(Y_tr, axis=0)
+    X_tilde = X_tr - X_mean
+    Y_tilde = Y_tr - Y_mean
+
+    XTX = X_tilde.T @ X_tilde
+    XTY = X_tilde.T @ Y_tilde
+    scale = max(float(np.trace(XTX) / max(1, D)), 1e-12)
+
+    def evaluate(W, b, sl):
+        keep = valid[sl]
+        if not keep.any():
+            return 0.0
+        logits = hidden[sl] @ W + b
+        m = mask[sl]
+        if m.shape[1] < W.shape[1]:
+            m = np.pad(m, ((0, 0), (0, W.shape[1] - m.shape[1])), constant_values=True)
+        preds = np.argmax(np.where(m, logits, -1e9), axis=1)
+        return float((preds[keep] == teacher[sl][keep]).mean())
+
+    candidates = []
+    best_cand = None
+    best_wb = None
+    for alpha in alphas:
+        reg = float(alpha) * scale * np.eye(D)
+        W_cand = np.linalg.solve(XTX + reg, XTY)
+        b_cand = Y_mean - X_mean @ W_cand
+        train_acc = evaluate(W_cand, b_cand, train_slice)
+        heldout_acc = evaluate(W_cand, b_cand, heldout_slice)
+        cand = {
+            "alpha": float(alpha),
+            "train_agreement": round(train_acc, 4),
+            "heldout_agreement": round(heldout_acc, 4),
+            "weight_norm": float(np.linalg.norm(W_cand)),
+        }
+        candidates.append(cand)
+        if (
+            best_cand is None
+            or cand["train_agreement"] > best_cand["train_agreement"]
+            or (
+                cand["train_agreement"] == best_cand["train_agreement"]
+                and cand["heldout_agreement"] > best_cand["heldout_agreement"]
+            )
+        ):
+            best_cand = cand
+            best_wb = (W_cand, b_cand)
+
+    report = {
+        "n_boards": n,
+        "train_boards": len(train_indices),
+        "heldout_boards": int(valid[heldout_slice].sum()),
+        "n_classes": n_classes,
+        "candidates": candidates,
+        "chosen": best_cand,
+    }
+    return best_wb[0], best_wb[1], report
+
+
+def edit_move_head(z, out_path, payload, etas, cache_path, split_share=0.75, method="mean", ridge=0.01):
+    """Rank-1 or exact ridge linear-probe move-head edit toward the direction the beam's walk implies.
 
     This is the head that answers the class the spell head cannot: on a board where the mask says
     "that spell is out of range", no logit on the spell head can cast it -- but walking in is a
@@ -584,7 +782,88 @@ def edit_move_head(z, out_path, payload, etas, cache_path, split_share=0.75):
     n = len(teacher)
     split = max(1, int(n * split_share))
     rows = np.arange(n)
-    valid = (teacher >= 0) & mask[rows, np.clip(teacher, 0, 2)]
+    n_classes = mask.shape[1] if mask.ndim > 1 else 3
+    if weight.shape[1] > n_classes:
+        n_classes = weight.shape[1]
+    if (teacher >= 0).any():
+        n_classes = max(n_classes, int(np.max(teacher[teacher >= 0])) + 1)
+
+    if method == "ridge":
+        alphas = etas if etas else (1e-4, 1e-3, 1e-2, 0.1, 1.0, 10.0, 100.0)
+        valid = (teacher >= 0) & (teacher < n_classes)
+        m = mask
+        if m.shape[1] < n_classes:
+            m = np.pad(m, ((0, 0), (0, n_classes - m.shape[1])), constant_values=True)
+        valid &= m[rows, np.clip(teacher, 0, n_classes - 1)]
+
+        def agreement(W, b, sl):
+            keep = valid[sl]
+            if not keep.any():
+                return 0.0
+            cur_m = m[sl]
+            logits = hidden[sl] @ W + b
+            best = np.argmax(np.where(cur_m, logits, -1e9), axis=1)
+            return float((best[keep] == teacher[sl][keep]).mean())
+
+        if weight.shape[1] == n_classes:
+            base_train = agreement(weight, bias, slice(0, split))
+            base_test = agreement(weight, bias, slice(split, n))
+        else:
+            base_train = 0.0
+            base_test = 0.0
+
+        usable_count = int(valid[:split].sum())
+        if usable_count == 0:
+            print(json.dumps({"verdict": "no board where teacher move is legal; nothing to program",
+                              "cache_boards": n}, indent=1))
+            return 1
+
+        W_opt, b_opt, probe_report = solve_move_linear_probe(
+            hidden=hidden,
+            teacher_move=teacher,
+            move_mask=mask,
+            split_share=split_share,
+            alphas=alphas,
+            n_classes=n_classes,
+        )
+        best_cand = probe_report["chosen"]
+        report = {
+            "head": "move",
+            "method": "ridge",
+            "boards": n,
+            "train": split,
+            "teacher_legal_boards": int(valid.sum()),
+            "baseline_train_agreement": round(base_train, 4),
+            "baseline_heldout_agreement": round(base_test, 4),
+            "candidates": probe_report["candidates"],
+            "chosen": best_cand,
+        }
+        if best_cand["train_agreement"] <= base_train + 1e-9 and base_train > 0:
+            report["verdict"] = "no eta improved training agreement; edit not written"
+            print(json.dumps(report, indent=1))
+            return 1
+        if best_cand["heldout_agreement"] < base_test - 1e-9:
+            report["verdict"] = ("train agreement rose but held-out agreement fell; the direction "
+                                 "memorised the slice, edit not written")
+            print(json.dumps(report, indent=1))
+            return 1
+
+        payload["params"]["move"] = (W_opt.astype(np.float32), b_opt.astype(np.float32))
+        payload["weight_space_program"] = {
+            "head": "move",
+            "method": "ridge",
+            "alpha": best_cand["alpha"],
+            "train_boards": probe_report["train_boards"],
+            "cache": str(cache_path),
+            "baseline_heldout_agreement": round(base_test, 4),
+            "heldout_agreement": best_cand["heldout_agreement"],
+        }
+        pathlib.Path(out_path).write_bytes(pickle.dumps(payload))
+        report["wrote"] = str(out_path)
+        print(json.dumps(report, indent=1))
+        return 0
+
+    valid = (teacher >= 0) & mask[rows, np.clip(teacher, 0, mask.shape[1] - 1)]
     base_logits = hidden @ weight + bias
     picked = np.argmax(np.where(mask, base_logits, -1e9), axis=1)
     known = teacher >= 0
@@ -676,12 +955,14 @@ def edit(cache_path, head, out_path, checkpoint, etas, teacher_class="all", meth
     payload["wsp_source"] = {"path": str(source), "sha256": digest}
     if str(z.get("cache_kind", "")) == "raw_pvm_outcomes_v1":
         return edit_outcome_head(z, out_path, payload, etas, cache_path, head, method, ridge)
-    if method != "mean":
+    if method not in ("mean", "ridge"):
         raise ValueError("covariance writes require a raw PvM outcome cache")
+    if method == "ridge" and head != "move":
+        raise ValueError("ridge linear probe is supported for move head")
     if head == "t_bias":
         return edit_target_bias(z, out_path, payload, etas)
     if head == "move":
-        return edit_move_head(z, out_path, payload, etas, cache_path)
+        return edit_move_head(z, out_path, payload, etas, cache_path, split_share=0.75, method=method, ridge=ridge)
     if head != "spell":
         raise ValueError("this cache supports spell, t_bias and move edits")
     hidden = z["hidden"].astype(np.float64)
@@ -818,7 +1099,7 @@ def main(argv=None):
                     help="spell head only: learn only the direction toward the beam's pass, or "
                          "only the direction toward its casts. 'pass' cannot manufacture an "
                          "unrealizable cast, so its duel delta is not solver substitution")
-    ap.add_argument("--method", choices=("mean", "covariance"), default="mean",
+    ap.add_argument("--method", choices=("mean", "covariance", "ridge"), default="mean",
                     help="raw outcome write: mean key direction or covariance-preserving constraints")
     ap.add_argument("--ridge", type=float, default=0.01, help="relative covariance regularization")
     ap.add_argument("--etas", default="0.05,0.1,0.25,0.5,1,2,4")

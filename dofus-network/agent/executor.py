@@ -1280,7 +1280,12 @@ class ToolExecutor:
         if self.fights is None:
             from combat.fight_estimate import FightAdvisor
 
-            self.fights = FightAdvisor()
+            try:
+                from combat import live_learn
+                price = live_learn.enemy_turn_price
+            except Exception:  # noqa: BLE001 - no learner means the level/AP prior
+                price = None
+            self.fights = FightAdvisor(enemy_turn_price=price)
         return self.fights
 
     def character_report(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -1357,6 +1362,19 @@ class ToolExecutor:
             except Exception:  # noqa: BLE001
                 return None
 
+        def _live_learning():
+            """The live learner and shadow calibration, or None when unavailable.
+
+            Same contract as `_threat_memory`: imported here so a missing combat
+            stack means "use the priors", not "no planner".
+            """
+            try:
+                from combat import live_learn
+
+                return live_learn
+            except Exception:  # noqa: BLE001
+                return None
+
         payload = self.fight_state()
         if not payload:
             return ToolResult(
@@ -1375,6 +1393,7 @@ class ToolExecutor:
         try:
             board = Board.from_fight_state(payload)
             observation, contract = live_view(board)
+            learning = _live_learning()
             solver = BattleSolver(
                 beam_width=int(args.get("beam_width", 16) or 16),
                 max_actions=int(args.get("max_actions", 4) or 4),
@@ -1382,6 +1401,9 @@ class ToolExecutor:
                 # own default is the level prior, which is what keeps benchmarks and
                 # tests from depending on a file a live fight filled in.
                 memory=_threat_memory(),
+                enemy_turn_price=learning.enemy_turn_price if learning else None,
+                damage_calibration=(learning.default_damage_calibration
+                                    if learning else None),
             )
             top_k = int(args.get("top_k", 1) or 1)
             checkpoint = None

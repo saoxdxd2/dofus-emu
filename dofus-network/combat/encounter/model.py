@@ -55,7 +55,7 @@ def init_params(key: Array, feat_dim: int, global_dim: int,
             "mlp1": _dense(next(keys), hidden, 2 * hidden),
             "mlp2": _dense(next(keys), 2 * hidden, hidden),
         })
-    p["move"] = _dense(next(keys), hidden, 3)
+    p["move"] = _dense(next(keys), hidden, getattr(cfg, "n_moves", getattr(cfg, "moves", 3)))
     p["spell"] = _dense(next(keys), hidden, cfg.n_spells)
     p["t_q"] = _dense(next(keys), hidden, hidden)
     p["t_k"] = _dense(next(keys), hidden, hidden)

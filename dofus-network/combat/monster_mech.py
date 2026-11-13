@@ -56,8 +56,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from combat.monster_spellbook import TOUCH_CACHE_FILE, load_spellbook
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CACHE_FILE = DATA_DIR / "cache" / "monster_spells.json"
+TOUCH_CACHE_FILE = DATA_DIR / "cache" / "monster_spells_touch.npz"
 KNOWLEDGE = DATA_DIR / "knowledge" / "dofus_knowledge.sqlite"
 # The recorded fights, which carry the client's own spellbook for each enemy.
 LIVE_CORPUS = DATA_DIR.parent / "trajectories" / "fight_boards.jsonl"
@@ -148,10 +151,21 @@ class MonsterMechanics:
     # -- loading ------------------------------------------------------------
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "MonsterMechanics":
+        """Load from the touch npz first, then the JSON cache.
+
+        The npz is built by ``combat.monster_spellbook.compile_spellbook`` and
+        loads in under a millisecond. If it is absent, fall back to the JSON
+        cache (which may itself be missing in a clean checkout -- callers must
+        handle that).
+        """
         path = path or CACHE_FILE
+        if TOUCH_CACHE_FILE.exists():
+            monsters, levels = load_spellbook(TOUCH_CACHE_FILE)
+            return cls(monsters, levels)
         if not path.exists():
             raise FileNotFoundError(
-                "%s is missing; run `python -m data.harvest_monster_spells --write`" % path)
+                "%s is missing; run `python -m data.harvest_monster_spells --write`"
+                % path)
         payload = json.loads(path.read_text(encoding="utf-8"))
         return cls(payload.get("monsters") or {}, payload.get("spell_levels") or {})
 
@@ -215,13 +229,19 @@ class MonsterMechanics:
         against, and `Thwack` reads as 400 damage for 1 AP, which is not credible for a
         level-5 monster. Callers should take the reach from here and leave damage to
         `ThreatMemory`, which learns it from fights that were actually fought.
+
+        When the corpus file is missing (clean checkout), falls back to the versioned
+        touch npz built by ``combat.monster_spellbook.compile_spellbook`` so that
+        threat lookups do not silently degrade to level priors.
         """
         paths = list(paths or [LIVE_CORPUS])
         monsters: Dict[str, Any] = {}
         levels: Dict[str, Any] = {}
+        found = False
         for path in paths:
             if not path.exists():
                 continue
+            found = True
             with path.open(encoding="utf-8", errors="replace") as handle:
                 for line in handle:
                     line = line.strip()
@@ -236,6 +256,11 @@ class MonsterMechanics:
                         continue
                     for fighter in board.get("fighters") or ():
                         cls._absorb_live_fighter(fighter, monsters, levels)
+        # Only fall back to the touch npz when using the default corpus path and
+        # it is missing -- an explicit path that doesn't exist still yields an
+        # empty table (callers can distinguish that from a real corpus).
+        if not found and paths == [LIVE_CORPUS] and TOUCH_CACHE_FILE.exists():
+            monsters, levels = load_spellbook(TOUCH_CACHE_FILE)
         return cls(monsters, levels)
 
     @staticmethod

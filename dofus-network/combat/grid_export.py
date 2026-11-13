@@ -406,7 +406,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.selftest:
         return selftest(args.checkpoint, config, args.out, args.active_cells, args.seed)
     metadata = export(args.checkpoint, config, args.out, args.active_cells, args.seed)
-    logger.debug(json.dumps(metadata, indent=1, sort_keys=True))
+    print(json.dumps(metadata, indent=1, sort_keys=True))
     return 0
 
 

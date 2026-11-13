@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from planning.economy import PlayerState
+from planning.goal_compiler import ActiveGoalFalsifier, GoalCompiler, GoalResolution
 from planning.graph_memory import DecisionGraph
 from planning.outcome import ENTITY_KEYS
 from planning.schedule import build_schedule_stack
@@ -89,10 +90,17 @@ class ScheduleTap:
             cache=ThinkingCache(self.paths["thinking_cache.json"]),
         )
         self.experience = experience
+        self.compiler = GoalCompiler()
         self.observed = 0
         self.learned = 0
         self.verified = 0
         self.failed = 0
+        self.goals_submitted = 0
+        self.goals_verified = 0
+        self.goals_rejected = 0
+        self.falsified_aborts = 0
+        self.active_falsifier: Optional[ActiveGoalFalsifier] = None
+        self.last_falsifier: Optional[ActiveGoalFalsifier] = None
         self._warned = False
         self._last_report: Dict[str, Any] = {}
 
@@ -124,6 +132,10 @@ class ScheduleTap:
             if report.get("updates"):
                 self.learned += 1
             self._last_report = report
+
+            # Condition (b) runtime falsifier check
+            self._check_runtime_falsifier(call, result, observation)
+
             return report
         except Exception as exc:  # noqa: BLE001 - observation must never break the loop
             self.failed += 1
@@ -132,12 +144,157 @@ class ScheduleTap:
                 log.warning("schedule tap disabled after %s: %s", type(exc).__name__, exc)
             return None
 
+    def _check_runtime_falsifier(self, call: Any, result: Any,
+                                 observation: Optional[Dict[str, Any]]) -> None:
+        """Enforce Condition (b): verify progress within K steps or auto-abort to base loop."""
+        f = self.active_falsifier
+        if f is None or f.confirmed or f.falsified:
+            return
+
+        progress = self._detect_progress(f, call, result, observation)
+        if progress:
+            f.confirmed = True
+            f.confirmed_at_step = self.observed
+            f.confirmation_reason = progress
+            return
+
+        steps_elapsed = self.observed - f.submitted_at_step
+        if steps_elapsed >= f.horizon_k:
+            f.falsified = True
+            self.falsified_aborts += 1
+            log.warning(
+                "Falsifiable Goal Compiler: goal %s auto-aborted after %d steps without progress",
+                f.goal, steps_elapsed
+            )
+            self.abort_goal(reason=f"falsified_no_progress_within_{f.horizon_k}_steps")
+
+    def _detect_progress(self, f: ActiveGoalFalsifier, call: Any, result: Any,
+                         observation: Optional[Dict[str, Any]]) -> Optional[str]:
+        # 1. Check inventory delta from observation
+        curr_inv = self._extract_inventory_qty(observation, f.item_id)
+        if curr_inv > f.initial_inventory_qty:
+            return f"inventory_delta:+{curr_inv - f.initial_inventory_qty}"
+
+        # 2. Check result payload from tool execution
+        payload = result.as_dict() if hasattr(result, "as_dict") else dict(result or {})
+        tool = str(getattr(call, "tool", "") or "")
+        ok = getattr(result, "ok", True)
+        if ok and tool in ("farm.start", "fight.join", "hdv.buy", "shop.buy"):
+            res_item = payload.get("item_id")
+            if res_item is not None:
+                try:
+                    if int(res_item) == f.item_id:
+                        drops = int(payload.get("drops") or payload.get("qty") or payload.get("bought") or 0)
+                        if drops > 0:
+                            return f"tool_produced_item:{tool}:+{drops}"
+                except (ValueError, TypeError):
+                    pass
+
+        # 3. Check quest advance or counter delta
+        if ok and tool == "quest.advance":
+            q_id = (getattr(call, "args", None) or {}).get("quest_id") or payload.get("quest_id")
+            if q_id is not None and f.quest_id is not None:
+                try:
+                    if int(q_id) == int(f.quest_id):
+                        return "quest_advance_success"
+                except (ValueError, TypeError):
+                    pass
+            elif f.quest_id is None:
+                return "quest_advance_success"
+
+        curr_counter = self._extract_quest_counter(observation)
+        if curr_counter > f.initial_quest_counter:
+            return f"quest_counter_delta:+{curr_counter - f.initial_quest_counter}"
+
+        return None
+
+    @staticmethod
+    def _extract_inventory_qty(obs: Optional[Dict[str, Any]], item_id: int) -> int:
+        if not obs or not isinstance(obs, dict):
+            return 0
+        inv = obs.get("inventory") or obs.get("items")
+        if isinstance(inv, dict):
+            if item_id in inv:
+                return int(inv[item_id] or 0)
+            if str(item_id) in inv:
+                return int(inv[str(item_id)] or 0)
+        elif isinstance(inv, list):
+            for entry in inv:
+                if isinstance(entry, dict):
+                    eid = entry.get("item_id") or entry.get("id") or entry.get("gid")
+                    if eid is not None:
+                        try:
+                            if int(eid) == item_id:
+                                return int(entry.get("quantity") or entry.get("qty") or entry.get("count") or 1)
+                        except (ValueError, TypeError):
+                            pass
+        return 0
+
+    @staticmethod
+    def _extract_quest_counter(obs: Optional[Dict[str, Any]]) -> int:
+        if not obs or not isinstance(obs, dict):
+            return 0
+        for key in ("quest_counter", "quest_step", "step_num", "step", "quest_progress", "objectives_completed"):
+            val = obs.get(key)
+            if isinstance(val, (int, float)):
+                return int(val)
+        return 0
+
     def objective(self) -> Optional[Dict[str, Any]]:
         """The planner's current step, or None. Nothing in `agent/` consumes this yet."""
         return self.manager.active_objective()
 
+    def compile_prose(self, prose: str, observation: Optional[Dict[str, Any]] = None) -> GoalResolution:
+        """Resolve prose and verify Condition (a) against quest requirements or recipe DAG."""
+        return self.compiler.resolve(prose, observation)
+
+    def submit_prose_goal(self, prose: str, observation: Optional[Dict[str, Any]] = None,
+                          level: int = 60, horizon_k: int = 5) -> Optional[Any]:
+        """Compile prose and submit to ScheduleManager only if structurally verified.
+
+        Enforces Condition (a) prior to submission and arms Condition (b) runtime tracking.
+        Returns the created Plan, or None if rejected / structurally falsified.
+        """
+        resolution = self.compiler.resolve(prose, observation)
+        if not resolution.verified or resolution.goal is None:
+            self.goals_rejected += 1
+            log.info("Goal rejected by structural falsifier: %s (%s)", prose, resolution.verification_reason)
+            return None
+
+        self.goals_verified += 1
+        self.goals_submitted += 1
+        plan = self.manager.submit(
+            resolution.goal,
+            PlayerState(level=int(level), kamas=0),
+            goal_text=prose,
+        )
+
+        init_inv = self._extract_inventory_qty(observation, resolution.item_id)
+        init_counter = self._extract_quest_counter(observation)
+        self.active_falsifier = ActiveGoalFalsifier(
+            goal=resolution.goal,
+            prose=prose,
+            item_id=int(resolution.item_id),
+            target_qty=int(resolution.qty),
+            quest_id=resolution.quest_id,
+            guide_id=resolution.guide_id,
+            submitted_at_step=self.observed,
+            horizon_k=max(1, int(horizon_k)),
+            initial_inventory_qty=init_inv,
+            initial_quest_counter=init_counter,
+        )
+        return plan
+
+    def abort_goal(self, reason: str = "aborted") -> None:
+        """Cancel active plan and reset to base loop state."""
+        self.manager.abort(reason=reason)
+        if self.active_falsifier is not None:
+            self.active_falsifier.aborted = True
+            self.last_falsifier = self.active_falsifier
+            self.active_falsifier = None
+
     def submit_goal(self, item_id: int, qty: int = 1, level: int = 60) -> Any:
-        """Explicit opt-in: the only way this tap ever produces an objective."""
+        """Explicit opt-in: direct submission without prose compilation."""
         from planning.planner import Goal
 
         return self.manager.submit(Goal(int(item_id), int(qty)),
@@ -150,6 +307,13 @@ class ScheduleTap:
             "params": len(self.experience), "events": self.experience.events_seen,
             "objective": self.objective() is not None,
             "root": str(self.root),
+            "compiler": {
+                "submitted": self.goals_submitted,
+                "verified": self.goals_verified,
+                "rejected": self.goals_rejected,
+                "aborts": self.falsified_aborts,
+                "active_goal": self.active_falsifier.to_dict() if self.active_falsifier else None,
+            },
         }
 
 

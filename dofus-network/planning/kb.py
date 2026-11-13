@@ -517,6 +517,35 @@ class KnowledgeBase:
             return None
         return int(self._arrays["item_level"][index]), int(self._arrays["item_price"][index])
 
+    def recipe_closure(self, item_id: int, max_depth: int = 10) -> Set[int]:
+        """All item IDs in the recipe DAG rooted at `item_id` (transitive closure of ingredients)."""
+        visited: Set[int] = set()
+        queue: List[Tuple[int, int]] = [(int(item_id), 0)]
+        while queue:
+            current, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            it = self.item(current)
+            if it is None or not it.recipe:
+                continue
+            for ing_id in it.recipe:
+                ing_int = int(ing_id)
+                if ing_int not in visited:
+                    visited.add(ing_int)
+                    queue.append((ing_int, depth + 1))
+        return visited
+
+    def is_in_recipe_dag(self, candidate_id: int, root_ids: Sequence[int], max_depth: int = 10) -> bool:
+        """Whether candidate_id is one of the root_ids or in their recipe DAG."""
+        candidate = int(candidate_id)
+        for root in root_ids:
+            root_int = int(root)
+            if candidate == root_int:
+                return True
+            if candidate in self.recipe_closure(root_int, max_depth=max_depth):
+                return True
+        return False
+
     def _trigram_rows(self, table: str, text: str) -> Optional[np.ndarray]:
         """Rows whose folded name shares the query's trigrams, or None if unknown."""
         # `_name_hits` is called with "item_name"; the index is stored per table

@@ -438,6 +438,63 @@ class MapField:
             return cells
         return cells[np.argsort(-self.closeness[cells])]
 
+    # -- tactical intent & resistance gradient -------------------------------
+
+    def resistance_gradient(self, origin: int, dest: int, target: int) -> float:
+        """Difference in effective resistance to target between dest and origin."""
+        if not (0 <= origin < NB_CELLS and 0 <= dest < NB_CELLS and 0 <= target < NB_CELLS):
+            return 0.0
+        return float(self.resistance[dest, target] - self.resistance[origin, target])
+
+    def tactical_intent(self, origin: int, final: int, target: int,
+                        enemy_cells: Sequence[int] = ()) -> int:
+        """Classify a move into the 5-class tactical cell-intent basis.
+
+        0: close_to_optimal_range (closing distance to target)
+        1: step_to_break_los (stepping behind obstacle breaking enemy directed LOS)
+        2: lateral_flank_los (flanking to gain LOS or lateral step along resistance gradient)
+        3: hold (stationary on cell)
+        4: kite_max_mp (retreating / kiting)
+        """
+        origin = int(origin)
+        final = int(final)
+        target = int(target)
+        if final == origin:
+            return 3  # hold
+
+        # 1. Step to break enemy directed line of sight
+        threats = [int(c) for c in enemy_cells if 0 <= int(c) < NB_CELLS]
+        if not threats and 0 <= target < NB_CELLS and target != origin:
+            threats = [target]
+        if threats:
+            had_los = [c for c in threats if self.has_los(c, origin)]
+            have_los = [c for c in threats if self.has_los(c, final)]
+            if target in threats and self.has_los(target, origin) and not self.has_los(target, final):
+                return 1  # step_to_break_los
+            if had_los and not have_los:
+                return 1  # step_to_break_los
+
+        # 2. Check if move gained line of sight to target
+        if 0 <= target < NB_CELLS:
+            if not self.has_los(origin, target) and self.has_los(final, target):
+                return 2  # lateral_flank_los
+
+        # 3. Distance and resistance gradient check
+        d_before = int(self.dist[origin, target]) if (0 <= origin < NB_CELLS and 0 <= target < NB_CELLS) else UNREACHABLE
+        d_after = int(self.dist[final, target]) if (0 <= final < NB_CELLS and 0 <= target < NB_CELLS) else UNREACHABLE
+        if d_before == UNREACHABLE or d_after == UNREACHABLE:
+            ox, oy = cell_point(origin)
+            fx, fy = cell_point(final)
+            tx, ty = cell_point(target)
+            d_before = max(abs(ox - tx), abs(oy - ty))
+            d_after = max(abs(fx - tx), abs(fy - ty))
+
+        if d_after == d_before:
+            return 2  # lateral_flank_los
+        if d_after < d_before:
+            return 0  # close_to_optimal_range
+        return 4  # kite_max_mp
+
     # -- encoding -----------------------------------------------------------
 
     def encoding(self) -> np.ndarray:

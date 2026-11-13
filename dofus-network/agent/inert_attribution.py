@@ -391,35 +391,35 @@ def veto_candidates(rows: Sequence[Dict[str, Any]],
 
 def _print_report(rep: Dict[str, Any]) -> None:
     if not rep.get("actionable"):
-        logger.debug("no actionable rows")
+        print("no actionable rows")
         return
-    logger.debug("actionable %d   inert %d (%.1f%%)   effective %d" % (
+    print("actionable %d   inert %d (%.1f%%)   effective %d" % (
         rep["actionable"], rep["inert"], 100 * rep["inert_rate"], rep["effective"]))
-    logger.debug("\nera            rows   inert   moved  progress")
+    print("\nera            rows   inert   moved  progress")
     for e in rep["eras"]:
-        logger.debug("%-13s %5d  %5.1f%%  %5.1f%%    %5.1f%%" % (
+        print("%-13s %5d  %5.1f%%  %5.1f%%    %5.1f%%" % (
             e["era"], e["rows"], 100 * e["inert_rate"],
             100 * e["moved_rate"], 100 * e["progress_rate"]))
-    logger.debug("\nexclusive first failure (shares sum to 100%)")
+    print("\nexclusive first failure (shares sum to 100%)")
     for k, v in sorted(rep["exclusive"]["counts"].items(), key=lambda kv: -kv[1]):
         if v:
-            logger.debug("  %-24s %5d  %5.1f%%" % (k, v, 100 * rep["exclusive"]["shares"][k]))
-    logger.debug("\nsignal               inert   effective   lift_pp   risk ratio   cause?")
+            print("  %-24s %5d  %5.1f%%" % (k, v, 100 * rep["exclusive"]["shares"][k]))
+    print("\nsignal               inert   effective   lift_pp   risk ratio   cause?")
     for name, s in rep["specificity"].items():
         ratio = "inf" if s["ratio"] is None else "%.2fx" % s["ratio"]
         verdict = "NOT differential" if (s["corrected_ratio"] or 0) < 1.2 else "yes"
         if name == "claim_unmet":
             verdict = "outcome, circular"
-        logger.debug("  %-18s %6.1f%%     %6.1f%%   %+7.1f  %10s   %s" % (
+        print("  %-18s %6.1f%%     %6.1f%%   %+7.1f  %10s   %s" % (
             name, 100 * (s["inert"] or 0), 100 * (s["effective"] or 0),
             s["lift_pp"] or 0, ratio, verdict))
-    logger.debug("\ntool-conditioned repeat veto (upper bounds, not an intervention)")
-    logger.debug("  %-18s %8s %10s %10s %9s" % ("tool", "flagged", "inert_cut", "eff_cost", "precision"))
+    print("\ntool-conditioned repeat veto (upper bounds, not an intervention)")
+    print("  %-18s %8s %10s %10s %9s" % ("tool", "flagged", "inert_cut", "eff_cost", "precision"))
     for v in rep["veto_candidates"][:8]:
-        logger.debug("  %-18s %8d %10d %10d %8.1f%%" % (
+        print("  %-18s %8d %10d %10d %8.1f%%" % (
             v["tool"], v["flagged"], v["inert_removed_upper_bound"],
             v["effective_cost_upper_bound"], 100 * v["precision"]))
-    logger.debug("\n%s" % rep["caveat"])
+    print("\n%s" % rep["caveat"])
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -439,13 +439,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.json:
         from agent.jsonio import utf8_console
         utf8_console()
-        logger.debug(json.dumps(rep, indent=1, ensure_ascii=False))
+        print(json.dumps(rep, indent=1, ensure_ascii=False))
     else:
         _print_report(rep)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(rep, indent=1, ensure_ascii=False), encoding="utf-8")
-        logger.debug("wrote %s" % args.out, file=sys.stderr)
+        print("wrote %s" % args.out, file=sys.stderr)
     return 0
 
 

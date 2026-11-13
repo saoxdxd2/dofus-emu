@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent.regression import check, section
+from agent.regression_suites.common import check, section
 
 
 def test_dialog_ranking() -> None:

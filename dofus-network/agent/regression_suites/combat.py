@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.regression import REPO_ROOT, OPTIONAL_IMPORTS, check, section
+from agent.regression_suites.common import REPO_ROOT, OPTIONAL_IMPORTS, check, section
 
 
 def test_side_swap() -> None:

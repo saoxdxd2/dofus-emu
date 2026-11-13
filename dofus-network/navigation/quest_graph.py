@@ -392,6 +392,31 @@ class QuestKnowledgeGraph:
     def get_guide(self, guide_id: str) -> Optional[QuestGuide]:
         return self.by_id.get(guide_id)
 
+    def find_guides(self, query_or_id: str) -> List[QuestGuide]:
+        """Find guides matching id or search query."""
+        if not query_or_id:
+            return []
+        exact = self.get_guide(query_or_id)
+        if exact is not None:
+            return [exact]
+        return self.search_guides(query_or_id)
+
+    def get_step_requirements(self, guide_id: str, step_num: Optional[int] = None) -> List[str]:
+        """Collect requirement strings for a specific step or the entire guide."""
+        guide = self.get_guide(guide_id)
+        if guide is None:
+            return []
+        if step_num is not None:
+            for step in guide.steps:
+                if step.step_num == step_num and step.required_items:
+                    return list(step.required_items)
+        if guide.required_items:
+            return list(guide.required_items)
+        out: List[str] = []
+        for step in guide.steps:
+            out.extend(step.required_items)
+        return out
+
     def fetch_live_papycha_article(self, article_slug_or_url: str) -> Optional[Dict[str, Any]]:
         """Fetches and parses a live quest article from Papycha.fr with intelligent caching."""
         url = article_slug_or_url

@@ -48,12 +48,14 @@ import argparse
 import json
 
 import math
+import threading
 
 import time
 
+from collections import OrderedDict, deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 try:
     from storage.append_store import AppendStore
@@ -84,6 +86,23 @@ CALIBRATION_VERSION = 1
 # nothing. The number is small on purpose: a fight is 4-8 rounds, so waiting for
 # thousands would mean never learning inside a session.
 MIN_ROWS = 12
+
+# How many concurrent fights one process remembers at a time.
+#
+# `combat_ai_server.py` is a single process serving every running slot, so
+# "the previous board" is not one board: it is one per (account, fight). A single
+# slot of memory was overwritten by whichever slot posted next, and since two
+# slots alternate turns the previous board almost never belonged to the same
+# fight -- `credit_turn` then refused every pair and multi-account mode credited
+# nothing at all (measured: credited 0, skipped 10 on a two-slot interleave).
+#
+# The cap is a leak guard, not a limit on characters: a running process sees a
+# handful of fights in flight, and an evicted fight is one that stopped posting.
+MAX_TRACKED_FIGHTS = 64
+
+# Below this many credited turns the model is reported as `collecting` and answers
+# nothing. The number is small on purpose: a fight is 4-8 rounds, so waiting for
+# thousands would mean never learning inside a session.
 
 # Feature vector width. Kept as a named constant because a stored model whose width
 # no longer matches the live encoder must be rejected, not silently mis-dotted.
@@ -178,6 +197,32 @@ def board_key(board: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     my_cell = board.get("my_cell") if board.get("my_cell") is not None else mine.get("cell")
     return (board.get("fight_id"), board.get("round"),
             round(my_hp, 3), round(enemy_hp, 3))
+
+
+def fight_key(board: Dict[str, Any]) -> Tuple[str, str]:
+    """The (account, fight) a board belongs to, as strings.
+
+    Both halves are needed. `fight_id` alone is not unique enough: two slots on
+    the same account can be in one fight together, and a stale board from a
+    finished fight can share an id with a fresh one. `board_key` deliberately
+    does *not* include `my_id` (it answers "is this the same turn", and one
+    account's turn is the same turn whoever else is watching); this answers
+    "whose memory is this", which is a different question.
+
+    The page omits `my_id` on some boards, so the fallback is the board's own
+    self-identifying fighter -- otherwise every id-less board would share one
+    slot and reintroduce the bug through the back door.
+    """
+    if not isinstance(board, dict):
+        return ("", "")
+    mine = board.get("my_id")
+    if mine is None:
+        for fighter in board.get("fighters") or []:
+            if isinstance(fighter, dict) and fighter.get("is_me"):
+                mine = fighter.get("id")
+                break
+    return (str(mine) if mine is not None else "",
+            str(board.get("fight_id")) if board.get("fight_id") is not None else "")
 
 
 def enemy_signature(board: Dict[str, Any]) -> str:
@@ -496,7 +541,15 @@ class LiveLearner:
                 self.store = None
         self.persist_every = max(1, int(persist_every))
         self.model = self._load()
-        self._prev: Optional[Dict[str, Any]] = None
+        # One previous board per (account, fight), most recently used last. The
+        # single `self._prev` this replaces is the reason multi-slot mode
+        # learned nothing: see `MAX_TRACKED_FIGHTS`.
+        self._prev_by_fight: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
+        # Serialises `observe`. The HTTP handler calls it once per board and
+        # requests run on separate threads, so an unguarded read-modify-write of
+        # the per-fight dictionary can drop a credit (and `model.update` mutates
+        # shared normal equations).
+        self._lock = threading.RLock()
         self._since_persist = 0
         self._was_ready = self.model.ready
         self.credited = 0
@@ -512,10 +565,26 @@ class LiveLearner:
         return OnlineValue()
 
     def observe(self, board: Dict[str, Any]) -> Optional[TurnCredit]:
-        """Credit the turn between the previous board and this one."""
+        """Credit the turn between the previous board and this one.
+
+        The previous board is per (account, fight), not global: this process
+        serves every slot, and two slots in combat publish their turns in
+        alternation, so a single "previous board" was always the *other* slot's
+        and `credit_turn` correctly refused every pair.
+        """
         if not isinstance(board, dict):
             return None
-        prev, self._prev = self._prev, board
+        with self._lock:
+            return self._observe_locked(board)
+
+    def _observe_locked(self, board: Dict[str, Any]) -> Optional[TurnCredit]:
+        key = fight_key(board)
+        prev = self._prev_by_fight.pop(key, None)
+        # Re-inserted at the end so the dict is ordered by use, which is what
+        # makes the eviction below drop a fight that stopped posting.
+        self._prev_by_fight[key] = board
+        while len(self._prev_by_fight) > MAX_TRACKED_FIGHTS:
+            self._prev_by_fight.popitem(last=False)
         credit = credit_turn(prev, board) if prev is not None else None
         if credit is None:
             self.skipped += 1
@@ -585,6 +654,56 @@ class LiveLearner:
                      "model_path": str(self.model_path),
                      "rows_path": str(self.rows_path)})
         return body
+
+
+_LEARNER: Optional[LiveLearner] = None
+_LEARNER_PATH: Optional[Path] = None
+_LEARNER_STAMP: Optional[float] = None
+
+
+def default_learner() -> LiveLearner:
+    """The process-wide learner, re-read when the model file changes on disk.
+
+    Same contract as `threat.default_memory`, and for the same reason: the
+    process that *writes* the model is not always the process that reads it.
+    The brain server credits turns and saves; the desktop planner asks for a
+    price. A learner loaded once at import would keep answering with the
+    weights from before the fight started, which is the difference between a
+    measured enemy turn and the level prior it was meant to replace.
+
+    This instance only reads. It never observes, so it never appends a row and
+    never competes with the owning process for the file.
+    """
+    global _LEARNER, _LEARNER_PATH, _LEARNER_STAMP
+    try:
+        stamp: Optional[float] = DEFAULT_MODEL.stat().st_mtime
+    except OSError:
+        stamp = None
+    if _LEARNER is None or _LEARNER_PATH != DEFAULT_MODEL or stamp != _LEARNER_STAMP:
+        _LEARNER = LiveLearner(model_path=DEFAULT_MODEL)
+        _LEARNER_PATH = DEFAULT_MODEL
+        _LEARNER_STAMP = stamp
+    return _LEARNER
+
+
+def enemy_turn_price(board: Dict[str, Any]) -> Optional[float]:
+    """The learned cost of one enemy turn on this board, or None.
+
+    This is the callable the live decision paths inject. None means "no
+    measurement" and the caller keeps its own prior -- a learner that has not
+    seen `MIN_ROWS` credited turns must not be read as a measured zero.
+
+    A zero is treated the same way, because it is not a measurement either.
+    `OnlineValue.predict` clamps a negative dot to 0.0 and calls it a modelling
+    artefact; on the 333 recorded live boards 103 prices were 0.0 and every one
+    of them came from a raw dot in [-35.04, -0.21]. Fed to the pre-fight gate as
+    a measured incoming damage, those rows say the fight costs nothing: 34 of
+    312 bootstrap gates flipped to `allowed` on that artefact alone.
+    """
+    price = default_learner().price(board)
+    if price is None or price <= 0.0:
+        return None
+    return price
 
 
 # -- shadow differential auditor --------------------------------------------
@@ -783,18 +902,80 @@ def shadow_residuals(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     the round turns over), then split that update across the pending casts in
     proportion to their prices. A cast whose target never moves is credited 0,
     which is a real miss rather than a missing label.
-    """
-    ordered = sorted(rows, key=lambda row: _num(row.get("time")))
-    out: List[Dict[str, Any]] = []
-    pending: List[Dict[str, Any]] = []
-    baseline: Optional[Dict[str, float]] = None
 
-    def flush(current: Dict[str, float], reason: str) -> None:
-        nonlocal pending, baseline
+    **Each (account, fight) is a separate stream.** Rows from several slots are
+    interleaved by wall-clock time, and sorting them globally mixed one fight's
+    pending casts with another fight's baseline HP -- so a cast from fight A was
+    priced against fight B's board and got a residual that belongs to neither.
+    Grouping first is not an optimisation: a residual computed across two fights
+    is not a residual.
+    """
+    streams: "OrderedDict[Tuple[str, str], List[Dict[str, Any]]]" = OrderedDict()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        streams.setdefault(fight_key(row), []).append(row)
+    out: List[Dict[str, Any]] = []
+    for group in streams.values():
+        out.extend(_shadow_stream(group))
+    # A single stream is already in time order; several interleaved ones are
+    # not, and the caller's calibration buckets want a stable order.
+    out.sort(key=lambda item: _num(item.get("time")))
+    return out
+
+
+class ShadowStream:
+    """One fight's cast/board pairing, fed a decision row at a time.
+
+    `shadow_residuals` runs this over a finished log; the live server runs it as
+    rows arrive. Both have to pair identically -- a residual is only a residual
+    against the baseline the offline auditor would have used -- so there is one
+    implementation and the batch path is a loop over it.
+    """
+
+    def __init__(self) -> None:
+        self._pending: List[Dict[str, Any]] = []
+        self._baseline: Optional[Dict[str, float]] = None
+
+    def observe(self, row: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Fold in one decision row; return the casts it completed pairing."""
+        observation = _observation(row)
+        if not observation:
+            return []
+        out: List[Dict[str, Any]] = []
+        state = _board_hp_state(observation)
+        if self._baseline is None:
+            self._baseline = state
+        elif state != self._baseline:
+            out.extend(self._flush(state, "hp_update"))
+            self._baseline = state
+        elif self._pending and str(row.get("round")) != str(self._pending[0].get("round")):
+            out.extend(self._flush(state, "round_change"))
+            self._baseline = state
+
+        price = prediction_for_action(row)
+        if price is None:
+            return out
+        self._pending.append({
+            "time": _num(row.get("time")),
+            "fight_id": row.get("fight_id"),
+            "my_id": row.get("my_id") if row.get("my_id") is not None
+            else (observation.get("my_id") if isinstance(observation, dict) else None),
+            "round": row.get("round"),
+            "spell_id": price["spell_id"],
+            "effect_ids": list(price["effect_ids"]),
+            "target_id": price["target_id"],
+            "source": price["source"],
+            "predicted": round(float(price["predicted"]), 4),
+        })
+        return out
+
+    def _flush(self, current: Dict[str, float], reason: str) -> List[Dict[str, Any]]:
+        pending, self._pending = self._pending, []
+        baseline, self._baseline = self._baseline, None
         if not pending or baseline is None:
-            pending = []
-            baseline = None
-            return
+            return []
+        out: List[Dict[str, Any]] = []
         by_target: Dict[str, List[Dict[str, Any]]] = {}
         for item in pending:
             by_target.setdefault(str(item["target_id"]), []).append(item)
@@ -815,37 +996,15 @@ def shadow_residuals(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                             "actual": round(actual, 4),
                             "residual": round(actual - item["predicted"], 4),
                             "pairing": reason})
-        pending = []
-        baseline = None
+        return out
 
-    for index, row in enumerate(ordered):
-        observation = _observation(row)
-        if not observation:
-            continue
-        state = _board_hp_state(observation)
-        if baseline is None:
-            baseline = state
-        elif state != baseline:
-            flush(state, "hp_update")
-            baseline = state
-        elif pending and str(row.get("round")) != str(pending[0].get("round")):
-            flush(state, "round_change")
-            baseline = state
 
-        price = prediction_for_action(row)
-        if price is None:
-            continue
-        pending.append({
-            "time": _num(row.get("time")),
-            "fight_id": row.get("fight_id"),
-            "round": row.get("round"),
-            "spell_id": price["spell_id"],
-            "effect_ids": list(price["effect_ids"]),
-            "target_id": price["target_id"],
-            "source": price["source"],
-            "predicted": round(float(price["predicted"]), 4),
-        })
-
+def _shadow_stream(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """`shadow_residuals` for one fight. Split out so the grouping stays explicit."""
+    stream = ShadowStream()
+    out: List[Dict[str, Any]] = []
+    for row in sorted(rows, key=lambda row: _num(row.get("time"))):
+        out.extend(stream.observe(row))
     # A cast at the very end of the log has no following board: leave it
     # unpaired rather than inventing a zero.
     return out
@@ -961,6 +1120,31 @@ def load_damage_calibration(path: Path = DEFAULT_DAMAGE_CALIBRATION
     if not isinstance(payload, dict) or payload.get("version") != CALIBRATION_VERSION:
         return None
     return payload
+
+
+_CALIBRATION: Optional[Dict[str, Any]] = None
+_CALIBRATION_PATH: Optional[Path] = None
+_CALIBRATION_STAMP: Optional[float] = None
+
+
+def default_damage_calibration() -> Optional[Dict[str, Any]]:
+    """The process-wide shadow calibration, re-read when the file changes.
+
+    The auditor rewrites this file while the fight is running, so a copy taken
+    at construction would price the rest of the session with the residuals of
+    the previous one. A `stat` per call is the price of noticing.
+    """
+    global _CALIBRATION, _CALIBRATION_PATH, _CALIBRATION_STAMP
+    try:
+        stamp: Optional[float] = DEFAULT_DAMAGE_CALIBRATION.stat().st_mtime
+    except OSError:
+        stamp = None
+    if (_CALIBRATION_PATH != DEFAULT_DAMAGE_CALIBRATION
+            or stamp != _CALIBRATION_STAMP):
+        _CALIBRATION = load_damage_calibration(DEFAULT_DAMAGE_CALIBRATION)
+        _CALIBRATION_PATH = DEFAULT_DAMAGE_CALIBRATION
+        _CALIBRATION_STAMP = stamp
+    return _CALIBRATION
 
 
 def apply_damage_calibration(predicted: float,
@@ -1084,6 +1268,117 @@ class ShadowAuditor:
             load_damage_calibration(self.calibration_path))
 
 
+#: Paired casts kept by the live auditor. A residual is ~200 B, so this ring is
+#: about a megabyte; the decision rows it came from are ~18 KB each and are not
+#: kept at all. At the pairing rate measured on the recorded corpus (223 casts
+#: per 2112 decisions) the ring spans tens of thousands of decisions.
+LIVE_SHADOW_RESIDUALS = 4096
+#: Rewrite the calibration after this many *new* paired casts. Counting casts
+#: rather than decisions means a quiet stretch of movement-only turns does not
+#: re-serialise an unchanged file.
+LIVE_SHADOW_EVERY = 8
+
+
+class LiveShadowAuditor:
+    """Pairs casts as they are decided and keeps the calibration file current.
+
+    `ShadowAuditor` re-reads the whole decision log, which is fine for a CLI and
+    impossible inside the brain: the log grows to 64 MB before it rotates, and
+    parsing it would cost more resident memory than the entire fight policy.
+    This keeps only what pairing actually needs -- one HP baseline and the
+    pending casts per fight -- plus the finished residuals, so the cost is
+    bounded by the ring instead of by the length of the session.
+
+    It never trades a better-evidenced file for a thinner one. A fresh process
+    starts with an empty ring, and overwriting a 223-row calibration with 8 rows
+    would throw away evidence to gain nothing; the ring overtakes the file on
+    its own once the session has played enough.
+    """
+
+    def __init__(self, calibration_path: Path = DEFAULT_DAMAGE_CALIBRATION,
+                 max_residuals: int = LIVE_SHADOW_RESIDUALS,
+                 every: int = LIVE_SHADOW_EVERY,
+                 max_fights: int = MAX_TRACKED_FIGHTS) -> None:
+        self.calibration_path = Path(calibration_path)
+        self.every = max(1, int(every))
+        self.max_fights = max(1, int(max_fights))
+        self.residuals: "deque[Dict[str, Any]]" = deque(maxlen=max(1, int(max_residuals)))
+        self._streams: "OrderedDict[Tuple[str, str], ShadowStream]" = OrderedDict()
+        self._lock = threading.Lock()
+        self._since_write = 0
+        self.decisions = 0
+        self.paired = 0
+        self.writes = 0
+        self.skipped_thinner = 0
+        self.last_error: Optional[str] = None
+
+    def observe(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Fold in one decision record; return the calibration if one was written."""
+        if not isinstance(row, dict):
+            return None
+        with self._lock:
+            self.decisions += 1
+            key = fight_key(row)
+            stream = self._streams.pop(key, None)
+            if stream is None:
+                stream = ShadowStream()
+            self._streams[key] = stream
+            while len(self._streams) > self.max_fights:
+                self._streams.popitem(last=False)
+            fresh = stream.observe(row)
+            if fresh:
+                self.residuals.extend(fresh)
+                self.paired += len(fresh)
+                self._since_write += len(fresh)
+            if self._since_write < self.every or not self.residuals:
+                return None
+            return self._write_locked()
+
+    def flush(self) -> Optional[Dict[str, Any]]:
+        """Write whatever the cadence has not yet written. Called at shutdown."""
+        with self._lock:
+            if not self.residuals or not self._since_write:
+                return None
+            return self._write_locked()
+
+    def _write_locked(self) -> Optional[Dict[str, Any]]:
+        # Time order, not arrival order: several fights interleave in one
+        # process, and the bucket EWMAs are sequence-dependent. `shadow_residuals`
+        # sorts before bucketing, so arriving in a different order would give the
+        # live file a different ewma_* from the offline audit of the same casts.
+        residuals = sorted(self.residuals, key=lambda item: _num(item.get("time")))
+        previous = load_damage_calibration(self.calibration_path)
+        if previous is not None and int(previous.get("rows") or 0) > len(residuals):
+            self.skipped_thinner += 1
+            self._since_write = 0
+            return None
+        calibration = calibrate_residuals(residuals)
+        calibration["source"] = "live-shadow"
+        try:
+            self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
+            # Atomic: a consumer reloads on mtime, and a half-written file would
+            # read as "no calibration" for the length of one decision.
+            temporary = self.calibration_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(calibration, indent=1, sort_keys=True),
+                                 encoding="utf-8")
+            temporary.replace(self.calibration_path)
+        except OSError as exc:
+            self.last_error = "%s: %s" % (type(exc).__name__, exc)
+            return None
+        self._since_write = 0
+        self.writes += 1
+        self.last_error = None
+        return calibration
+
+    def report(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"decisions": self.decisions, "paired_casts": self.paired,
+                    "ring": len(self.residuals), "fights": len(self._streams),
+                    "writes": self.writes, "skipped_thinner": self.skipped_thinner,
+                    "last_error": self.last_error,
+                    "path": str(self.calibration_path)}
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Live enemy-turn learner")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
@@ -1098,20 +1393,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.audit_decisions:
         auditor = ShadowAuditor(Path(args.decisions), Path(args.damage_calibration))
-        logger.debug(json.dumps(auditor.audit(write=True), indent=1))
+        print(json.dumps(auditor.audit(write=True), indent=1))
         return 0
 
     if args.reset:
         path = Path(args.model)
         if path.exists():
             path.unlink()
-            logger.debug("removed %s" % path)
+            print("removed %s" % path)
         else:
-            logger.debug("nothing to remove at %s" % path)
+            print("nothing to remove at %s" % path)
         return 0
 
     learner = LiveLearner(model_path=Path(args.model), rows_path=Path(args.rows))
-    logger.debug(json.dumps(learner.report(), indent=1))
+    print(json.dumps(learner.report(), indent=1))
     return 0
 
 

@@ -46,6 +46,7 @@ class Config:
     max_rounds: int = 16
     max_dist: int = 12
     casts_per_turn: int = 4
+    moves: int = 3
 
     @property
     def n_actors(self) -> int:
@@ -55,6 +56,10 @@ class Config:
     def n_spells(self) -> int:
         # The last index is "pass"; it always exists and always costs nothing.
         return self.spells + 1
+
+    @property
+    def n_moves(self) -> int:
+        return getattr(self, "moves", 3)
 
 
 # The five columns that say what a cast does beyond its damage line. `step` applies them as physics
@@ -237,7 +242,7 @@ def step(state: Dict[str, jax.Array],
         # close or open the gap, then casts"); the order below is what makes it true.
         budget = jnp.where(act, mp[:, i], 0.0)
         direction = jnp.where(move[:, i] == 0, -1.0,
-                              jnp.where(move[:, i] == 2, 1.0, 0.0))
+                              jnp.where(move[:, i] == (4 if getattr(cfg, "n_moves", 3) == 5 else 2), 1.0, 0.0))
         walked = jnp.clip(dist[:, i] + direction * budget, 1.0, float(cfg.max_dist))
         # The walk is one-directional and the whole bar is offered, so the distances the actor
         # can actually arrive at are the segment between where it stands and where the chosen
@@ -550,7 +555,7 @@ def action_masks(state: Dict[str, jax.Array], tables: Dict[str, jax.Array],
     n = cfg.n_actors
     s2 = cfg.n_spells
 
-    move_mask = jnp.broadcast_to(act[:, :, None], (batch, n, 3))
+    move_mask = jnp.broadcast_to(act[:, :, None], (batch, n, getattr(cfg, "n_moves", 3)))
     spell_mask = jnp.zeros((batch, n, s2), dtype=bool)
     target_mask = jnp.zeros((batch, n, s2, n), dtype=bool)
 

@@ -213,14 +213,14 @@ def main(argv: Optional[list] = None) -> int:
         # The recorded corpus is pass-only, so this is the expected state of a
         # fresh checkout. Point at the generator that produces actionable rows
         # instead of at the empty directory.
-        logger.debug("no training rows. Build the synthetic curriculum first:\n"
+        print("no training rows. Build the synthetic curriculum first:\n"
               "  python -m combat.grid_synth --curriculum 200 --out %s" % args.data)
         return 2
     params = grid_model.init_params(
         jax.random.PRNGKey(args.seed), hidden=args.hidden,
         cell_layers=args.cell_layers, fighter_layers=args.fighter_layers,
         plan_layers=args.plan_layers)
-    logger.debug("params", grid_model.param_count(params), "train", train["labels"].shape[0],
+    print("params", grid_model.param_count(params), "train", train["labels"].shape[0],
           "val", val["labels"].shape[0], "test", test["labels"].shape[0])
     opt = adam_init(params)
     grad = jax.jit(jax.value_and_grad(_loss, has_aux=True))
@@ -241,7 +241,7 @@ def main(argv: Optional[list] = None) -> int:
         if val["labels"].shape[0]:
             row["val"] = evaluate(params, val, args.batch)
         history.append(row)
-        logger.debug(json.dumps(row, sort_keys=True))
+        print(json.dumps(row, sort_keys=True))
     metrics = {"history": history, "config": {
         "hidden": args.hidden, "cell_layers": args.cell_layers,
         "fighter_layers": args.fighter_layers, "plan_layers": args.plan_layers,
@@ -249,7 +249,7 @@ def main(argv: Optional[list] = None) -> int:
     }}
     if test["labels"].shape[0]:
         metrics["test"] = evaluate(params, test, args.batch)
-        logger.debug("test", json.dumps(metrics["test"], sort_keys=True))
+        print("test", json.dumps(metrics["test"], sort_keys=True))
 
     # Verification before live boards: the corpus manifest records the
     # uniform-guess floor over its own winning sets. A ranker that cannot beat
@@ -270,7 +270,7 @@ def main(argv: Optional[list] = None) -> int:
         passed = float(evaluated["top1"]) > float(threshold)
         metrics["verification"] = {"top1": evaluated["top1"], "floor": floor,
                                   "threshold": threshold, "passed": passed}
-        logger.debug("verification", json.dumps(metrics["verification"], sort_keys=True))
+        print("verification", json.dumps(metrics["verification"], sort_keys=True))
         verified = passed or args.allow_below_floor
     args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / "model.pkl").open("wb") as handle:
@@ -278,9 +278,9 @@ def main(argv: Optional[list] = None) -> int:
                      "config": metrics["config"], "metrics": metrics}, handle)
     (args.out / "metrics.json").write_text(
         json.dumps(metrics, indent=1, sort_keys=True), encoding="utf-8")
-    logger.debug("wrote", args.out)
+    print("wrote", args.out)
     if not verified:
-        logger.debug("checkpoint written but verification FAILED: top-1 does not beat the "
+        print("checkpoint written but verification FAILED: top-1 does not beat the "
               "uniform-guess floor; pass --allow-below-floor to accept it deliberately")
         return 1
     return 0

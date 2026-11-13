@@ -15,6 +15,8 @@ from combat.battle_solver import (
     NB_CELLS,
     BattleSolver,
     Board,
+    BoardMark,
+    BoardMarks,
     CellMap,
     Fighter,
     LiveEffect,
@@ -1019,6 +1021,264 @@ class SpellGradeTests(unittest.TestCase):
 class SelfCheckTests(unittest.TestCase):
     def test_self_check_passes(self):
         self_check()
+
+
+class BoardMarksAndTrapChainsTests(unittest.TestCase):
+    """Tests for BoardMarks layer, summon tracking, and Sram trap displacement chains."""
+
+    def test_board_marks_parsing_and_roundtrip(self):
+        payload = {
+            "map_id": 1,
+            "in_fight": True,
+            "in_preparation": False,
+            "is_my_turn": True,
+            "my_id": 1,
+            "my_cell": cell(20, 20),
+            "cells": list(OPEN_FLAGS),
+            "my_stats": {"strength": 100},
+            "fighters": [
+                {"id": 1, "name": "Me", "cell": cell(20, 20), "team": "player",
+                 "hp": 1000, "max_hp": 1000, "ap": 10, "mp": 3, "alive": True, "is_me": True},
+                {"id": 2, "name": "Foe", "cell": cell(22, 20), "team": "enemy",
+                 "hp": 500, "max_hp": 500, "ap": 6, "mp": 3, "alive": True},
+            ],
+            "spells": [],
+            "marks": [
+                {"id": 101, "mark_type": "trap", "cell": cell(21, 20), "radius": 0,
+                 "owner_id": 1, "team": "player", "spell_id": 80, "push_distance": 0,
+                 "effects": [{"effect_id": 97, "dice_num": 50, "dice_side": 50}]},
+            ],
+            "traps": [
+                {"id": 102, "cell": cell(23, 20), "radius": 1, "owner_id": 1,
+                 "team": "player", "spell_id": 73, "push_distance": 2},
+            ],
+            "glyphs": [
+                {"id": 103, "cell": cell(25, 20), "radius": 2, "owner_id": 2,
+                 "team": "enemy", "spell_id": 15},
+            ],
+            "last_actions": [
+                {"action_id": 310, "cell": cell(24, 20), "mark_type": 1, "radius": 0,
+                 "caster_id": 1, "team": "player", "spell_id": 65},
+            ],
+        }
+        board = Board.from_fight_state(payload)
+        self.assertEqual(len(board.marks.marks), 4)
+        self.assertEqual(len(board.marks.traps), 3)
+        self.assertEqual(len(board.marks.glyphs), 1)
+
+        traps_at_21 = board.marks.traps_at(cell(21, 20))
+        self.assertEqual(len(traps_at_21), 1)
+        self.assertEqual(traps_at_21[0].mark_id, 101)
+
+        # Radius 1 trap at 23,20 covers cardinal neighbours like 23,19
+        traps_near_23 = board.marks.traps_at(cell(23, 19))
+        self.assertEqual(len(traps_near_23), 1)
+        self.assertEqual(traps_near_23[0].mark_id, 102)
+
+        # Roundtrip via to_fight_state
+        state = board.to_fight_state()
+        self.assertIn("marks", state)
+        self.assertEqual(len(state["marks"]), 4)
+        again = Board.from_fight_state(state)
+        self.assertEqual(len(again.marks.marks), 4)
+
+    def test_summon_slots_and_1_per_type_uniqueness(self):
+        # Character has summonable_creatures_boost: 1 -> max_summons = 2
+        chafer = Fighter(
+            id=3, name="Chaferfu", cell=cell(21, 21), team="player",
+            hp=100, max_hp=100, ap=4, mp=3, shield=0, level=50,
+            alive=True, by_me=False, is_summon=True, summoner_id=1,
+            creature_generic_id=282,
+        )
+        chafer_spell = live_spell(
+            id=101, name="Chaferfu", ap_cost=3, min_range=1, max_range=4,
+            need_free_cell=True, is_summon=True, summon_type=282,
+            effects=(LiveEffect(180, 282, 282),),
+        )
+        double_spell = live_spell(
+            id=102, name="Double", ap_cost=3, min_range=1, max_range=4,
+            need_free_cell=True, is_summon=True, summon_type=237,
+            effects=(LiveEffect(181, 237, 237),),
+        )
+        board = board_with(
+            cell(20, 20), cell(25, 20),
+            spells=[chafer_spell, double_spell],
+            stats={"summonable_creatures_boost": 1},
+            extra_fighters=[chafer],
+        )
+
+        self.assertEqual(board.max_summons, 2)
+        self.assertEqual(board.active_my_summons, 1)
+        self.assertEqual(board.available_summon_slots, 1)
+        self.assertIn(282, board.active_summon_types)
+
+        # When planning a turn, Double (type 237) is legal to summon, but Chaferfu (type 282) is illegal (1-per-type)
+        plan = BattleSolver(max_actions=1).plan_turn(board)
+        cast_actions = [a for a in plan.actions if a.kind == "cast"]
+        self.assertTrue(len(cast_actions) > 0)
+        self.assertEqual(cast_actions[0].spell_id, 102)  # Double was summoned!
+
+        # Now test when summon limit is reached (0 slots available):
+        board_full = board_with(
+            cell(20, 20), cell(25, 20),
+            spells=[chafer_spell, double_spell],
+            stats={"summonable_creatures_boost": 0},  # max_summons = 1
+            extra_fighters=[chafer],  # 1 active summon
+        )
+        self.assertEqual(board_full.available_summon_slots, 0)
+        plan_full = BattleSolver(max_actions=1).plan_turn(board_full)
+        # Should not cast any summon because 0 slots are available
+        cast_summons = [a for a in plan_full.actions if a.kind == "cast" and a.spell_id in (101, 102)]
+        self.assertEqual(len(cast_summons), 0)
+
+    def test_trap_trigger_on_push_displacement(self):
+        # Enemy at cell(20, 20), caster at cell(19, 20)
+        # Trap at cell(21, 20) dealing 80 earth damage
+        trap = BoardMark(
+            mark_id=1, mark_type="trap", cell=cell(21, 20), radius=0,
+            owner_id=1, team="player", spell_id=80, push_distance=0,
+            effects=(LiveEffect(97, 80, 80),),
+        )
+        # Push spell: Fear (pushes 1 cell)
+        fear = live_spell(
+            id=67, name="Peur", ap_cost=2, min_range=1, max_range=2,
+            cast_in_line=True, effects=(LiveEffect(5, 1, 1),),
+        )
+        board = board_with(
+            cell(19, 20), cell(20, 20),
+            spells=[fear], foe_hp=300, foe_max_hp=300,
+        )
+        board.marks = BoardMarks((trap,))
+
+        plan = BattleSolver(max_actions=1).plan_turn(board)
+        self.assertTrue(len(plan.actions) > 0)
+        first = plan.actions[0]
+        self.assertEqual(first.kind, "cast")
+        self.assertEqual(first.spell_id, 67)
+        # Moved enemy to trap cell (21, 20)
+        self.assertEqual(first.moved_target, cell(21, 20))
+        # Expected damage includes the trap damage!
+        self.assertGreaterEqual(plan.expected_damage, 80.0)
+
+    def test_sram_trap_chain_reaction(self):
+        # Caster at cell(19, 20), enemy at cell(20, 20)
+        # Trap A: Repelling Trap at cell(21, 20) -> pushes 2 cells away from trap center (towards 23, 20)
+        # Trap B: Lethal Trap at cell(23, 20) -> deals 120 earth damage
+        trap_a = BoardMark(
+            mark_id=1, mark_type="trap", cell=cell(21, 20), radius=0,
+            owner_id=1, team="player", spell_id=73, push_distance=2,
+        )
+        trap_b = BoardMark(
+            mark_id=2, mark_type="trap", cell=cell(23, 20), radius=0,
+            owner_id=1, team="player", spell_id=80, push_distance=0,
+            effects=(LiveEffect(97, 120, 120),),
+        )
+        fear = live_spell(
+            id=67, name="Peur", ap_cost=2, min_range=1, max_range=2,
+            cast_in_line=True, effects=(LiveEffect(5, 1, 1),),
+        )
+        board = board_with(
+            cell(19, 20), cell(20, 20),
+            spells=[fear], foe_hp=400, foe_max_hp=400,
+        )
+        board.marks = BoardMarks((trap_a, trap_b))
+
+        plan = BattleSolver(max_actions=1).plan_turn(board)
+        self.assertTrue(len(plan.actions) > 0)
+        first = plan.actions[0]
+        self.assertEqual(first.kind, "cast")
+        self.assertEqual(first.spell_id, 67)
+        # Chain displacement: 20,20 -> Fear -> 21,20 (Trap A) -> Push 2 -> 23,20 (Trap B triggers!)
+        self.assertEqual(first.moved_target, cell(23, 20))
+        self.assertGreaterEqual(plan.expected_damage, 120.0)
+
+    def test_single_turn_place_traps_and_push_chain(self):
+        # Caster at cell(18, 20) with 10 AP
+        # Enemy at cell(20, 20) with 200 HP
+        # Caster has:
+        # - Repelling Trap (spell 73, 2 AP, is_trap, push 2)
+        # - Lethal Trap (spell 80, 3 AP, is_trap, deals 100 damage)
+        # - Fear (spell 67, 2 AP, pushes 1 cell)
+        repelling = live_spell(
+            id=73, name="Piege Repulsif", ap_cost=2, min_range=1, max_range=6,
+            need_free_cell=True, effects=(LiveEffect(5, 2, 2),),
+        )
+        lethal = live_spell(
+            id=80, name="Piege Mortel", ap_cost=3, min_range=1, max_range=6,
+            need_free_cell=True, effects=(LiveEffect(97, 100, 100),),
+        )
+        fear = live_spell(
+            id=67, name="Peur", ap_cost=2, min_range=1, max_range=3,
+            cast_in_line=True, effects=(LiveEffect(5, 1, 1),),
+        )
+        board = board_with(
+            cell(18, 20), cell(20, 20),
+            spells=[repelling, lethal, fear], my_ap=10, foe_hp=200, foe_max_hp=200,
+        )
+
+        plan = BattleSolver(max_actions=3).plan_turn(board)
+        self.assertGreaterEqual(len(plan.actions), 2)
+        # Beam search should find a plan that places trap(s) and pushes the enemy,
+        # yielding substantial damage from the trap!
+        self.assertGreaterEqual(plan.expected_damage, 100.0)
+
+    def test_trap_chain_bounded_depth_prevents_infinite_ping_pong(self):
+        # Two repelling traps facing each other
+        trap_1 = BoardMark(
+            mark_id=1, mark_type="trap", cell=cell(21, 20), radius=0,
+            owner_id=1, team="player", spell_id=73, push_distance=1,
+        )
+        trap_2 = BoardMark(
+            mark_id=2, mark_type="trap", cell=cell(22, 20), radius=0,
+            owner_id=1, team="player", spell_id=73, push_distance=-1,
+        )
+        solver = BattleSolver()
+        board = board_with(cell(19, 20), cell(20, 20))
+        enemy = board.fighters[1]
+        character = board.character_stats()
+
+        # Simulate trap chain starting at 21, 20
+        dest, dmg, ap_l, mp_l, remaining_marks, notes = solver._simulate_trap_chain(
+            board=board,
+            fighter=enemy,
+            target_cell=cell(21, 20),
+            entry_from_cell=cell(20, 20),
+            marks=BoardMarks((trap_1, trap_2)),
+            character=character,
+            blocked=frozenset(),
+            max_depth=8,
+        )
+        # Must finish without error and consume both traps
+        self.assertEqual(len(remaining_marks.marks), 0)
+
+    def test_walk_step_triggers_trap(self):
+        # Enemy trap at cell(19, 21)
+        trap = BoardMark(
+            mark_id=99, mark_type="trap", cell=cell(19, 21), radius=0,
+            owner_id=2, team="enemy", spell_id=80, push_distance=0,
+            effects=(LiveEffect(97, 50, 50), LiveEffect(101, 2, 2)),
+        )
+        solver = BattleSolver()
+        board = board_with(cell(19, 20), cell(25, 20), spells=[live_spell(min_range=1, max_range=2)])
+        board.marks = BoardMarks((trap,))
+        me = board.fighters[0]
+        character = board.character_stats()
+
+        # When caster walks from (19, 20) to (19, 21), trap triggers
+        dest, dmg, ap_l, mp_l, remaining_marks, notes = solver._simulate_trap_chain(
+            board=board,
+            fighter=me,
+            target_cell=cell(19, 21),
+            entry_from_cell=cell(19, 20),
+            marks=board.marks,
+            character=character,
+            blocked=frozenset(),
+            max_depth=8,
+        )
+        self.assertEqual(dest, cell(19, 21))
+        self.assertGreaterEqual(dmg, 40.0)
+        self.assertEqual(ap_l, 2)
+        self.assertEqual(len(remaining_marks.marks), 0)
 
 
 if __name__ == "__main__":

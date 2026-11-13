@@ -2355,8 +2355,10 @@ MUTATIONS = [
      '    return f > 0 and gap < f',
      '    return False'),
     ("gate: the encoder arm stops consulting on a low margin", NNPLAN,
-     '            if consult_gate.applies_to(self.model_sha256, self.arch) \\\n'
-     '                    and consult_gate.should_defer(gap=self.last_margin):',
+     '            if (consult_gate.applies_to(self.model_sha256, self.arch) \\\n'
+     '                    and consult_gate.should_defer(gap=self.last_margin)) \\\n'
+     '                    or (self.last_value is not None and self.last_value < 0.25) \\\n'
+     '                    or streak >= 2:',
      '            if False:'),
     # ---- patch-rule idempotence (a second adoption must not wrap twice)
     ("patch: the guard reverts to the blunt version that dropped a rule", APRULES,

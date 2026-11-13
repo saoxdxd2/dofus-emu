@@ -444,20 +444,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = iter_dicts(args.path, limit=args.limit or None)
     result = replay_path_rows(rows, args)
     if args.json:
-        logger.debug(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     else:
-        logger.debug("replay: %d rows, %d transitions, final=%s%s"
+        print("replay: %d rows, %d transitions, final=%s%s"
               % (result.rows, len(result.transitions), result.final_state,
                  " (blocked)" if result.blocked else ""))
-        logger.debug("signatures: %d distinct, longest repeat %d"
+        print("signatures: %d distinct, longest repeat %d"
               % (result.distinct_signatures, result.longest_repeat))
         if result.first_stuck_at is not None:
             stuck = result.first_stuck or {}
-            logger.debug("first cycle at row %d: %s (x%d in %d ticks)"
+            print("first cycle at row %d: %s (x%d in %d ticks)"
                   % (result.first_stuck_at, stuck.get("signature"), stuck.get("repeats", 0),
                      stuck.get("window", 0)))
         else:
-            logger.debug("cycles: none detected")
+            print("cycles: none detected")
     if args.fail_on_stuck and result.first_stuck_at is not None:
         return 2
     return 0
