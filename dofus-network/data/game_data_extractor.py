@@ -33,6 +33,9 @@ class DamageEffect:
     max_roll: int
     crit_min_roll: int = 0
     crit_max_roll: int = 0
+    # Canonical client ACTION id (0 = unknown). Mechanics bind on this id, never
+    # on the spell's display name.
+    effect_id: int = 0
 
 
 @dataclass
@@ -56,6 +59,22 @@ class SpellInfo:
     crit_bonus_damage: int = 0
     effects: List[DamageEffect] = field(default_factory=list)
     crit_rate_percent: Optional[float] = None
+    # Typed non-damage mechanics (Stage II module 1). Bound from canonical
+    # effect ids by combat.world_model.bind_spell_mechanics, never from names.
+    # Defaults keep every pre-existing constructor call valid.
+    ap_delta: int = 0            # + self AP buff / - target AP drain
+    mp_delta: int = 0            # + self MP buff / - target MP drain
+    shield_flat: int = 0
+    shield_level_scale: float = 0.0  # fraction of caster max HP added as shield
+    push_cells: int = 0          # + push away / - pull toward
+    erosion_pct: float = 0.0
+    power_bonus: int = 0
+    flat_damage_bonus: int = 0
+    is_summon: bool = False
+    summon_hp_ratio: float = 0.0
+    cooldown_turns: int = 0
+    casts_per_turn: int = 2
+    casts_per_target: int = 2
 
     def get_name(self, lang: str = "fr") -> str:
         lang = lang.lower()

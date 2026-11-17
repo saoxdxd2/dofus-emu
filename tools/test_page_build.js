@@ -17,10 +17,10 @@ function check(name, ok, detail) {
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
 
-const constant = src.match(/var AGENT_BUILD = '([^']+)';/);
+const constant = src.match(/(?:var|let|const) AGENT_BUILD = '([^']+)';/);
 check('the page declares one build constant', !!constant, 'AGENT_BUILD not found');
 check('the build constant is this generation',
-    !!constant && constant[1] === '2026-11-11a', constant && constant[1]);
+    !!constant && constant[1] === '2026-11-17a', constant && constant[1]);
 
 const assigns = src.match(/__agentBuild\s*=\s*[^;]+;/g) || [];
 check('__agentBuild is assigned exactly once, from the constant',

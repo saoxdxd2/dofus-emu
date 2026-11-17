@@ -459,6 +459,8 @@ class Verifier:
         human = self.human.get(session, index) if session and index >= 0 else None
         if human is not None:
             return human
+        if not ok:
+            return self._rule(tool, args, ok, error, before, after, latency_ms, expected_s)
 
         # A query that returned ok is a success by definition. No model may
         # overrule that: the shipped head was trained on labels produced by the

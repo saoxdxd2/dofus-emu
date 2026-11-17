@@ -102,7 +102,7 @@ def encode_tactical_vector(
         agility = getattr(state, "agility", agility)
         power = getattr(state, "power", power)
         flat_damage = getattr(state, "flat_damage", flat_damage)
-        active_buffs = getattr(state, "active_buffs", active_buffs)
+        active_buffs = getattr(state, "buff_names", None) or getattr(state, "active_buffs", active_buffs)
         target_hp = getattr(state, "target_hp", target_hp)
         target_hp_percent = getattr(state, "target_hp_percent", target_hp_percent)
         distance_cells = getattr(state, "distance_cells", distance_cells)

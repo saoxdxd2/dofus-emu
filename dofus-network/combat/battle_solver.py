@@ -34,7 +34,7 @@ import math
 from collections import deque
 from dataclasses import dataclass, field, replace
 from functools import cached_property, lru_cache
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from combat.damage_calculator import (
     CharacterStats,
@@ -1613,6 +1613,189 @@ class BattleSolver:
         except Exception:  # noqa: BLE001 - an unreadable calibration is no correction
             return None
         return value if isinstance(value, dict) else None
+
+    def evaluate_two_ply(
+        self,
+        board: Board,
+        candidates: Sequence[TurnPlan],
+        live_table: Optional[Dict[str, Any]] = None,
+        top_k: int = 6,
+    ) -> List[Tuple[TurnPlan, float]]:
+        """Rank plans by the HP differential after the worst-case enemy reply.
+
+        One ply prices what the plan deals; this prices what it invites. For
+        each candidate the post-plan board is read off the search's own
+        projection (`final_hp`, `final_cell`), the plan's casts are walked for
+        AP/MP denial, displacement and shield gain, and every surviving enemy
+        answers with its strongest legal reply from the cells it can still
+        reach with the MP it has left. The reply damage comes from the enemy's
+        published spellbook first, the observed-damage table second, and the
+        level prior last -- the same ladder `combat.threat` uses, so the two
+        halves cannot disagree about a monster.
+
+        Returns (plan, value) pairs, best first. Value is the 2-ply HP
+        differential: ally share after the reply minus enemy share, both in
+        fractions of their max HP. A plan that kills every enemy faces no
+        reply and scores its full differential.
+        """
+        me = board.me
+        plans = list(candidates[:max(1, int(top_k))])
+        if me is None or not plans:
+            return [(plan, 0.0) for plan in plans]
+        cells = board.cells
+        spells_by_id = {s.id: s for s in board.spells}
+        allies = [f for f in board.fighters if f.alive and f.team == me.team]
+        ally_max = float(sum(max(1, f.max_hp) for f in allies)) or 1.0
+        enemies0 = board.enemies
+        enemy_max = float(sum(max(1, e.max_hp) for e in enemies0)) or 1.0
+        occupied0 = frozenset(f.cell for f in board.fighters
+                              if f.alive and f.id != me.id)
+
+        out: List[Tuple[TurnPlan, float]] = []
+        for plan in plans:
+            ally_hp = float(sum(max(0, plan.final_hp.get(f.id, f.hp)) for f in allies))
+            enemy_hp = 0.0
+            survivors: List[Fighter] = []
+            for enemy in enemies0:
+                hp = max(0, plan.final_hp.get(enemy.id, enemy.hp))
+                enemy_hp += hp
+                if hp > 0:
+                    survivors.append(enemy)
+
+            ap_lost: Dict[int, int] = {}
+            mp_lost: Dict[int, int] = {}
+            pushed_cell: Dict[int, int] = {}
+            shield_gained = 0
+            for action in plan.actions:
+                if action.kind != "cast":
+                    continue
+                spell = spells_by_id.get(int(action.spell_id))
+                if spell is None:
+                    continue
+                tid = action.target_id
+                if tid == me.id:
+                    for effect in spell.effects:
+                        roll = int(round((max(0, effect.min_roll)
+                                          + max(0, effect.max_roll)) / 2.0))
+                        if effect.effect_id == 1040:
+                            shield_gained += roll
+                        elif effect.effect_id == 1039:
+                            shield_gained += int(me.max_hp * roll / 100.0)
+                    continue
+                if tid is None:
+                    continue
+                _ap_gain, _mp_gain, ap_loss, mp_loss, push, pull = spell.mechanic_rolls
+                if ap_loss:
+                    ap_lost[tid] = ap_lost.get(tid, 0) + ap_loss
+                if mp_loss:
+                    mp_lost[tid] = mp_lost.get(tid, 0) + mp_loss
+                if push or pull:
+                    victim = next((f for f in board.fighters if f.id == tid), None)
+                    if victim is not None:
+                        origin = int(action.from_cell)
+                        target_cell = int(action.target_cell
+                                          if action.target_cell is not None
+                                          else victim.cell)
+                        distance = push if push else pull
+                        pushed_cell[tid] = cells.slide(
+                            origin, target_cell, distance, occupied0,
+                            toward=bool(pull))
+            shield_ally = me.shield + shield_gained
+            player_cell = int(plan.final_cell)
+            occupied = occupied0 | {player_cell}
+
+            total_reply = 0.0
+            for enemy in survivors:
+                e_cell = pushed_cell.get(enemy.id, enemy.cell)
+                # The enemy answers on ITS turn, when AP/MP refill: the board
+                # mid-our-turn carries the opponent at 0 (the duel harness
+                # zeroes it in advance_turn), and pricing the reply from that
+                # zero makes every reply unaffordable and collapses this whole
+                # method back into the one-ply margin.
+                ap_budget = enemy.max_ap if enemy.max_ap > 0 else enemy.ap
+                mp_budget = enemy.max_mp if enemy.max_mp > 0 else enemy.mp
+                ap_eff = max(0, ap_budget - ap_lost.get(enemy.id, 0))
+                mp_eff = max(0, mp_budget - mp_lost.get(enemy.id, 0))
+                reach = cells.reachable(e_cell, float(mp_eff), occupied)
+                if not reach:
+                    reach = {e_cell: 0.0}
+                total_reply += self._enemy_reply(
+                    board, enemy, me, reach, player_cell, ap_eff, mp_eff,
+                    live_table, occupied)
+            net = max(0.0, total_reply - float(shield_ally))
+            value = (ally_hp - net) / ally_max - enemy_hp / enemy_max
+            out.append((plan, value))
+        out.sort(key=lambda pair: -pair[1])
+        return out
+
+    def _enemy_reply(
+        self, board: Board, enemy: Fighter, me: Fighter,
+        reach: Dict[int, float], player_cell: int, ap_eff: int, mp_eff: int,
+        live_table: Optional[Dict[str, Any]], occupied: FrozenSet[int],
+    ) -> float:
+        """Worst-case damage one enemy can put on `player_cell` this reply.
+
+        Spellbook first (exact rolls through `_damage_result`, legality from
+        the reachable cells), observed damage second (worst recorded hit,
+        melee at distance 1 or ranged within 6 with line of sight), level prior
+        last. Shield is deliberately excluded from the target here: the caller
+        subtracts the ally shield once, from the summed reply.
+        """
+        cells = board.cells
+        book = [s for s in (enemy.spells or ()) if s.has_damage and s.castable]
+        if book:
+            # A published spellbook is evidence: if AP denial made every line
+            # unaffordable the reply is zero, not the level prior.
+            known = [s for s in book if s.ap_cost <= ap_eff]
+            target = replace(me, shield=0)
+            char = enemy_character(enemy)
+            best = 0.0
+            for spell in known:
+                # The ring is symmetric: origins that can hit the player are
+                # exactly the player's own range ring, computed once per spell.
+                ring = cells.range_cells(player_cell, spell.min_range,
+                                         spell.max_range, spell.cast_in_line,
+                                         spell.cast_in_diagonal)
+                origins = [c for c in reach if c in ring]
+                if spell.requires_los:
+                    origins = [c for c in origins
+                               if cells.has_los(c, player_cell, occupied)]
+                if not origins:
+                    continue
+                res = self._damage_result(board, spell, char, target)
+                if res is None:
+                    continue
+                hits = min(threat.MAX_HITS_PER_TURN,
+                           max(1, ap_eff // max(1, spell.ap_cost)))
+                if spell.max_cast_per_turn:
+                    hits = min(hits, int(spell.max_cast_per_turn))
+                best = max(best, float(res.expected_value) * hits)
+            return best
+        if live_table:
+            prefix = "%s|%s|" % (enemy.name, enemy.level)
+            slots = [v for k, v in live_table.items()
+                     if k.startswith(prefix) and isinstance(v, dict)]
+            if slots:
+                can_hit = False
+                for c in reach:
+                    dist = cells.distance(c, player_cell)
+                    if dist == 1 or (dist <= 6
+                                     and cells.has_los(c, player_cell, occupied)):
+                        can_hit = True
+                        break
+                if not can_hit:
+                    return 0.0
+                worst = max(float(s.get("max") or s.get("mean") or 0.0)
+                            for s in slots)
+                hits = min(threat.MAX_HITS_PER_TURN, max(1, ap_eff // 3))
+                return worst * hits
+        level = max(1, int(enemy.level or 1))
+        damage = max(threat.PRIOR_MIN_DAMAGE, level * threat.PRIOR_DAMAGE_PER_LEVEL)
+        reach_dist = threat.PRIOR_RANGE + mp_eff
+        for c in reach:
+            if cells.distance(c, player_cell) <= reach_dist:
+                return damage
+        return 0.0
 
     def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
         """The top-k distinct turn plans from the last search, pass included.

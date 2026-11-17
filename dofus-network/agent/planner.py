@@ -2351,8 +2351,7 @@ class QuestPlanner:
                     self._gate_dry_warned.add(dry_spot)
                     logger.debug("[planner] level gate %d/%d: map %d has been empty on %d "
                           "look(s); not travelling back there until a group is seen"
-                          % (gate[0], gate[1], dry_spot[2], self._gate_dry[dry_spot]),
-                          file=sys.stderr)
+                          % (gate[0], gate[1], dry_spot[2], self._gate_dry[dry_spot]))
 
         def rank(group: Dict[str, Any]) -> Tuple[int, int]:
             return (0 if group in usable else 1, self._group_members(group))
@@ -3164,8 +3163,7 @@ class QuestPlanner:
         # stdout, and one extra line there is a broken capture, not a log.
         logger.debug("[planner] objective %s (%s): %s %s -- %s"
               % (obj.get("id"), str(obj.get("text") or "")[:40],
-                 call.get("tool"), call.get("args"), reason),
-              file=sys.stderr)
+                 call.get("tool"), call.get("args"), reason))
 
     def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any],
                     detail: Any = None) -> None:
@@ -3763,7 +3761,7 @@ class QuestPlanner:
                             logger.debug("[planner] objective %s (%s) parked after %d immediate "
                                   "returns to map %s"
                                   % (quest_id, str(obj.get("text") or "")[:40],
-                                     spent, need), file=sys.stderr)
+                                     spent, need))
                         continue
                     self._returns[key] = spent + 1
                 else:

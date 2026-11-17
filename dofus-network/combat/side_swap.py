@@ -36,9 +36,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from combat.battle_solver import BattleSolver
-from combat.duel import (DuelState, load_map, make_residual_policy,
-                         make_two_ply_policy, play_game, random_policy,
-                         solver_policy, value_policy)
+from combat.duel import (DuelState, board_for, load_map,
+                         make_residual_policy, make_two_ply_policy,
+                         play_game, random_policy, solver_policy,
+                         value_policy)
 from combat.normal_build_duel import DEFAULT_MAP, make_normal_duel
 import logging
 logger = logging.getLogger(__name__)
@@ -93,6 +94,57 @@ def value_head_spread(model: Any, solver: BattleSolver, cells: Any,
     return round(float(sorted(spreads)[len(spreads) // 2]), 6)
 
 
+def make_hp_policy() -> Policy:
+    """The one-ply HP-margin re-rank: `LivePolicy._hp_choice` before module 1.
+
+    This is the incumbent the analytic reply model has to beat, on the same
+    candidate plans, so the comparison isolates the reply term and nothing
+    else (same solver, same beam, same boards, same seeds).
+    """
+    def policy(state: DuelState, actor: Any, plans: Sequence[Any],
+               rng: random.Random, model: Any = None) -> Any:
+        if len(plans) < 2:
+            return plans[0]
+
+        def margin(plan: Any) -> float:
+            mine = theirs = 0.0
+            for fighter in state.fighters:
+                hp = float(plan.final_hp.get(fighter.id, fighter.hp))
+                share = max(0.0, min(1.0, hp / max(1.0, fighter.max_hp)))
+                if fighter.id == actor.id:
+                    mine += share
+                else:
+                    theirs += share
+            return mine - theirs
+
+        return max(plans, key=margin)
+    return policy
+
+
+def make_hp2_policy(solver: BattleSolver) -> Policy:
+    """The analytic worst-case-reply re-rank (`evaluate_two_ply`).
+
+    Carries a `timing` dict so the harness can report the mean milliseconds
+    the ranking itself costs per decision -- the p95 decide budget is a gate,
+    and a ranker that wins games but blows the budget is not a promotion.
+    """
+    timing = {"seconds": 0.0, "calls": 0}
+
+    def policy(state: DuelState, actor: Any, plans: Sequence[Any],
+               rng: random.Random, model: Any = None) -> Any:
+        if len(plans) < 2:
+            return plans[0]
+        started = time.perf_counter()
+        ranked = solver.evaluate_two_ply(board_for(state, actor), plans,
+                                         top_k=6)
+        timing["seconds"] += time.perf_counter() - started
+        timing["calls"] += 1
+        return ranked[0][0] if ranked else plans[0]
+
+    policy.timing = timing  # type: ignore[attr-defined]
+    return policy
+
+
 def resolve(spec: str, solver: BattleSolver) -> Policy:
     """A policy bound to its own model, so two specs can differ inside one game."""
     if spec == "solver":
@@ -101,14 +153,18 @@ def resolve(spec: str, solver: BattleSolver) -> Policy:
         return random_policy
     if spec == "two-ply":
         return make_two_ply_policy(solver, opponent_k=3)
+    if spec == "hp":
+        return make_hp_policy()
+    if spec == "hp2":
+        return make_hp2_policy(solver)
     if spec.startswith("value:"):
         model = _load_model(spec)
         return lambda state, actor, plans, rng, _m=None: value_policy(
             state, actor, plans, rng, model)
     if spec.startswith("residual:"):
         return make_residual_policy(_load_model(spec))
-    raise SystemExit("unknown policy %r: use solver, random, two-ply, value:<path> "
-                     "or residual:<path>" % spec)
+    raise SystemExit("unknown policy %r: use solver, random, two-ply, hp, hp2, "
+                     "value:<path> or residual:<path>" % spec)
 
 
 def binomial_two_sided(wins: int, losses: int) -> float:
@@ -153,7 +209,8 @@ def efficiency(games: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             if game.get("turns") and game.get("damage_a") is not None]
     if not rows:
         return {"boards": 0, "a_damage_per_turn": None,
-                "b_damage_per_turn": None, "diff": None, "p_value": None,
+                "b_damage_per_turn": None, "diff": None, "ci95": None,
+                "p_value": None,
                 "boards_favouring_a": 0, "boards_favouring_b": 0}
     per_board: Dict[int, Dict[str, float]] = {}
     for game in rows:
@@ -170,11 +227,18 @@ def efficiency(games: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     favour_b = sum(1 for diff in diffs if diff < 0)
     mean_a = sum(entry["a"] / max(1, entry["n"]) for entry in per_board.values()) / len(per_board)
     mean_b = sum(entry["b"] / max(1, entry["n"]) for entry in per_board.values()) / len(per_board)
+    # Paired percentile bootstrap over boards: the promotion gate is a CI on
+    # the mean paired difference that excludes zero, not a point estimate.
+    rng = random.Random(0)
+    n = len(diffs)
+    boots = sorted(sum(diffs[rng.randrange(n)] for _ in range(n)) / n
+                   for _ in range(2000))
     return {
         "boards": len(per_board),
         "a_damage_per_turn": round(mean_a, 2),
         "b_damage_per_turn": round(mean_b, 2),
         "diff": round(mean_a - mean_b, 2),
+        "ci95": [round(boots[49], 3), round(boots[1949], 3)],
         "p_value": round(binomial_two_sided(favour_a, favour_b), 4),
         "boards_favouring_a": favour_a,
         "boards_favouring_b": favour_b,
@@ -258,17 +322,25 @@ def play_side_swapped(spec_a: str, spec_b: str, games: int = 20, seed: int = 0,
                            "damage_a": round(damage_a, 2),
                            "damage_b": round(damage_b, 2)})
     score = score_games(played)
+    latency: Dict[str, Any] = {}
+    for label, policy in (("a", policy_a), ("b", policy_b)):
+        timing = getattr(policy, "timing", None)
+        if timing and timing["calls"]:
+            latency[label] = {
+                "mean_ms": round(1000.0 * timing["seconds"] / timing["calls"], 3),
+                "calls": timing["calls"],
+            }
     return {"a": spec_a, "b": spec_b, "mirror": mirror_key, "seed": seed,
             "rounds": rounds, "score": score,
             "efficiency": efficiency(played), "value_head_spread": heads,
-            "games": played}
+            "decide_latency": latency, "games": played}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--a", default="solver")
     parser.add_argument("--b", default="random")
-    parser.add_argument("--games", type=int, default=20,
+    parser.add_argument("--games", "--boards", type=int, default=20,
                         help="boards played; each is played twice, seats swapped")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--rounds", type=int, default=16)
@@ -316,6 +388,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                   % (eff["a_damage_per_turn"], eff["b_damage_per_turn"],
                      eff["diff"], eff["boards_favouring_a"],
                      eff["boards_favouring_b"], eff["p_value"]))
+            if eff.get("ci95"):
+                logger.debug("  paired bootstrap 95%% CI on diff: [%+.3f, %+.3f]"
+                      % (eff["ci95"][0], eff["ci95"][1]))
+        for label, entry in report.get("decide_latency", {}).items():
+            logger.debug("  decide latency %s: %.3f ms mean over %d calls"
+                  % (label, entry["mean_ms"], entry["calls"]))
         for label, spread in report["value_head_spread"].items():
             if spread is None:
                 logger.debug("  value head %s: could not be evaluated; the arm is the "

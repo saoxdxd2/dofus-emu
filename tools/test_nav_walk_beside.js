@@ -38,7 +38,7 @@ function block(marker) {
     return null;
 }
 
-const body = block('var _agentWalkBeside = function(targetCell, onArrive) {');
+const body = block('_agentWalkBeside = function(targetCell, onArrive) {');
 check('the walk-beside helper is present', !!body);
 
 if (body) {
@@ -126,6 +126,59 @@ if (body) {
     r = make([], [], 242);
     check('an unreachable pocket costs at most one pass over its neighbours',
           r.out === null && r.moves.length === 0, JSON.stringify(r.moves));
+}
+
+const navBody = block("'nav.goto': function(args) {");
+const fightBody = block("'fight.join': function(args) {");
+const directiveBody = block('window.__agentDirective = function(payload) {');
+check('the live handlers and dispatcher are extractable', !!navBody && !!fightBody && !!directiveBody);
+if (navBody && fightBody && directiveBody) {
+    const callbacks = [], packets = [];
+    const sandbox = {
+        console: { log: function () {} }, Date: Date,
+        _agentDirectiveAliases: {}, _agentDoorHint: null,
+        _agentMapDetails: function () { return { map_id: 7, cell: 1, exits: [], doors: [] }; },
+        _agentTutorial: function () { return null; },
+        _agentLife: function () { return { alive: true }; },
+        _agentResult: function (ok, data, error) { return { ok: ok, data: data, error: error }; },
+        _cmSend: function (name, data) { packets.push([name, data]); return { ok: true }; }
+    };
+    sandbox.window = sandbox;
+    sandbox.isoEngine = {
+        actorManager: { actors: { 9: { actorId: 9, cellId: 42 } }, userActor: { cellId: 1 } },
+        _movePlayerOnMap: function (cell, adjacent, cb) { callbacks.push(cb); return cell; }
+    };
+    sandbox._agentHandlers = {
+        'nav.goto': vm.runInNewContext('(function(args)' + navBody + ')', sandbox),
+        'fight.join': vm.runInNewContext('(function(args)' + fightBody + ')', sandbox)
+    };
+    const dispatch = vm.runInNewContext('(function(payload)' + directiveBody + ')', sandbox);
+    const requested = { cell: 42, __action_id: 'forged' };
+    dispatch({ id: 'A', tool: 'nav.goto', args: requested });
+    check('the dispatcher binds the transport id without mutating caller arguments',
+          sandbox.__agentLastNav.action_id === 'A' && requested.__action_id === 'forged');
+    dispatch({ id: 'B', tool: 'nav.goto', args: { cell: 43 } });
+    callbacks[0](new Error('A cannot walk'));
+    check('a late callback keeps its own action id after another directive',
+          sandbox.__agentLastNav.action_id === 'A' && sandbox.__agentLastNav.stage === 'walk_failed');
+    callbacks[1](null, 43);
+    check('server-confirmed arrival carries the matching id and cell',
+          sandbox.__agentLastNav.action_id === 'B' && sandbox.__agentLastNav.stage === 'walk_confirmed'
+          && sandbox.__agentLastNav.cell === 43);
+    dispatch({ id: 'C', tool: 'fight.join', args: { group_id: 9 } });
+    callbacks[2](new Error('group unreachable'));
+    check('a failed fight approach does not send an attack',
+          packets.length === 0 && sandbox.__agentLastFight.action_id === 'C'
+          && sandbox.__agentLastFight.stage === 'walk_failed');
+    dispatch({ id: 'D', tool: 'fight.join', args: { group_id: 9 } });
+    callbacks[3](null, 42);
+    check('a completed approach sends one attack and preserves the directive id',
+          packets.length === 1 && packets[0][0] === 'GameRolePlayAttackMonsterRequestMessage'
+          && sandbox.__agentLastFight.action_id === 'D' && sandbox.__agentLastFight.stage === 'attacked');
+    dispatch({ id: 'E', tool: 'nav.goto', args: { cell: 44 } });
+    callbacks[4](null, 45);
+    check('a walk ending on the wrong cell is not a confirmed arrival',
+          sandbox.__agentLastNav.action_id === 'E' && sandbox.__agentLastNav.stage === 'walk_stopped_short');
 }
 
 console.log(pass + ' passed, ' + fail + ' failed');

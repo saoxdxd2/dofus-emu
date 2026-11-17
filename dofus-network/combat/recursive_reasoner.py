@@ -38,9 +38,9 @@ class TacticalStateEncoder:
             min(1.0, state.agility / 800.0),
             min(1.0, state.power / 400.0),
             min(1.0, state.flat_damage / 100.0),
-            1.0 if "power" in state.active_buffs else 0.0,
-            1.0 if "divine" in state.active_buffs else 0.0,
-            1.0 if "shield" in state.active_buffs else 0.0,
+            1.0 if "power" in state.buff_names else 0.0,
+            1.0 if "divine" in state.buff_names else 0.0,
+            1.0 if "shield" in state.buff_names else 0.0,
             min(1.0, state.target_hp / 1500.0),
             min(1.0, state.target_hp_percent),
             min(1.0, state.distance_cells / 10.0),
@@ -70,9 +70,12 @@ class TacticalStateEncoder:
             min(1.0, getattr(state, "agility", 0) / 800.0),
             min(1.0, getattr(state, "power", 0) / 400.0),
             min(1.0, getattr(state, "flat_damage", 0) / 100.0),
-            1.0 if "power" in getattr(state, "active_buffs", []) else 0.0,
-            1.0 if "divine" in getattr(state, "active_buffs", []) else 0.0,
-            1.0 if "shield" in getattr(state, "active_buffs", []) else 0.0,
+            1.0 if "power" in (getattr(state, "buff_names", None)
+                               or getattr(state, "active_buffs", ())) else 0.0,
+            1.0 if "divine" in (getattr(state, "buff_names", None)
+                                or getattr(state, "active_buffs", ())) else 0.0,
+            1.0 if "shield" in (getattr(state, "buff_names", None)
+                                or getattr(state, "active_buffs", ())) else 0.0,
             min(1.0, getattr(state, "target_hp", 0) / 1500.0),
             min(1.0, getattr(state, "target_hp_percent", 1.0)),
             min(1.0, getattr(state, "distance_cells", 1) / 10.0),

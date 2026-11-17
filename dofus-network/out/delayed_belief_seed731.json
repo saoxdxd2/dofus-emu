@@ -1,0 +1,87 @@
+{
+  "scope": "synthetic finite-state filtering; not gameplay or causal attribution",
+  "config": {
+    "episodes": 256,
+    "horizon": 32,
+    "capacity": 8,
+    "seed": 731,
+    "process_error": 0.05,
+    "sensor_error": 0.05,
+    "drop_probability": 0.1
+  },
+  "trace_sha256": "38a67f8a07bcff97b23cf62af44a6d8c606cb1d2d596af68dc5ddb59a544b006",
+  "probe_sha256": "4f3f33f5400c487910794c96697550a645dc8b425c5463e074dde83759847e37",
+  "decisions": 8192,
+  "scheduled_observations": 7366,
+  "dropped_observations": 826,
+  "delayed_observations": 6455,
+  "ingest_statuses": {
+    "accepted": 6551,
+    "duplicate": 1570
+  },
+  "maximum_buffered_frames": 8,
+  "maximum_full_history_error": 4.440892098500626e-16,
+  "metrics": {
+    "bounded_replay": {
+      "nll": 0.4089101909432177,
+      "brier": 0.12723899996570598,
+      "correct": 6789,
+      "accuracy": 0.8287353515625
+    },
+    "arrival_order": {
+      "nll": 1.18279873886593,
+      "brier": 0.32316923494743854,
+      "correct": 4677,
+      "accuracy": 0.5709228515625
+    },
+    "full_history": {
+      "nll": 0.40891019094321757,
+      "brier": 0.12723899996570598,
+      "correct": 6789,
+      "accuracy": 0.8287353515625
+    }
+  },
+  "paired_episode_nll_delta": -0.7738885479227134,
+  "paired_episode_nll_ci95": [
+    -0.8355254824752002,
+    -0.7130361923375196
+  ],
+  "filter_step_latency_ms": {
+    "mean": 0.12637445068359374,
+    "p95": 0.2664349999999999,
+    "scope": "advance + received batch + belief copy; not LivePolicy.decide"
+  },
+  "attribution_controls": {
+    "scope": "synthetic rows through the existing transition builder",
+    "clean_origin": "A",
+    "clean_credited": [
+      "A"
+    ],
+    "delayed_injected_origin": "A",
+    "delayed_credited": [
+      "B"
+    ],
+    "identical_visible_trace_possible_origins": [
+      "A",
+      "B",
+      "joint",
+      "external"
+    ],
+    "causal_owner_from_belief_replay": null
+  },
+  "checks": {
+    "same_information_full_history_parity": true,
+    "bounded_storage": true,
+    "delays_and_duplicates_exercised": true,
+    "lower_nll_than_arrival_order": true,
+    "existing_attribution_failure_reproduced": true
+  },
+  "passed": true,
+  "limitations": [
+    "known two-state dynamics and observation model",
+    "trusted source step and source identity supplied by the simulator",
+    "delays within the retained window; missing observations add no evidence",
+    "uniform random shared actions, not a learned decision policy",
+    "no live instrumentation, neural weights, or causal ownership inferred"
+  ]
+}

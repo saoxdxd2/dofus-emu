@@ -34,7 +34,7 @@ function extractFrom(anchor, braceAt) {
 }
 
 const ACCEPT_ANCHOR = 'if (args && args.accept === true) {';
-const REFUSE_ANCHOR = 'var bareStartId = (args && (args.quest_id || args.questId)) || null;';
+const REFUSE_ANCHOR = 'const bareStartId = (args && (args.quest_id || args.questId)) || null;';
 const acceptBlock = extractFrom(ACCEPT_ANCHOR);
 const refuseBlock = extractFrom(REFUSE_ANCHOR);
 check('the accept branch exists in quest.advance', !!acceptBlock, ACCEPT_ANCHOR);
@@ -48,7 +48,7 @@ if (!acceptBlock || !refuseBlock) {
 const atAccept = src.indexOf(ACCEPT_ANCHOR);
 const atClose = src.indexOf('if (args && args.close) {');
 const atRefuse = src.indexOf(REFUSE_ANCHOR);
-const atReply = src.indexOf('var want = (args && args.reply !== undefined)', atRefuse);
+const atReply = src.indexOf('let want = (args && args.reply !== undefined)', atRefuse);
 check('the accept branch runs before the close branch', atAccept > 0 && atAccept < atClose,
     atAccept + ' vs ' + atClose);
 check('and both run before the code that answers reply 0',
@@ -174,7 +174,7 @@ check('the refusal block sends nothing',
 
 // ---- source and contract pins ------------------------------------------------------
 check('the page knows the client quest lists instead of guessing',
-    src.indexOf('var _agentQuestKnown = function (questId) {') > 0
+    src.indexOf('_agentQuestKnown = function (questId) {') > 0
     && src.indexOf('isActiveQuestById(questId)') > 0
     && src.indexOf('isFinishedQuestById(questId)') > 0);
 check('the offer the guard compares against is the client\'s parsed start_quest',

@@ -138,6 +138,8 @@ IGNORED_TOP: Dict[str, str] = {
     "knowledge": "the model's own memory, not the world",
     "last_disconnect": "historical event, not current state",
     "last_nav": "historical event, not current state",
+    "last_talk": "directive-scoped completion evidence, not a policy feature",
+    "last_fight_action": "directive-scoped completion evidence, not a policy feature",
     "last_fight_end": "historical event, not current state",
     "keep_alive": "transport heartbeat",
     "geometry": "browser viewport and reload count, not the game world",

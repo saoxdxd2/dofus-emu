@@ -10,6 +10,9 @@ import argparse
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from agent.features import DELIVER_TYPES
+from agent.planner_utils import _goal_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,9 +38,20 @@ def settle_deadline(tool: str, started: float, last_change: float) -> float:
     return started + 30.0
 
 
+ABSENT_CLIENT_MARKERS = (
+    "no client instance", "not an active client", "no client window is open",
+)
+
+
 def client_absent(error: Any) -> bool:
-    """Whether an error indicates the client is absent."""
-    return error is not None and "absent" in str(error).lower()
+    """Whether the host's error says no client window exists at all.
+
+    The words are the host's own (desktop/agentbridge.cs), not a generic
+    "absent": an in-game refusal can contain that word while a client is very
+    much open, and ending the wait on it would abandon a healthy session.
+    """
+    text = str(error or "").lower()
+    return any(marker in text for marker in ABSENT_CLIENT_MARKERS)
 
 
 def _work_remains(obs: Any) -> bool:
@@ -198,8 +212,10 @@ def _obs_map(obs: Any) -> Optional[int]:
         (obs.get("position") or {}).get("map_id"),
         (obs.get("map") or {}).get("map_id"),
     ):
+        if value is None:
+            continue
         try:
-            return int(value) if value is not None else None
+            return int(value)
         except (TypeError, ValueError):
             continue
     return None
@@ -214,8 +230,10 @@ def _obs_cell(obs: Any) -> Optional[int]:
         (obs.get("position") or {}).get("cell"),
         (obs.get("map") or {}).get("cell"),
     ):
+        if value is None:
+            continue
         try:
-            return int(value) if value is not None else None
+            return int(value)
         except (TypeError, ValueError):
             continue
     return None
@@ -249,12 +267,13 @@ def _action_complete(call: Any, before: Any, after: Any) -> bool:
     args = getattr(call, "args", {}) or {}
     if tool == "nav.goto":
         before_map, after_map = _obs_map(before), _obs_map(after)
-        if bool(after_map) and after_map != before_map:
+        if before_map is not None and after_map is not None and after_map != before_map:
             return True
         target = args.get("map_id")
         if target is not None:
             try:
-                return _obs_map(after) == int(target)
+                if after_map != int(target):
+                    return False
             except (TypeError, ValueError):
                 return False
         target_cell = args.get("cell")
@@ -263,13 +282,21 @@ def _action_complete(call: Any, before: Any, after: Any) -> bool:
                 return _obs_cell(after) == int(target_cell)
             except (TypeError, ValueError):
                 return False
-        return False
+        return target is not None
     if tool == "quest.advance":
         a_dlg = after.get("dialog")
         b_dlg = before.get("dialog")
+        starting = args.get("accept") or (
+            args.get("quest_id") is not None and not any(
+                args.get(key) is not None for key in
+                ("objective_id", "npc_id", "reply", "reply_text", "close")))
+        if starting:
+            qid = str(args.get("quest_id"))
+            return any(qid == str(value) for key in ("quests_active", "quests_done")
+                       for value in (after.get(key) or []))
         if args.get("close"):
-            if before.get("in_dialog") and not after.get("in_dialog"):
-                return True
+            return after.get("in_dialog") is False or (
+                isinstance(a_dlg, dict) and a_dlg.get("open") is False)
         elif args.get("reply") is not None or args.get("reply_text") is not None:
             if isinstance(a_dlg, dict) and _dialog_signature(a_dlg) != _dialog_signature(
                 b_dlg if isinstance(b_dlg, dict) else {}
@@ -277,18 +304,31 @@ def _action_complete(call: Any, before: Any, after: Any) -> bool:
                 return True
         if after.get("in_dialog") and not before.get("in_dialog"):
             return True
-        if after.get("objectives_completed") != before.get("objectives_completed"):
-            return True
-        b_obj = before.get("current_objective")
-        a_obj = after.get("current_objective")
-        if (a_obj or {}).get("objective_id") != (b_obj or {}).get("objective_id"):
+        for key in ("objectives_completed", "ready_objectives", "quest_steps"):
+            if (key in before and key in after and after[key] is not None
+                    and before[key] is not None and before[key] != after[key]):
+                return True
+        b_obj = before.get("current_objective") or {}
+        a_obj = after.get("current_objective") or {}
+        b_id = b_obj.get("objective_id", b_obj.get("id"))
+        a_id = a_obj.get("objective_id", a_obj.get("id"))
+        if b_id is not None and a_id is not None and b_id != a_id:
             return True
         before_map, after_map = _obs_map(before), _obs_map(after)
-        return bool(after_map) and after_map != before_map
-    if tool in ("fight.join", "farm.start"):
-        if after.get("in_fight") and not before.get("in_fight"):
-            return True
-        return bool(after.get("auto_fight")) and not bool(before.get("auto_fight"))
+        return before_map is not None and after_map is not None and after_map != before_map
+    if tool == "fight.join":
+        return bool(after.get("in_fight"))
+    if tool == "farm.start":
+        return bool(after.get("in_fight") or after.get("auto_fight"))
+    if tool == "tap.interactive":
+        from agent.verifier import _get, changed_keys
+        effects = {"map_id", "mapId", "in_dialog", "in_fight", "inventory_size", "xp",
+                   "ready_objectives", "objectives_completed", "quest_steps"}
+        observed = (key for key in changed_keys(before, after)
+                    if _get(before, key) is not None and _get(after, key) is not None)
+        return bool(effects.intersection(observed)) or (
+            before.get("open_windows") is not None and after.get("open_windows") is not None
+            and before["open_windows"] != after["open_windows"])
     return _changed_keys(before, after)
 
 
@@ -307,12 +347,14 @@ def _farm_counters(observation: Dict[str, Any]) -> Optional[tuple]:
 
 
 def _farm_allowed(goal: str, obs: Optional[Dict[str, Any]]) -> bool:
-    """Whether a farm order is allowed given the current observation."""
-    if not isinstance(obs, dict):
+    """A quests prompt may farm only to gather a delivery item."""
+    if _goal_mode(goal) != "quest":
+        return True
+    obj = (obs or {}).get("current_objective") or {}
+    try:
+        return int(obj.get("type_id")) in DELIVER_TYPES
+    except (TypeError, ValueError):
         return False
-    if not obs.get("auto_fight"):
-        return False
-    return True
 
 
 def _bridge_alive() -> bool:
@@ -353,17 +395,42 @@ def _screen_text(screen: Optional[Dict[str, Any]]) -> str:
 
 
 def _login_banned(obs: Optional[Dict[str, Any]]) -> bool:
-    """Whether the login is banned."""
+    """Whether the page's login screen is refusing this account for good.
+
+    The page publishes `login` from the client's own popup text ("Your account
+    has been permanently banned"); an absent or malformed block is "not
+    banned", because guessing a ban would end a healthy session.
+    """
     if not isinstance(obs, dict):
         return False
-    return obs.get("banned", False)
+    block = obs.get("login")
+    return bool(isinstance(block, dict) and block.get("banned"))
 
 
 def _login_lockout(obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Lockout info for login."""
+    """The page's login cooldown once it has escalated past a slow server.
+
+    The page's backoff is 10 min after the first refused guest press, then
+    60 min, then 3 h. One refusal is worth waiting out inside the run; from
+    the second on the slot stays shut for an hour and only a per-slot reset
+    (a fresh guest) or waiting changes the answer, so the wait ends with the
+    reason instead of parking silently.
+    """
     if not isinstance(obs, dict):
         return None
-    return obs.get("lockout")
+    cool = obs.get("login_cooldown")
+    if not isinstance(cool, dict):
+        return None
+    try:
+        remaining = float(cool.get("remaining_s") or 0)
+        fails = int(cool.get("fails") or 0)
+    except (TypeError, ValueError):
+        return None
+    if remaining < 1800 and fails < 2:
+        return None
+    return {"reason": cool.get("reason"),
+            "remaining_s": remaining,
+            "fails": fails}
 
 
 def _quest_data_pending(obs: Any) -> bool:

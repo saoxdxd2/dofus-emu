@@ -1,0 +1,8041 @@
+{
+ "a": "hp2",
+ "b": "hp",
+ "mirror": "dana_ouro",
+ "seed": 0,
+ "rounds": 16,
+ "score": {
+  "games": 800,
+  "decided": 800,
+  "seat1_win": 0.9575,
+  "a_seat1_win": 0.9575,
+  "a_seat2_win": 0.0425,
+  "wins_a": 400,
+  "wins_b": 400,
+  "p_value": 1.0,
+  "verdict": "seat_dominated"
+ },
+ "efficiency": {
+  "boards": 400,
+  "a_damage_per_turn": 682.71,
+  "b_damage_per_turn": 682.71,
+  "diff": 0.0,
+  "ci95": [
+   0.0,
+   0.0
+  ],
+  "p_value": 1.0,
+  "boards_favouring_a": 0,
+  "boards_favouring_b": 0
+ },
+ "value_head_spread": {},
+ "decide_latency": {
+  "a": {
+   "mean_ms": 0.748,
+   "calls": 2817
+  }
+ },
+ "games": [
+  {
+   "seed": 0,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 0,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 1,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 1,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 2,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 2,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 3,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 3,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 4,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 4,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 5,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 5,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 6,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 6,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 7,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 7,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 8,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 8,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 9,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 9,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 10,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 10,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 11,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 11,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 12,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 12,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 13,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 13,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 14,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 14,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 15,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 15,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 16,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 16,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 17,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 17,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 18,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 18,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 19,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 19,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 20,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 20,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 21,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 21,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 22,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 22,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 23,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 23,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 24,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 24,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 25,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 25,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 26,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 26,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 27,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 27,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 28,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 28,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 29,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 29,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 30,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 30,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 31,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 31,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 32,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 32,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 33,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 33,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 34,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 34,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 35,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 35,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 36,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 36,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 37,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 37,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 38,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 38,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 39,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 39,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 40,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 40,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 41,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 41,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 42,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 42,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 43,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 43,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 44,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 44,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 45,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 45,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 46,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 46,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 47,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 47,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 48,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 48,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 49,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 49,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 50,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 50,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 51,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 51,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 52,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 52,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 53,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 53,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 54,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 54,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 55,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 55,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 56,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 56,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 57,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 57,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 58,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 58,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 59,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 59,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 60,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 60,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 61,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4796.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 61,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4796.0
+  },
+  {
+   "seed": 62,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 62,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 63,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 63,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 64,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 64,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 65,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 65,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 66,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 66,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 67,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 67,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 68,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 68,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 69,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 69,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 70,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 70,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 71,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 71,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 72,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 72,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 73,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 73,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 74,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 74,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 75,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 75,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 76,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 76,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 77,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 77,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 78,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 78,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 79,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 79,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 80,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 80,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 81,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 81,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 82,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 82,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 83,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 83,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 84,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 84,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 85,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 85,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 86,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 3192.0
+  },
+  {
+   "seed": 86,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 3192.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 87,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 87,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 88,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 88,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 89,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 89,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 90,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 90,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 91,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 91,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 92,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 92,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 93,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 93,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 94,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 94,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 95,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 95,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 96,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 96,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 97,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 97,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 98,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 98,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 99,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 99,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 100,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 100,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 101,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 101,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 102,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 102,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 103,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 103,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 104,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 104,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 105,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 105,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 106,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 106,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 107,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 107,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 108,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 108,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 109,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 109,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 110,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 110,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 111,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 111,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 112,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 112,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 113,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 113,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 114,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 114,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 115,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 115,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 116,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 116,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 117,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 117,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 118,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 118,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 119,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 119,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 120,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 120,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 121,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 121,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 122,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 122,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 123,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 123,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 124,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 124,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 125,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 125,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 126,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 126,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 127,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 127,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 128,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 128,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 129,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 129,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 130,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 130,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 131,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 131,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 132,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 132,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 133,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 133,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 134,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 134,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 135,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 135,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 136,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 136,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 137,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 137,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 138,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 138,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 139,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 139,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 140,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 140,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 141,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 141,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 142,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 142,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 143,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 143,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 144,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 144,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 145,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 145,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 146,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 146,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 147,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 147,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 148,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 148,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 149,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 149,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 150,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 150,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 151,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 151,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 152,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 152,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 153,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 153,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 154,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 154,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 155,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 155,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 156,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 156,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 157,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 157,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 158,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 158,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 159,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 159,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 160,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 160,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 161,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 161,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 162,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 162,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 163,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 163,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 164,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 164,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 165,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 165,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 166,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 166,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 167,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 167,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 168,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 168,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 169,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 169,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 170,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 170,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 171,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 171,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 172,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 172,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 173,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 173,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 174,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 174,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 175,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 175,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 176,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 176,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 177,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 177,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 178,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 178,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 179,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 179,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 180,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 180,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 181,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 181,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 182,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 182,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 183,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 183,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 184,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 184,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 185,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 185,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 186,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 186,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 187,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 187,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 188,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 188,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 189,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 189,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 190,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 190,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 191,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 191,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 192,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 192,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 193,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 193,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 194,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 194,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 195,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 195,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 196,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 196,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 197,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 197,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 198,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 198,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 199,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 199,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 200,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 200,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 201,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 201,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 202,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 202,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 203,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 203,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 204,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 204,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 205,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 205,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 206,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 206,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 207,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 207,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 208,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 208,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 209,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 209,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 210,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 210,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 211,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 211,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 212,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 212,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 213,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 213,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 214,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 214,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 215,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 215,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 216,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 216,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 217,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 217,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 218,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 218,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 219,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 219,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 220,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 220,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 221,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 221,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 222,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 222,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 223,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 223,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 224,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 224,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 225,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 225,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 226,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 226,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 227,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 227,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 228,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 228,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 229,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 229,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 230,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 230,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 231,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 231,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 232,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 232,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 233,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 233,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 234,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 234,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 235,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 235,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 236,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 236,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 237,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 237,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 238,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 238,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 239,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 239,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 240,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 240,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 241,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 241,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 242,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 242,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 243,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 243,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 244,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 244,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 245,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 245,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 246,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 246,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 247,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 247,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 248,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 248,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 249,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 249,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 250,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 250,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 251,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 251,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 252,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 252,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 253,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 253,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 254,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 254,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 255,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 255,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 256,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 256,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 257,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 257,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 258,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 258,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 259,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 259,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 260,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 260,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 261,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 261,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 262,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 262,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 263,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 263,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 264,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 264,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 265,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 265,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 266,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 266,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 267,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 267,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 268,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 268,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 269,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 269,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 270,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 270,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 271,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 271,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 272,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 272,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 273,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 273,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 274,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 274,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 275,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 275,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 276,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 276,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 277,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 277,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 278,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 278,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 279,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 279,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 280,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 280,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 281,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 281,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 282,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 282,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 283,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 283,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 284,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 284,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 285,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 285,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 286,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 286,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 287,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 287,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 288,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 288,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 289,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 289,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 290,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 290,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 291,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 291,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 292,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 292,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 293,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 293,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 294,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 294,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 295,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 295,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 296,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 296,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 297,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 297,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 298,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 298,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 299,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 299,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 300,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 300,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 301,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 301,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 302,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 302,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 303,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 303,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 304,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 304,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 305,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 305,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 306,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 306,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 307,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 307,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 308,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 308,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 309,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 309,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 310,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 310,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 311,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 311,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 312,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 312,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 313,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 313,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 314,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 314,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 315,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 315,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 316,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 316,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 317,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 317,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 318,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 318,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 319,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 319,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 320,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 320,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 321,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 321,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 322,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 322,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 323,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 323,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 324,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 324,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 325,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 325,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 326,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 326,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 327,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 327,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 328,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 328,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 329,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 329,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 330,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 330,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 331,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 331,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 332,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 332,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 333,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 333,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 334,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 334,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 335,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 335,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 336,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 336,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 337,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 337,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 338,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 338,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 339,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 339,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 340,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 340,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 341,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 341,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 342,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 342,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 343,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 343,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 344,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 344,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 345,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 345,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 346,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 346,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 347,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 347,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 348,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 348,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 349,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 349,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 350,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 350,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 351,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 351,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 352,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 352,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 353,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 353,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 354,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 354,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 355,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 355,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 356,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 356,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 357,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 357,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 358,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 358,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 359,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 359,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 360,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 360,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 361,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 361,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 362,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 362,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 363,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 363,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 364,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 364,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 365,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 365,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 366,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 366,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 367,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 367,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 368,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 368,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 369,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 369,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 370,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 370,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 371,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 371,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 372,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 372,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 373,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 373,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 374,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 374,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 375,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 375,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 376,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 376,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 377,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 377,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 378,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 378,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 379,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 379,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 380,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 380,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 381,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 381,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 382,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 382,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 383,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 383,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 384,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 384,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 385,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 385,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 386,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 386,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 387,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 387,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 388,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 388,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 389,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 389,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 390,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 390,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 391,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 391,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 392,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 392,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 393,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 393,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 394,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 394,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 395,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 395,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 396,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 396,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 397,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 397,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 398,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "a",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  },
+  {
+   "seed": 398,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "b",
+   "winner_seat": 1,
+   "turns": 7,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 399,
+   "half": 0,
+   "a_seat": 1,
+   "winner": "b",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4788.0,
+   "damage_b": 4825.0
+  },
+  {
+   "seed": 399,
+   "half": 1,
+   "a_seat": 2,
+   "winner": "a",
+   "winner_seat": 2,
+   "turns": 8,
+   "damage_a": 4825.0,
+   "damage_b": 4788.0
+  }
+ ],
+ "elapsed_s": 111.8
+}

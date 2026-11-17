@@ -33,7 +33,7 @@
     // client's own adjacency form refuses, and the `door_step_off` marker. Unverified on
     // a live client -- the injected script is replaced only by a full app restart, so a
     // session reporting 2026-11-10a is still running the previous page.
-    const AGENT_BUILD = '2026-11-11a';
+    const AGENT_BUILD = '2026-11-17a';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -4515,6 +4515,8 @@
                 // rejected transition look identical in the position fields; this
                 // says which one happened, and at which cell.
                 snap.last_nav = window.__agentLastNav || null;
+                snap.last_talk = window.__agentLastTalk || null;
+                snap.last_fight_action = window.__agentLastFight || null;
                 // Liveness witness. A prevented AFK drop is silent, so "the run was
                 // not kicked" proves nothing on its own; this says the client's own
                 // activity flag was really flipped, how often, what flipped it last,
@@ -8089,7 +8091,8 @@
                 } catch(e){}
                 if (targetGroupId != null) {
                     // Start the focused fight; fight.join also arms the bot.
-                    return _agentHandlers['fight.join']({ group_id: targetGroupId });
+                    return _agentHandlers['fight.join']({ group_id: targetGroupId,
+                        __action_id: args && args.__action_id || null });
                 }
                 // Harvesting is `InteractiveUseRequestMessage {elemId,
                 // skillInstanceUid}` -- captured 2026-10-22 while gathering. If the
@@ -8228,30 +8231,38 @@
                 };
                 if (ua && ua.cellId === cell) {
                     const r0 = attack();
-                    window.__agentLastFight = { at: Date.now(), stage: r0.ok ? 'attacked' : 'attack_failed',
+                    window.__agentLastFight = { action_id: args && args.__action_id || null, at: Date.now(), stage: r0.ok ? 'attacked' : 'attack_failed',
                         group_id: gid, cell: cell, error: r0.ok ? null : String(r0.error || '') };
                     return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked',
                         auto_fight: r0.ok && !!window.__FarmBot }, r0.ok ? null : r0.error);
                 }
                 if (!iso || typeof iso._movePlayerOnMap !== 'function') {
-                    window.__agentLastFight = { at: Date.now(), stage: 'cannot_reach',
+                    window.__agentLastFight = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'cannot_reach',
                         group_id: gid, cell: cell };
                     return _agentResult(false, { group_id: gid, cell: cell },
                         'the group is not on my cell and I cannot walk there');
                 }
                 try {
-                    window.__agentLastFight = { at: Date.now(), stage: 'walk_then_attack',
+                    window.__agentLastFight = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walk_then_attack',
                         group_id: gid, cell: cell };
-                    iso._movePlayerOnMap(cell, false, function () {
+                    iso._movePlayerOnMap(cell, false, function (err) {
+                        if (err) {
+                            window.__agentLastFight = {
+                                action_id: args && args.__action_id || null,
+                                at: Date.now(), stage: 'walk_failed', group_id: gid,
+                                cell: cell, error: String(err)
+                            };
+                            return;
+                        }
                         const result = attack();
-                        window.__agentLastFight = { at: Date.now(),
+                        window.__agentLastFight = { action_id: args && args.__action_id || null, at: Date.now(),
                             stage: result.ok ? 'attacked' : 'attack_failed',
                             group_id: gid, cell: cell,
                             error: result.ok ? null : String(result.error || '') };
                     });
                     return _agentResult(true, { group_id: gid, cell: cell, via: 'walk then attack' });
                 } catch (e) {
-                    window.__agentLastFight = { at: Date.now(), stage: 'walk_failed',
+                    window.__agentLastFight = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walk_failed',
                         group_id: gid, cell: cell, error: String(e) };
                     return _agentResult(false, { group_id: gid, cell: cell }, 'walk failed: ' + e);
                 }
@@ -8918,7 +8929,7 @@
                             let off = _agentStepOffCell(cell, null);
                             if (off == null) return false;
                             _agentDoorStepOff = true;
-                            window.__agentLastNav = { at: Date.now(), stage: 'door_step_off',
+                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'door_step_off',
                                 from_map: here, to_map: toMap == null ? null : Number(toMap),
                                 cell: cell, off: off };
                             hint();
@@ -8982,7 +8993,7 @@
                         + parts.join(', ') + '.' : '';
                 };
                 const refuseRestricted = function (stage, error, data) {
-                    window.__agentLastNav = { at: Date.now(), stage: stage,
+                    window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(), stage: stage,
                         from_map: data && data.map_id,
                         direction: data && data.direction,
                         to_map: data && data.target_map,
@@ -9051,7 +9062,7 @@
                                 && typeof iso._movePlayerOnMap === 'function') {
                             let walked = _agentWalkOntoDoor(doorHere, nearDir);
                             if (walked) {
-                                window.__agentLastNav = { at: Date.now(),
+                                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                     stage: 'walk_to_door_by_direction', from_map: here,
                                     to_map: nearDir != null ? Number(nearDir) : null,
                                     direction: dir, cell: doorHere };
@@ -9067,7 +9078,7 @@
                         if (nearDir != null && !(tutorialActive && tutorial.can_change_map
                                 && tutorial.can_change_map[dir] === false)
                                 && typeof iso._requestMapChange === 'function') {
-                            window.__agentLastNav = { at: Date.now(),
+                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                 stage: 'change_requested_no_cell', from_map: here,
                                 to_map: Number(nearDir), direction: dir };
                             iso._requestMapChange(Number(nearDir), dir);
@@ -9099,7 +9110,7 @@
                         // a door names a destination, not a map edge.
                         const doorCell = _agentDoorFor(here, wantMap);
                         if (doorCell != null && _agentWalkOntoDoor(doorCell, wantMap)) {
-                            window.__agentLastNav = { at: Date.now(),
+                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                 stage: 'walk_to_door', from_map: here,
                                 to_map: Number(wantMap), cell: doorCell };
                             return _agentResult(true, { from_map: here,
@@ -9123,7 +9134,7 @@
                         if (nearKey && !(tutorialActive && tutorial.can_change_map
                                 && tutorial.can_change_map[nearKey] === false)
                                 && typeof iso._requestMapChange === 'function') {
-                            window.__agentLastNav = { at: Date.now(),
+                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                 stage: 'change_requested_no_cell', from_map: here,
                                 to_map: Number(wantMap), direction: nearKey };
                             iso._requestMapChange(Number(wantMap), nearKey);
@@ -9191,7 +9202,7 @@
                     }
                     const outcome = { from_map: here, to_map: Number(crossing.map_id),
                         requested_map: wantMap, direction: changeDir, cell: exitCell };
-                    window.__agentLastNav = { at: Date.now(), stage: 'walking_to_edge',
+                    window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walking_to_edge',
                         from_map: here, to_map: Number(crossing.map_id),
                         direction: changeDir, cell: exitCell };
                     try {
@@ -9226,7 +9237,7 @@
                             const offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);
                             if (offEdge != null && typeof iso._movePlayerOnMap === 'function'
                                     && typeof iso.gotoNeighbourMap === 'function') {
-                                window.__agentLastNav = { at: Date.now(),
+                                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                     stage: 'edge_step_off', from_map: here,
                                     to_map: Number(crossing.map_id),
                                     direction: changeDir, cell: exitCell, off: offEdge };
@@ -9234,7 +9245,7 @@
                                     setTimeout(function () {
                                         try {
                                             iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);
-                                            window.__agentLastNav = { at: Date.now(),
+                                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                                 stage: 'walk_then_change', from_map: here,
                                                 to_map: Number(crossing.map_id),
                                                 direction: changeDir, cell: exitCell,
@@ -9250,7 +9261,7 @@
                             if (typeof iso._requestMapChange === 'function') {
                                 iso._requestMapChange(Number(crossing.map_id), changeDir);
                                 outcome.via = 'isoEngine._requestMapChange';
-                                window.__agentLastNav = { at: Date.now(),
+                                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                     stage: 'change_requested_at_edge', from_map: here,
                                     to_map: Number(crossing.map_id),
                                     direction: changeDir, cell: currentCell };
@@ -9274,7 +9285,7 @@
                         let moved = iso._movePlayerOnMap(exitCell, false,
                             function (err, reached) {
                                 if (err) {
-                                    window.__agentLastNav = { at: Date.now(),
+                                    window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                         stage: 'walk_failed', from_map: here,
                                         to_map: Number(crossing.map_id),
                                         direction: changeDir, cell: exitCell,
@@ -9282,7 +9293,7 @@
                                     return;
                                 }
                                 if (reached != null && Number(reached) !== Number(exitCell)) {
-                                    window.__agentLastNav = { at: Date.now(),
+                                    window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                         stage: 'walk_stopped_short', from_map: here,
                                         to_map: Number(crossing.map_id),
                                         direction: changeDir, cell: exitCell,
@@ -9290,7 +9301,7 @@
                                     return;
                                 }
                                 iso._requestMapChange(Number(crossing.map_id), changeDir);
-                                window.__agentLastNav = { at: Date.now(),
+                                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                     stage: 'change_requested', from_map: here,
                                     to_map: Number(crossing.map_id),
                                     direction: changeDir, cell: exitCell };
@@ -9302,7 +9313,7 @@
                         outcome.via = 'isoEngine._movePlayerOnMap';
                         return _agentResult(true, outcome);
                     } catch (e) {
-                        window.__agentLastNav = { at: Date.now(), stage: 'map_change_failed',
+                        window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'map_change_failed',
                             from_map: here, to_map: Number(crossing.map_id),
                             direction: changeDir, cell: exitCell, error: String(e) };
                         return _agentResult(false, outcome, 'map change failed: ' + e);
@@ -9329,7 +9340,7 @@
                 }
                 const walkOutcome = { cell: wantCell, map_id: here,
                     via: 'isoEngine._movePlayerOnMap' };
-                window.__agentLastNav = { at: Date.now(), stage: 'walking',
+                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walking',
                     from_map: here, cell: wantCell };
                 // If this walk ends in a map change, this cell is the door. The
                 // interval reads the closure binding, so both are kept in step.
@@ -9339,12 +9350,21 @@
                     // The callback fires after the server confirms; the request itself
                     // goes out synchronously inside the call, so ok here means "asked",
                     // and the next state.snapshot says whether the character moved.
-                    let walked = iso._movePlayerOnMap(wantCell, stopAdjacent, function (err) {
+                    let walked = iso._movePlayerOnMap(wantCell, stopAdjacent, function (err, reached) {
                         if (err) {
                             walkOutcome.error = String(err);
-                            window.__agentLastNav = { at: Date.now(),
+                            window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                 stage: 'walk_failed', from_map: here, cell: wantCell,
                                 error: String(err) };
+                        } else {
+                            window.__agentLastNav = {
+                                action_id: args && args.__action_id || null,
+                                at: Date.now(), stage: !stopAdjacent && reached != null
+                                    && Number(reached) !== Number(wantCell)
+                                    ? 'walk_stopped_short' : 'walk_confirmed', from_map: here,
+                                cell: reached == null ? null : Number(reached),
+                                requested_cell: wantCell
+                            };
                         }
                     });
                     if (walked == null) {
@@ -9353,12 +9373,18 @@
                         // target all take a walk. Fall back to walking onto a free
                         // neighbour ourselves, nearest first, and say which cell it was.
                         if (stopAdjacent) {
-                            const besideNav = _agentWalkBeside(wantCell, null);
+                            const besideNav = _agentWalkBeside(wantCell, function (reached) {
+                                window.__agentLastNav = {
+                                    action_id: args && args.__action_id || null,
+                                    at: Date.now(), stage: 'walk_confirmed', from_map: here,
+                                    cell: reached, requested_cell: wantCell
+                                };
+                            });
                             if (besideNav != null) {
                                 walkOutcome.cell = besideNav;
                                 walkOutcome.adjacent_to = wantCell;
                                 walkOutcome.via = 'walk beside (neighbour of the target)';
-                                window.__agentLastNav = { at: Date.now(),
+                                window.__agentLastNav = { action_id: args && args.__action_id || null, at: Date.now(),
                                     stage: 'walking_beside', from_map: here,
                                     cell: besideNav, adjacent_to: wantCell };
                                 window.__agentDoorHint = { at: Date.now(),
@@ -10951,7 +10977,7 @@
                                 'accept needs the quest id the dialog is offering');
                         }
                         if (offeredId == null || offeredId !== acceptId) {
-                            window.__agentLastTalk = { at: Date.now(),
+                            window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(),
                                 stage: 'quest_not_offered', quest_id: acceptId,
                                 offered: offeredId };
                             return _agentResult(false,
@@ -10993,7 +11019,7 @@
                             const acceptAfter = _agentDialogState();
                             acceptClosed = !!(acceptAfter && acceptAfter.open === false);
                         } catch (acceptStateErr) {}
-                        window.__agentLastTalk = { at: Date.now(),
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(),
                             stage: acceptSend.ok ? 'quest_accept_sent' : 'quest_accept_failed',
                             quest_id: acceptId, via: 'QuestStartRequestMessage',
                             accepted_offer: true, closed: acceptClosed,
@@ -11072,7 +11098,7 @@
                             && args.objective_id == null && args.objectiveId == null
                             && !_agentQuestKnown(bareStartId)) {
                         const bareOffer = _agentDialogState();
-                        window.__agentLastTalk = { at: Date.now(),
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(),
                             stage: 'dialog_start_not_accept', quest_id: bareStartId,
                             offered: bareOffer ? bareOffer.start_quest : null };
                         return _agentResult(false,
@@ -11158,7 +11184,7 @@
                     // objective does not advance and nothing says why. Wait instead: the
                     // loop calls again in a second, and by then the list is there.
                     if (!ids) {
-                        window.__agentLastTalk = {
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null,
                             at: Date.now(), stage: 'dialog_open_no_replies',
                             replies: null, want: want
                         };
@@ -11166,7 +11192,7 @@
                             'a dialog is open but replyIds is not populated yet; retry in a moment');
                     }
                     if (!ids.length) {
-                        window.__agentLastTalk = {
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null,
                             at: Date.now(), stage: 'dialog_open_no_choices',
                             replies: 0, want: want
                         };
@@ -11189,7 +11215,7 @@
                         // Question + chosen reply + server id is the free label
                         // for the dialog policy: an outcome later says whether
                         // this choice advanced the objective.
-                        window.__agentLastTalk = {
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null,
                             at: Date.now(), stage: 'replied', replied: want,
                             replies: ids.length, reply_ids: ids.slice(0, 8),
                             reply_id: talkReplyId, reply_text: talkReply,
@@ -11200,7 +11226,7 @@
                             reply_id: talkReplyId, reply_text: talkReply,
                             via: pick.label, text_fallback: textFallback });
                     } catch (e) {
-                        window.__agentLastTalk = {
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null,
                             at: Date.now(), stage: 'reply_threw', error: String(e)
                         };
                         return _agentResult(false, null, 'reply failed: ' + e);
@@ -11226,7 +11252,7 @@
                             + (claim.ok ? '' : ' reason=' + claim.reason));
                     } catch (e) {}
                     if (!claim.ok) {
-                        window.__agentLastTalk = { at: Date.now(), stage: 'validate_refused',
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'validate_refused',
                             quest_id: qid, objective_id: oid, reason: claim.reason };
                         return _agentResult(false, claim, claim.error);
                     }
@@ -11269,7 +11295,7 @@
                         if (pendingStart) {
                             const waited = nowStart - Number(pendingStart.at || 0);
                             if (waited < 5000) {
-                                window.__agentLastTalk = {
+                                window.__agentLastTalk = { action_id: args && args.__action_id || null,
                                     at: nowStart, stage: 'quest_start_pending',
                                     quest_id: startKey, waited_ms: waited
                                 };
@@ -11283,7 +11309,7 @@
                                       pending: true, waited_ms: waited }, null);
                             }
                             delete starts[startKey];
-                            window.__agentLastTalk = {
+                            window.__agentLastTalk = { action_id: args && args.__action_id || null,
                                 at: nowStart, stage: 'quest_not_activated',
                                 quest_id: startKey, waited_ms: waited
                             };
@@ -11296,7 +11322,7 @@
                         const start = _cmSend('QuestStartRequestMessage',
                             { questId: Number(questId) });
                         if (start.ok) starts[startKey] = { at: Date.now() };
-                        window.__agentLastTalk = {
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null,
                             at: Date.now(),
                             stage: start.ok ? 'quest_start_sent' : 'quest_start_failed',
                             quest_id: startKey,
@@ -11345,7 +11371,7 @@
                     const hereNpcs = _listNpcActors().slice(0, 20).map(function (n) {
                         return { npc_id: n.templateId, actor_id: n.contextualId, cell: n.cell };
                     });
-                    window.__agentLastTalk = { at: Date.now(), stage: 'npc_id_required',
+                    window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'npc_id_required',
                         quest_id: questId, npcs_here: hereNpcs.length };
                     return _agentResult(false,
                         { quest_id: questId, npcs_here: hereNpcs, reason: 'npc_id_required' },
@@ -11362,7 +11388,7 @@
                     // is what the agent can act on. The old code either talked to
                     // somebody else or reported a bare "no NPC".
                     const here = _currentMapId();
-                    window.__agentLastTalk = { at: Date.now(), stage: 'npc_not_on_map',
+                    window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'npc_not_on_map',
                         wanted_npc: wantNpc, map_id: here, npcs_here: npcIds };
                     return _agentResult(false, { quest_id: questId, wanted_npc: wantNpc,
                         map_id: here, npcs_here: npcIds },
@@ -11444,7 +11470,7 @@
                 // Already next to the NPC: the talk request is valid immediately.
                 if (myCell != null && npcCell != null && _cellsAdjacent(myCell, npcCell)) {
                     const talkNow = doTalk();
-                    window.__agentLastTalk = { at: Date.now(),
+                    window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(),
                         stage: talkNow.ok ? 'talked' : 'talk_failed',
                         npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
                         map_id: mapId, npc_cell: npcCell, my_cell: myCell,
@@ -11467,7 +11493,7 @@
                         moved = iso2._movePlayerOnMap(npcCell, true, function (err) {
                             if (err) {
                                 walkError = String(err && err.message || err);
-                                window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
+                                window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walk_failed',
                                     npc_template: npc.templateId,
                                     npc_contextual_id: npc.contextualId, map_id: mapId,
                                     npc_cell: npcCell, my_cell: myCell, error: walkError };
@@ -11477,7 +11503,7 @@
                         });
                     } catch (e) { walkError = String(e); }
                     if (moved != null && !walkError) {
-                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_then_talking',
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walking_then_talking',
                             npc_template: npc.templateId,
                             npc_contextual_id: npc.contextualId, map_id: mapId,
                             npc_cell: npcCell, my_cell: myCell };
@@ -11490,7 +11516,7 @@
                     // free cell beside the NPC, nearest first, and talk from there.
                     const beside = _agentWalkBeside(npcCell, doTalk);
                     if (beside != null) {
-                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_beside',
+                        window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walking_beside',
                             npc_template: npc.templateId,
                             npc_contextual_id: npc.contextualId, map_id: mapId,
                             npc_cell: npcCell, my_cell: myCell, beside_cell: beside,
@@ -11503,7 +11529,7 @@
                     // free and which were tried, so the caller learns a fact about this
                     // spot instead of the word "noPath".
                     const besideReport = window.__agentWalkBeside || {};
-                    window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
+                    window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'walk_failed',
                         npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
                         map_id: mapId, npc_cell: npcCell, my_cell: myCell,
                         error: walkError, free_beside: besideReport.candidates || [],
@@ -11518,7 +11544,7 @@
                 }
                 // No movement API or no path: report the honest failure instead of
                 // sending a talk the server will ignore from this distance.
-                window.__agentLastTalk = { at: Date.now(), stage: 'not_adjacent',
+                window.__agentLastTalk = { action_id: args && args.__action_id || null, at: Date.now(), stage: 'not_adjacent',
                     npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
                     map_id: mapId, npc_cell: npcCell, my_cell: myCell };
                 return _agentResult(false, talkData,
@@ -12441,7 +12467,11 @@
                 try { window.__agentMarkActivity('directive'); } catch (eAct) {}
                 const handler = _agentHandlers[key];
                 if (!handler) return _agentResult(false, null, 'no client handler for tool "' + key + '"');
-                return handler(payload.args || {});
+                const args = Object.assign({}, payload.args || {});
+                Object.defineProperty(args, '__action_id', {
+                    value: payload.id == null ? null : String(payload.id)
+                });
+                return handler(args);
             } catch(err) {
                 return _agentResult(false, null, err.toString());
             }

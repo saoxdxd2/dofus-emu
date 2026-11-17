@@ -542,6 +542,17 @@ def _stamp_brain_build(blob: bytes) -> bytes:
     return (b'{"brain_build":"' + brain_build().encode("ascii") + b'",' + blob[1:])
 
 
+@dataclass
+class PendingAction:
+    tool: str
+    args: Dict[str, Any]
+    action_id: Optional[str]
+    started: float
+    observation: Any
+    status: str = "pending"
+    error: Optional[str] = None
+
+
 class Autopilot:
     """Observe -> choose -> execute -> label, until a stop condition fires."""
 
@@ -699,6 +710,7 @@ class Autopilot:
         self._hinted = False
         self._pending: Optional[Decision] = None
         self._pending_age = 0
+        self._inflight: Optional[PendingAction] = None
         self.replan_requested = 0
         self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
         self.interval = interval
@@ -1254,8 +1266,16 @@ class Autopilot:
         last_key = self._world_key(best)
         last_change = started
         delay = step_s
-        while time.monotonic() < deadline:
-            if isinstance(best, dict) and best:
+        # A poll at the deadline may reveal movement that extends it.
+        while True:
+            if self._should_stop():
+                break
+            if (isinstance(best, dict) and best
+                    and getattr(self, "_obs_source", None) != "stale"):
+                pending = getattr(self, "_inflight", None)
+                if pending is not None and self._action_signal(pending, best)[0] is not None:
+                    self._record_settled(best, after)
+                    return best
                 if self._action_complete(call, before, best):
                     self._record_settled(best, after)
                     return best
@@ -1288,9 +1308,11 @@ class Autopilot:
             if remaining <= 0:
                 break
             time.sleep(min(delay, remaining))
+            if self._should_stop():
+                break
             delay = min(delay * 1.6, max(step_s, 0.8))
             nxt = self.observe(max_age_ms=-1.0, record=False)
-            if nxt:
+            if nxt and getattr(self, "_obs_source", None) != "stale":
                 best = nxt
         self._record_settled(best, after)
         return best
@@ -1306,11 +1328,93 @@ class Autopilot:
                 # a log failure must not fail a step
                 logger.warning("[autopilot] observation writer failed: %s", exc)
 
+    @staticmethod
+    def _action_signal(pending: PendingAction, observation: Any) -> Tuple[Optional[str], Optional[str]]:
+        if not pending.action_id or not isinstance(observation, dict):
+            return None, None
+        key = {"nav.goto": "last_nav", "quest.advance": "last_talk",
+               "fight.join": "last_fight_action", "farm.start": "last_fight_action"}.get(pending.tool)
+        evidence = observation.get(key) if key else None
+        if not isinstance(evidence, dict) or evidence.get("action_id") != pending.action_id:
+            return None, None
+        if evidence.get("error") or evidence.get("stage") == "walk_stopped_short":
+            return "failed", str(evidence.get("error") or "the client stopped short of the requested cell")
+        if pending.tool == "nav.goto" and evidence.get("stage") == "walk_confirmed":
+            return "observed", None
+        return None, None
+
+    def _record_action_state(self, pending: PendingAction, goal: str) -> None:
+        self._append_log_line(_fast_dumps({
+            "kind": "action_lifecycle", "session": self.session, "index": self._index,
+            "action_id": pending.action_id, "tool": pending.tool, "args": pending.args,
+            "goal": goal, "status": pending.status, "error": pending.error,
+            "waited_s": round(time.monotonic() - pending.started, 3), "at": time.time(),
+        }) + b"\n")
+
+    def _await_completion(self, call: ToolCall, result: Any, before: Any,
+                          after: Any) -> PendingAction:
+        data = getattr(result, "data", None)
+        payload = data.get("directive_payload") if isinstance(data, dict) else None
+        action_id = payload.get("id") if isinstance(payload, dict) else None
+        pending = PendingAction(call.tool, dict(call.args), action_id,
+                                time.monotonic(), after)
+        self._inflight = pending
+        self._record_action_state(pending, call.goal)
+        polled = False
+        polls = 0
+        try:
+            after = self._settle(before, after, call=call)
+            while True:
+                pending.observation = after
+                reason = self._should_stop()
+                if reason:
+                    pending.status, pending.error = "interrupted", reason
+                    break
+                if self._obs_source != "stale":
+                    if not self._check_identity(after):
+                        pending.status, pending.error = "interrupted", self._should_stop()
+                        break
+                    if fell_out_of_world(before, after) is not None:
+                        pending.status = "disconnected"
+                        break
+                    status, error = self._action_signal(pending, after)
+                    if status is not None:
+                        pending.status, pending.error = status, error
+                        break
+                    if self._action_complete(call, before, after):
+                        pending.status = "observed"
+                        break
+                if self.settle_s <= 0:
+                    pending.status = "unchecked"
+                    break
+                if pending.status != "unconfirmed" or polls % 30 == 0:
+                    pending.status = "unconfirmed"
+                    self._record_action_state(pending, call.goal)
+                self._waits += 1
+                until = time.monotonic() + 1.0
+                while not self._should_stop():
+                    remaining = until - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.25, remaining))
+                if self._should_stop():
+                    continue
+                after = self.observe(max_age_ms=-1.0, record=False)
+                polled = True
+                polls += 1
+            if polled:
+                self._record_settled(after, None)
+            self._record_action_state(pending, call.goal)
+            return pending
+        finally:
+            self._inflight = None
+
     def _record_settled(self, best: Any, after: Any) -> None:
         # Record only a state produced by a poll. If no poll happened, `after`
         # came either from observe() (already recorded) or from the directive's
         # piggybacked snapshot (adopted without a row, as before).
-        if best is after or not isinstance(best, dict):
+        if (best is after or not isinstance(best, dict)
+                or getattr(self, "_obs_source", None) == "stale"):
             return
         writer = getattr(self.runtime, "observe", None)
         if callable(writer):
@@ -1810,10 +1914,11 @@ class Autopilot:
 
     def _verdict(self, result, before: Optional[Dict[str, Any]],
                  after: Optional[Dict[str, Any]], call: Optional[ToolCall] = None,
-                 latency_ms: float = 0.0) -> Verdict:
+                 latency_ms: float = 0.0,
+                 completion_error: Optional[str] = None) -> Verdict:
         """Ask the second agent. It returns verdict + residual + drift together,
         so the loop stops re-deriving them from different key lists."""
-        game_error = _game_error(result)
+        game_error = completion_error if completion_error is not None else _game_error(result)
         return self.verifier.label(
             tool=(call.tool if call is not None else "-"),
             args=(dict(call.args) if call is not None else {}),
@@ -2360,8 +2465,25 @@ class Autopilot:
                 # the character, open a dialog or start a fight a moment to land before
                 # judging them — otherwise every one of them scores `noop` and the loop
                 # retries an action that is already in flight.
+                completion_error = None
                 if step_ok and call.tool in SETTLE_TOOLS:
-                    after = self._settle(before, after, call=call)
+                    completion = self._await_completion(call, result, before, after)
+                    after = completion.observation
+                    if completion.status == "failed":
+                        step_ok = False
+                        step_error = completion_error = completion.error
+                    reason = self._should_stop()
+                    if reason:
+                        self._append_log_line(_fast_dumps({
+                            "kind": "action_interrupted", "session": self.session,
+                            "index": self._index, "goal": goal, "tool": call.tool,
+                            "args": dict(call.args), "ok": step_ok,
+                            "completion": "unconfirmed", "reason": reason,
+                            "latency_ms": latency_ms,
+                            "obs_before": _compact(before), "obs_after": _compact(after),
+                            "at": time.time(),
+                        }) + b"\n")
+                        return self._finish(reason)
                 if call.tool not in READ_ONLY_TOOLS and call.tool not in LISTING_TOOLS:
                     self._think_until = time.monotonic() + self.think_s
 
@@ -2396,14 +2518,15 @@ class Autopilot:
                             ended_because = (self._should_stop()
                                              or ("the client left the world"
                                                  + (f" ({reason})" if reason else "")))
-                            break
+                            return self._finish(ended_because)
                         continue
 
                 fight_estimate, fight_outcome = self._track_fight(before, after, tool=call.tool)
                 self._record_interventions(after)
                 self._record_dialog(call, before, after, result)
 
-                v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
+                v = self._verdict(result, before, after, call=call, latency_ms=latency_ms,
+                                  completion_error=completion_error)
                 verdict = v.verdict
                 self._gate.observe(call.tool, call.args, verdict)
                 self._memory.observe(

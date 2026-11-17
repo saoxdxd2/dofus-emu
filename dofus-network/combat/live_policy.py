@@ -17,6 +17,7 @@ fallback when no candidate plan can express the chosen spell/target.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections import deque
@@ -810,6 +811,18 @@ class LivePolicy:
             return None
         self._hp_asked = getattr(self, "_hp_asked", 0) + 1
 
+        if os.environ.get("DOFUS_COMBAT_TWO_PLY", "1") != "0":
+            try:
+                ranked = self.solver.evaluate_two_ply(
+                    board, plans, live_table=self._two_ply_table(), top_k=6)
+            except Exception:  # noqa: BLE001 - the reply model must not cost the turn
+                ranked = None
+            if ranked:
+                picked = ranked[0][0]
+                if picked is not plans[0]:
+                    self._hp_changed = getattr(self, "_hp_changed", 0) + 1
+                return picked
+
         def margin(plan: TurnPlan) -> float:
             mine = theirs = 0.0
             for fighter in living:
@@ -825,6 +838,39 @@ class LivePolicy:
         if picked is not plans[0]:
             self._hp_changed = getattr(self, "_hp_changed", 0) + 1
         return picked
+
+    def _two_ply_table(self) -> Optional[Dict[str, Any]]:
+        """Observed enemy damage slots, keyed `name|level|spell_id`.
+
+        The same file `combat.live_data` writes and `combat.threat` reads, so
+        the reply model and the threat model price a monster from one source.
+        Mtime-cached: the file is rewritten at session close, not per turn.
+        None when no slots exist -- the reply ladder then falls to the prior.
+        """
+        path = REPO_ROOT / "trajectories" / "live" / "monster_spells.json"
+        try:
+            stamp = path.stat().st_mtime
+        except OSError:
+            return None
+        cached = getattr(self, "_two_ply_cache", None)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        table: Optional[Dict[str, Any]] = None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            slots = data.get("observed_damage") or []
+            if slots:
+                table = {}
+                for slot in slots:
+                    if not isinstance(slot, dict):
+                        continue
+                    key = "%s|%s|%s" % (slot.get("name"), slot.get("level"),
+                                        slot.get("spell_id"))
+                    table[key] = slot
+        except (OSError, ValueError):
+            table = None
+        self._two_ply_cache = (stamp, table)
+        return table
 
     def _position_report(self, board: Board) -> Optional[Dict[str, Any]]:
         """What the chosen plan costs in exposure, and what is doing the pricing.

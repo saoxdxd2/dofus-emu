@@ -5019,7 +5019,7 @@ def test_absent_client_recovery() -> None:
 
     src = inspect.getsource(Autopilot)
     anchor = 'if not step_ok and client_absent(step_error):'
-    settle = 'after = self._settle(before, after, call=call)'
+    settle = 'completion = self._await_completion(call, result, before, after)'
     check("a dead window is waited on before any settle poll can run",
           anchor in src and settle in src and src.index(anchor) < src.index(settle)
           and "_recover_world(" in src[src.index(anchor):src.index(settle)]
@@ -11587,6 +11587,8 @@ def test_settle_waits_for_promised_effect() -> None:
             self.think_s = 0.25
             self.states = list(states)
             self.polls = 0
+            self._crossings_waited_out = 0
+            self._should_stop = lambda: None
             self.runtime = type("_R", (), {"observe": lambda *a, **k: None})()
 
         def observe(self, max_age_ms: Any = None, record: bool = True) -> Any:
@@ -11684,6 +11686,236 @@ def test_settle_waits_for_promised_effect() -> None:
     pilot, best, waited = settle("nav.goto", here, arrived, [], call_args={"cell": 42})
     check("a walk to a cell settles on the cell, no map change needed",
           pilot.polls == 0 and waited < 0.1, "%d polls, %.2fs" % (pilot.polls, waited))
+
+    clock = _Clock()
+    pilot = _Pilot([])
+
+    def boundary_poll(max_age_ms=None, record=True):
+        pilot.polls += 1
+        elapsed = clock.t - 1000.0
+        if elapsed >= 6.4:
+            return {"map_id": 8, "cell": 12}
+        return {"map_id": 7, "cell": 2 if elapsed >= 6.0 else 1}
+
+    pilot.observe = boundary_poll
+    real = ap.time
+    ap.time = clock
+    try:
+        best = pilot._settle(base, base, ToolCall("nav.goto", {"map_id": 8}, "go"))
+    finally:
+        ap.time = real
+    check("movement first received at the deadline extends the actual wait",
+          best.get("map_id") == 8 and pilot._crossings_waited_out > 0,
+          "%s after %.2fs" % (best, clock.t - 1000.0))
+
+    clock = _Clock()
+    pilot = _Pilot([base] * 40)
+    pilot._should_stop = lambda: "stop requested" if clock.t >= 1000.4 else None
+    real = ap.time
+    ap.time = clock
+    try:
+        best = pilot._settle(base, base, ToolCall("nav.goto", {"map_id": 8}, "go"))
+    finally:
+        ap.time = real
+    check("a stop during the wait prevents another observation round trip",
+          clock.t - 1000.0 < 0.5 and pilot.polls == 0,
+          "%d polls, %.2fs" % (pilot.polls, clock.t - 1000.0))
+
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from agent.verifier import Verdict, Verifier
+
+    nested = {"position": {"map_id": 7, "cell": 2}}
+    check("nested positions remain readable when flat keys are absent",
+          Autopilot._obs_map(nested) == 7 and Autopilot._obs_cell(nested) == 2)
+    check("a same-map request with a target cell waits for the cell",
+          not Autopilot._action_complete(ToolCall("nav.goto", {"map_id": 7, "cell": 3}, "go"),
+                                        nested, nested))
+    check("missing objective fields are not evidence of quest completion",
+          not Autopilot._action_complete(ToolCall("quest.advance", {"npc_id": 7}, "talk"),
+                                        {"map_id": 7, "current_objective": {"objective_id": 1}},
+                                        {"map_id": 7}))
+    check("a disappearing XP field does not complete an interactive",
+          not Autopilot._action_complete(ToolCall("tap.interactive", {"element_id": 9}, "use"),
+                                        {"xp": 10, "cell": 1}, {"cell": 2}))
+    verifier = Verifier()
+    with patch.object(verifier, "_model_label", return_value=Verdict("advanced", 1.0)):
+        refused = verifier.label("nav.goto", {}, False, "walk failed", base, base)
+    check("a learned verifier cannot promote an explicit client failure", refused.verdict == "failed")
+
+    def drive(mode):
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            clock = _Clock()
+            clock.perf_counter = clock.monotonic
+            calls, reports, polls = [], [], []
+            state = dict(base, in_world=True)
+            if mode == "identity":
+                state["character"] = {"id": 1}
+            tool, arguments = "nav.goto", {"map_id": 8}
+            if mode == "late_dialog":
+                tool, arguments = "quest.advance", {"quest_id": 42, "npc_id": 7}
+            elif mode == "accept":
+                tool, arguments = "quest.advance", {"quest_id": 42, "accept": True}
+                state.update(in_dialog=True, dialog={"open": True}, quests_active={})
+            elif mode == "interactive":
+                tool, arguments = "tap.interactive", {"element_id": 9}
+                state["open_windows"] = []
+            elif mode == "join":
+                tool, arguments = "fight.join", {"group_id": 9}
+            policy = SimpleNamespace(
+                choose=lambda goal, obs, tools: ToolCall(tool, dict(arguments), goal),
+                note_result=lambda *args, **kwargs: reports.append(args))
+
+            def execute(tool, args, **kwargs):
+                calls.append(tool)
+                response = ({"ok": False, "error": "exit refused"}
+                            if mode == "refused" else {"ok": True})
+                return SimpleNamespace(ok=True, error=None, data={
+                    "directive_payload": {"id": "current-action"},
+                    "response": {"result": response}, "snapshot": dict(state)})
+
+            runtime = SimpleNamespace(
+                policy=policy, executor=SimpleNamespace(execute=execute),
+                instance="settle-regression", observe=lambda *a, **k: None,
+                note_observation=lambda *a, **k: None)
+            pilot = Autopilot(runtime=runtime, goals=["go", "next goal"],
+                              log_path=tmp / "run.jsonl", stop_file=tmp / "STOP",
+                              max_steps=1, steps_per_goal=1, preflight=False,
+                              settle_s=3.0, memory_path="", brain="off")
+            pilot.controller.state_dir = tmp
+            if mode == "disconnect":
+                pilot._recover_world = lambda *a, **k: False
+            if mode == "join":
+                pilot._refresh_character = lambda: None
+                pilot.fights.assess_call = lambda *a, **k: None
+            if mode == "deadline":
+                pilot.deadline = 1000.4
+
+            def observe(max_age_ms=None, record=True):
+                polls.append(clock.t)
+                elapsed = clock.t - 1000.0
+                if mode == "boundary" and elapsed >= 6.4:
+                    state.update(map_id=8, cell=12)
+                elif mode == "boundary" and elapsed >= 6.0:
+                    state["cell"] = 2
+                if mode == "disconnect" and elapsed >= 8.0:
+                    state["in_world"] = False
+                if mode == "identity" and elapsed >= 8.0:
+                    state["character"] = {"id": 2}
+                if mode == "late" and elapsed >= 20.0:
+                    state.update(map_id=8, cell=12)
+                if mode in ("late_failure", "wrong_id") and elapsed >= 7.0:
+                    state["last_nav"] = {"action_id": "current-action" if mode == "late_failure"
+                                         else "previous-action", "stage": "walk_failed",
+                                         "error": "confirmed path failure"}
+                if mode == "wrong_id" and elapsed >= 10.0:
+                    state.update(map_id=8, cell=12)
+                if mode == "stale" and elapsed >= 7.0:
+                    state.update(map_id=8, cell=12)
+                if mode == "late_dialog" and elapsed >= 9.0:
+                    state.update(in_dialog=True, dialog={"open": True, "npc_id": 7})
+                if mode == "accept" and elapsed >= 1.0:
+                    state.update(in_dialog=False, dialog={"open": False})
+                if mode == "accept" and elapsed >= 9.0:
+                    state["quests_active"] = {"42": 0}
+                if mode == "interactive" and elapsed >= 1.0:
+                    state["cell"] = 2
+                if mode == "interactive" and elapsed >= 10.0:
+                    state["open_windows"] = ["workshop"]
+                if mode == "join" and elapsed >= 1.0:
+                    state["auto_fight"] = True
+                if mode == "join" and elapsed >= 9.0:
+                    state["in_fight"] = True
+                pilot._obs_age_ms, pilot._obs_source = 0.0, "snapshot"
+                if mode == "stale" and 7.0 <= elapsed < 10.0:
+                    pilot._obs_source = "stale"
+                pilot._last_obs = dict(state)
+                return dict(state)
+
+            pilot.observe = observe
+            advance_clock = clock.sleep
+
+            def sleep(seconds):
+                advance_clock(seconds)
+                if (mode == "stop" and calls) or (mode == "unconfirmed" and clock.t >= 1008.0):
+                    pilot.stop_file.touch()
+
+            clock.sleep = sleep
+            with patch.object(ap, "time", clock), \
+                    patch.object(pilot.verifier, "label", wraps=pilot.verifier.label) as label, \
+                    patch.object(pilot.controller, "on_step", wraps=pilot.controller.on_step) as control, \
+                    patch.object(pilot, "_credit_pending", wraps=pilot._credit_pending) as credit, \
+                    patch.object(pilot, "_apply_decision", wraps=pilot._apply_decision) as apply:
+                summary = pilot._run()
+                counts = (label.call_count, control.call_count,
+                          credit.call_count, apply.call_count)
+            rows = [json.loads(line) for line in
+                    pilot.log_path.read_text(encoding="utf-8").splitlines()]
+            return summary, rows, calls, reports, polls, counts, clock.t - 1000.0
+
+    for mode in ("stop", "deadline"):
+        summary, rows, calls, reports, polls, counts, elapsed = drive(mode)
+        interrupted = [r for r in rows if r.get("kind") == "action_interrupted"]
+        check("%s interrupts the real loop before labels, repair credit or recovery" % mode,
+              counts == (0, 0, 0, 0) and reports == [] and calls == ["nav.goto"]
+              and len(polls) == 1 and elapsed < 0.5,
+              "%s calls=%s reports=%s polls=%s elapsed=%.2f" %
+              (counts, calls, reports, polls, elapsed))
+        check("%s preserves the dispatched action as unconfirmed, not a failed step" % mode,
+              len(interrupted) == 1 and interrupted[0].get("completion") == "unconfirmed"
+              and interrupted[0].get("tool") == "nav.goto"
+              and summary["steps"] == 0 and rows[-1].get("kind") == "session_end",
+              str(interrupted))
+
+    summary, rows, calls, reports, polls, counts, elapsed = drive("boundary")
+    check("the real loop waits for the boundary hop and credits it once",
+          calls == ["nav.goto"] and counts == (1, 1, 1, 1)
+          and len(reports) == 1 and reports[0][1:3] == (True, "advanced")
+          and reports[0][3].get("map_id") == 8 and summary["steps"] == 1,
+          "calls=%s counts=%s reports=%s" % (calls, counts, reports))
+
+    summary, rows, calls, reports, polls, counts, elapsed = drive("refused")
+    check("an explicit game refusal bypasses the wait and remains a failure",
+          len(reports) == 1 and reports[0][1:3] == (False, "exit refused")
+          and counts[0] == 1 and len(polls) == 1 and elapsed < 1.0
+          and not any(r.get("kind") == "action_interrupted" for r in rows),
+          "reports=%s polls=%s elapsed=%.2f" % (reports, polls, elapsed))
+
+    for mode, expected_tool, minimum in (
+            ("late", "nav.goto", 20.0), ("wrong_id", "nav.goto", 10.0),
+            ("stale", "nav.goto", 10.0), ("late_dialog", "quest.advance", 9.0),
+            ("accept", "quest.advance", 9.0), ("interactive", "tap.interactive", 10.0),
+            ("join", "fight.join", 9.0)):
+        summary, rows, calls, reports, polls, counts, elapsed = drive(mode)
+        states = [row["status"] for row in rows if row.get("kind") == "action_lifecycle"]
+        check("%s keeps one action pending until fresh completion evidence" % mode,
+              calls == [expected_tool] and len(reports) == 1 and reports[0][1] is True
+              and counts == (1, 1, 1, 1) and elapsed >= minimum
+              and states == ["pending", "unconfirmed", "observed"],
+              "calls=%s counts=%s states=%s elapsed=%.2f" % (calls, counts, states, elapsed))
+
+    for mode, final in (("disconnect", "disconnected"), ("identity", "interrupted")):
+        summary, rows, calls, reports, polls, counts, elapsed = drive(mode)
+        states = [row["status"] for row in rows if row.get("kind") == "action_lifecycle"]
+        check("%s ends the pending context without labeling or entering the next goal" % mode,
+              calls == ["nav.goto"] and counts == (0, 0, 0, 0) and reports == []
+              and states == ["pending", "unconfirmed", final],
+              "calls=%s counts=%s states=%s" % (calls, counts, states))
+
+    summary, rows, calls, reports, polls, counts, elapsed = drive("late_failure")
+    check("a matching delayed client refusal is credited once as failure",
+          calls == ["nav.goto"] and reports[0][1:3] == (False, "confirmed path failure")
+          and counts == (1, 1, 1, 1) and summary["verdicts"].get("failed") == 1,
+          "reports=%s counts=%s summary=%s" % (reports, counts, summary["verdicts"]))
+
+    summary, rows, calls, reports, polls, counts, elapsed = drive("unconfirmed")
+    states = [row["status"] for row in rows if row.get("kind") == "action_lifecycle"]
+    check("silence beyond the fast wait never becomes a retry or negative training label",
+          calls == ["nav.goto"] and reports == [] and counts == (0, 0, 0, 0)
+          and summary["steps"] == 0 and states == ["pending", "unconfirmed", "interrupted"],
+          "calls=%s reports=%s states=%s" % (calls, reports, states))
+
 
 def test_reads_are_not_actions() -> None:
     section("Idle waits (criterion 2: a read is a wait, not a step)")
@@ -14127,7 +14359,6 @@ def test_a_crossing_in_flight_is_waited_out() -> None:
     bound retires it, instead of ten asks that cancel each other.
     """
     import tempfile
-    import time as _time
     import types as _types
 
     from agent import autopilot as ap_mod
@@ -14181,14 +14412,28 @@ def test_a_crossing_in_flight_is_waited_out() -> None:
     call = _types.SimpleNamespace(tool="nav.goto", args={"map_id": 200})
     before = {"map_id": 100, "cell": 300}
     real_window, real_cap = ap_mod.PROMISED_SETTLE_WINDOW_S, ap_mod.CROSSING_IN_FLIGHT_S
+    real_time = ap_mod.time
     outcomes = {}
+
+    class _Clock:
+        def __init__(self):
+            self.t = 1000.0
+        def monotonic(self):
+            return self.t
+        def time(self):
+            return self.t
+        def sleep(self, seconds):
+            self.t += seconds
+
     try:
         ap_mod.PROMISED_SETTLE_WINDOW_S = 0.25
-        for cap, label in ((0.40, "capped"), (1.50, "waited")):
+        for cap, label in ((0.30, "capped"), (1.50, "waited")):
             tmp = Path(tempfile.mkdtemp())
             try:
                 ap_mod.CROSSING_IN_FLIGHT_S = cap
                 ap = pilot(tmp)
+                clock = _Clock()
+                ap_mod.time = clock
                 box = {"n": 0}
 
                 def poll(max_age_ms=-1.0, record=True, _box=box):
@@ -14196,11 +14441,12 @@ def test_a_crossing_in_flight_is_waited_out() -> None:
                     _box["n"] += 1
                     return dict(WALK[i])
                 ap.observe = poll
-                started = _time.monotonic()
+                started = clock.monotonic()
                 out = ap._settle(before, dict(before), call=call, step_s=0.05)
-                outcomes[label] = (out.get("map_id"), _time.monotonic() - started,
+                outcomes[label] = (out.get("map_id"), clock.monotonic() - started,
                                    box["n"], ap._crossings_waited_out)
             finally:
+                ap_mod.time = real_time
                 shutil.rmtree(tmp, ignore_errors=True)
     finally:
         ap_mod.PROMISED_SETTLE_WINDOW_S = real_window
