@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import math
 from collections import deque
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     import torch
@@ -137,8 +140,8 @@ class InstanceIdentityMasker:
         if not self.config.mask_series_keys:
             try:
                 return int(raw_id)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("[identity_mask] anonymize_int fallback: %s", exc)
         digest = hmac.new(
             self.config.salt.encode("utf-8"),
             str(raw_id).encode("utf-8"),

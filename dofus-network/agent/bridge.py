@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Optional
 
 from generated.contracts import validate_bridge_health
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8893
 
@@ -93,8 +95,8 @@ def ensure_local_secret() -> str:
         existing = path.read_text(encoding="utf-8").strip()
         if existing:
             return existing
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[bridge] secret read failed: %s", exc)
     candidate = secrets.token_hex(32)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

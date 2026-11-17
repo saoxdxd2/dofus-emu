@@ -282,8 +282,8 @@ class TrajectoryRecorder:
         try:
             tmp.write_bytes(_fast_dumps(payload))
             tmp.replace(self._checkpoint_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning(f"Trajectory checkpoint save failed: {exc}")
 
     def _scan_from(self, offset: int) -> None:
         try:

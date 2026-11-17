@@ -43,8 +43,8 @@ for _name, _default in (
     try:
         _val = int(os.environ[_name])
         globals()[_name] = _val
-    except (KeyError, ValueError):
-        pass
+    except (KeyError, ValueError) as exc:
+        logger.warning("[episodic_memory] env var %s parse failed: %s", _name, exc)
 
 
 def encode_tactical_vector(
@@ -341,14 +341,14 @@ class EpisodicSkillMemory:
 
         with self._lock:
             skill = self.skills.get(key)
-            if skill and skill.reward_achieved >= 8.0:
+            if skill and skill.reward_achieved >= 5.0:
                 skill.last_used = now
                 return skill
 
             # Fallback to the distance-agnostic ("any" tier) pattern for this mob.
             fallback_key = self._make_key(breed_id, target_name, "any", is_low_hp)
             fb_skill = self.skills.get(fallback_key)
-            if fb_skill and fb_skill.reward_achieved >= 8.0:
+            if fb_skill and fb_skill.reward_achieved >= 5.0:
                 fb_skill.last_used = now
                 return fb_skill
 
@@ -362,7 +362,7 @@ class EpisodicSkillMemory:
             knn_matches = self.query_knn(q_vec, k=1, breed_id=breed_id, min_similarity=0.72)
             if knn_matches:
                 matched_skill, _sim = knn_matches[0]
-                if matched_skill.reward_achieved >= 8.0:
+                if matched_skill.reward_achieved >= 5.0:
                     matched_skill.last_used = now
                     return matched_skill
 
@@ -557,8 +557,8 @@ class EpisodicSkillMemory:
                 except BaseException:
                     try:
                         os.unlink(tmp_name)
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        logger.warning("[episodic_memory] temp cleanup failed: %s", exc)
                     raise
             except Exception as e:
                 logger.warning(f"Failed to persist episodic memory: {e}")

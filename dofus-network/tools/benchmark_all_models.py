@@ -26,11 +26,14 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -77,8 +80,9 @@ def _rss_mb() -> float:
         )
         if ok:
             return c.WorkingSetSize / (1024.0 * 1024.0)
-    except Exception:  # noqa: BLE001 - best effort on Windows
-        pass
+    except Exception as exc:
+        # best effort on Windows
+        logger.warning("[benchmark_all_models] RSS read failed: %s", exc)
     return -1.0
 
 
@@ -261,8 +265,8 @@ def forward_bench(obj: Any, loader: str, path: Path) -> Dict[str, Any]:
                 if total is None and hasattr(obj, "parameters"):
                     total = sum(int(p.numel()) for p in obj.parameters())
                 bench["param_count"] = total
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:
+                logger.warning("[benchmark_all_models] param count failed: %s", exc)
         elif loader == "pickle":
             bench["note"] = "pickle artifact loads; forward needs model code path (see grid_infer / brain_service)"
     except Exception as exc:  # noqa: BLE001

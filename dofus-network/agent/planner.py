@@ -52,503 +52,64 @@ from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E4
                             known_map, map_graph, map_walk, required_map,
                             route_distance, route_first_hop, travel_hops,
                             walkable_border_cells)
-from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
+from agent.map_utils import (
+    cell_distance as _cell_distance,
+    groups_here as _groups_here,
+    map_interactives as _map_interactives,
+    map_npcs as _map_npcs,
+    sealed_borders as _sealed_borders,
+    visible_target as _visible_target,
+)
+
+from agent.planner_utils import (
+    _AUTO_GOALS,
+    _AUTO_PLAY_PATTERNS,
+    _FARM_LEGACY_PATTERNS,
+    _FARM_PATTERNS,
+    _FARM_TARGET_STRIP,
+    _GOAL_LEXICON_PATH,
+    _LEXICON,
+    _QUEST_PATTERNS,
+    _QUEST_TABLE,
+    _QUEST_TABLE_LOCK,
+    _RE_GOAL_AUTO_PLAY,
+    _RE_GOAL_FARM,
+    _RE_GOAL_FARM_LEGACY,
+    _RE_GOAL_QUEST,
+    _STRIP_PATTERNS,
+    _farm_target,
+    _goal_mode,
+    ACTIVE_PLAN_NONE_LIMIT,
+    CACHE,
+    CLAIM_ACTION_LIMIT,
+    CLAIM_FAILURE_LIMIT,
+    CROSSING_ASK_LIMIT,
+    DIALOG_ASK_LIMIT,
+    DIALOG_STALL_LIMIT,
+    GROUP_REFUSALS,
+    KNOWN_DOORS,
+    KNOWN_NPC_MAPS,
+    KNOWN_NPC_NAMES,
+    LEVEL_GATE_RE,
+    NAV_WALL_STAGES,
+    READY_SCAN_LIMIT,
+    RETURN_LIMIT,
+    ROUTE_STEP_LIMIT,
+    SPAWN_WAIT_PASSES,
+    START_ATTEMPT_LIMIT,
+    args_for_tool,
+    catalog_objectives,
+    client_quest_ids,
+    dialog_offer,
+    group_refusal_outcome,
+    names_target,
+    refusal_payload,
+    shared_quest_table,
+)
 
 # Prompt routing. The panel pins the planner, so it must decide from the goal
 # text whether the user asked for quests, a farm session, or full auto; the old
 # planner always ran quests and a quest kill objective could start a farm loop.
-_GOAL_LEXICON_PATH = REPO_ROOT / "data" / "goal_lexicon.json"
-
-def _load_lexicon() -> Dict[str, Any]:
-    try:
-        if _GOAL_LEXICON_PATH.exists():
-            return json.loads(_GOAL_LEXICON_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.debug("ignored %s", exc, exc_info=True)
-    return {}
-
-_LEXICON = _load_lexicon()
-
-_QUEST_PATTERNS = _LEXICON.get("goal_quest") or ["qu[eê]te?s?", "quests?", "objecti(?:f|ve)s?", "missions?"]
-_RE_GOAL_QUEST = re.compile(r"\b(" + "|".join(_QUEST_PATTERNS) + r")\b", re.IGNORECASE)
-
-_FARM_PATTERNS = _LEXICON.get("goal_farm") or [
-    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?",
-    "monstres?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?"
-]
-_RE_GOAL_FARM = re.compile(r"\b(" + "|".join(_FARM_PATTERNS) + r")\b", re.IGNORECASE)
-
-# What `_RE_GOAL_FARM` was before "kamas" and "resources" were removed: those two
-# words appear in sell and inventory orders ("sell all my resources"), and routing
-# them to the farm planner is what made the order layer look deaf. `DOFUS_GOAL_ROUTER=rules`
-# is documented as the escape hatch back to the old behaviour, so the old pattern is
-# kept here rather than in the history -- otherwise the switch is not an A/B.
-_FARM_LEGACY_PATTERNS = _LEXICON.get("goal_farm_legacy") or [
-    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?",
-    "monstres?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?",
-    "kamas?", "resources?", "ressources?"
-]
-_RE_GOAL_FARM_LEGACY = re.compile(r"\b(" + "|".join(_FARM_LEGACY_PATTERNS) + r")\b", re.IGNORECASE)
-
-_AUTO_GOALS = frozenset(_LEXICON.get("auto_goals") or {"auto", "full auto", "fullauto", "autopilot",
-                                                       "autonome", "automatic", ""})
-
-# A user asking the bot to play is a Full Auto request, not an order with no
-# call. Checked after quest/farm so "can you play the quests?" stays a quest.
-_AUTO_PLAY_PATTERNS = _LEXICON.get("auto_play") or [
-    "(?:can|could|would|will) you play", "play (?:the )?game", "play for me", "take over",
-    "do everything", "you play", "run the game"
-]
-_RE_GOAL_AUTO_PLAY = re.compile(r"(?:^|[ 	])(?:" + "|".join(_AUTO_PLAY_PATTERNS) + r")", re.IGNORECASE)
-
-_STRIP_PATTERNS = _LEXICON.get("farm_target_strip") or [
-    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?", "monstres?",
-    "resources?", "ressources?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?",
-    "kamas?", "xp", "exp", "level", "levels", "please", "the", "a", "an", "some", "des", "du", "de", "le", "la", "les", "un",
-    "une", "for", "of", "in", "on", "to", "my", "character", "personnage", "all", "more"
-]
-_FARM_TARGET_STRIP = re.compile(r"\b(" + "|".join(_STRIP_PATTERNS) + r")\b", re.IGNORECASE)
-
-
-def _farm_target(goal: str) -> Optional[str]:
-    """The named monster/resource in a farm prompt, if one is named."""
-    text = _FARM_TARGET_STRIP.sub(" ", goal or "")
-    text = re.sub(r"[^A-Za-zÀ-ſ' -]", " ", text)
-    words = [word for word in text.split() if len(word) >= 2]
-    return " ".join(words[:3]) or None
-
-
-def _goal_mode(goal: str, legacy: bool = False) -> str:
-    """Which planner owns this goal.
-
-    ``legacy`` restores the pre-2026-11-07 farm pattern, which also matched "kamas"
-    and "resources". Only the rule router asks for it: the switch is documented as the
-    way back to the old behaviour, and a switch that leaves a different set of goals
-    on a different planner is not one.
-    """
-    text = (goal or "").strip()
-    if text.lower() in _AUTO_GOALS:
-        return "auto"
-    if _RE_GOAL_QUEST.search(text):
-        return "quest"
-    if (_RE_GOAL_FARM_LEGACY if legacy else _RE_GOAL_FARM).search(text):
-        return "farm"
-    if _RE_GOAL_AUTO_PLAY.search(text):
-        return "auto"
-    return "order"
-
-
-# Known static interior doors (a painted star on the floor rather than a border flag).
-# Measured live 2026-10-29 & 2026-11-07: stepping on cell 346 outside Albuera house (145490435)
-# transitions into Jarl Ordyn's house interior (146276352); stepping on cell 451 inside transitions out.
-KNOWN_DOORS: Dict[Tuple[int, int], int] = {
-    (145490435, 146276352): 346,
-    (146276352, 145490435): 451,
-}
-KNOWN_NPC_NAMES: Dict[str, int] = {
-    "great jarl ordyn": 3892,
-    "jarl ordyn": 3892,
-    "ordyn": 3892,
-    "roki": 3900,
-    "foreman kosh": 3896,
-    "kosh": 3896,
-    "ayin spyr": 3888,
-    "ayin": 3888,
-    "ganymede": 7581,
-    "ganymède": 7581,
-    "archie ologist": 8014,
-    "edgar kéolog": 8014,
-}
-KNOWN_NPC_MAPS: Dict[int, int] = {
-    3892: 146276352,  # Great Jarl Ordyn in Albuera house interior
-    3900: 145490944,  # Roki
-    3896: 145489920,  # Foreman Kosh
-    3888: 145489920,  # Ayin Spyr
-}
-
-GROUP_REFUSALS = ("elsewhere", "empty_map", "unread_members", "other")
-
-
-def refusal_payload(detail: Any) -> Dict[str, Any]:
-    """Find the refusal's own counts inside whatever envelope the bridge sent.
-
-    A directive result is `{directive_payload, response, snapshot}` and the page's answer sits a
-    level or two further in, so handing the raw `result.data` over would find no counts and fall
-    back to the sentence -- which is exactly the case the counts were added to separate. Bounded
-    walk, no recursion, and nothing found is an empty dict, not a guess.
-    """
-    node = detail
-    for _ in range(4):
-        if not isinstance(node, dict):
-            return {}
-        if "groups_seen" in node:
-            return node
-        for key in ("response", "result", "data", "value"):
-            if isinstance(node.get(key), dict):
-                node = node[key]
-                break
-        else:
-            return {}
-    return {}
-
-
-def group_refusal_outcome(detail: Any, note: Any = "") -> str:
-    """What a "no group for that monster" refusal actually says, from the page's own counts.
-
-    The refusal was one sentence and the loop knew one repair: travel. The page now answers with
-    how many groups it iterated and which monster ids it read inside them, which separates cases
-    with opposite answers (KNOWN_GAPS G7): the named mob lives on another map (travel), this map
-    carries no group at all (travel, or wait for a respawn), and groups *are* here but none of
-    their members could be read. The last one is a defect in the read — travelling the world for
-    it spends the rest of the run and never finds the mob, so it must not be routed like the
-    others.
-    """
-    data = refusal_payload(detail)
-    seen = data.get("groups_seen")
-    if seen is None:
-        # No counts: an older page, or a refusal that never reached the client. The sentence is
-        # all there is, and keeping it working is the pre-census behaviour, not a guess.
-        low = str(note or "").lower()
-        return "elsewhere" if "not on this map" in low else "other"
-    try:
-        seen = int(seen)
-    except (TypeError, ValueError):
-        return "other"
-    if seen <= 0:
-        return "empty_map"
-    here = data.get("monsters_here")
-    if isinstance(here, (list, tuple)) and len(here) > 0:
-        return "elsewhere"
-    return "unread_members"
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CACHE = REPO_ROOT / "data" / "cache"
-
-# The trimmed quest graph is ~21.8 MB. Loaded per planner, 40 instances paid ~872 MB
-# for the same bytes. Planners only read this table (every merge copies), so one
-# process-wide copy is both correct and what makes 40 instances cheap.
-_QUEST_TABLE: Optional[Dict[int, Dict[str, Any]]] = None
-_QUEST_TABLE_LOCK = threading.Lock()
-
-
-def shared_quest_table() -> Dict[int, Dict[str, Any]]:
-    """The process-wide quest graph, trimmed once and shared read-only."""
-    global _QUEST_TABLE
-    if _QUEST_TABLE is not None:
-        return _QUEST_TABLE
-    with _QUEST_TABLE_LOCK:
-        if _QUEST_TABLE is not None:
-            return _QUEST_TABLE
-        table: Dict[int, Dict[str, Any]] = {}
-        path = CACHE / "quests_full.json"
-        if path.exists():
-            for q in fast_loads(path.read_bytes()):
-                if not q.get("steps"):
-                    continue
-                for step in q["steps"]:
-                    step["objectives"] = step.get("objectives") or []
-                    for key in ("id", "name", "description", "optimal_level"):
-                        step.pop(key, None)
-                for key in ("name", "category_id", "level_max", "is_dungeon",
-                            "is_event", "is_party", "start_criterion",
-                            "start_position"):
-                    q.pop(key, None)
-                q["level_min"] = q.get("level_min") or 1
-                table[int(q["id"])] = q
-        _QUEST_TABLE = table
-        return table
-
-# A refused claim is the start of the objective's action path, not the end of the
-# quest. The planner retires a ready objective only after this many hard failures
-# in a row, or after this many actions that did not even change the map (a walk
-# that is crossing the world legitimately changes it, so only a truly inert
-# action loop reaches the second bound).
-CLAIM_FAILURE_LIMIT = 3
-CLAIM_ACTION_LIMIT = 10
-# How many times one objective may walk the loop back to the map it just left
-# before it is parked for the session. Measured 2026-10-30: dofus-02 made 216
-# immediate A->B->A returns in 229 map changes and dofus-05 132 in 204, so the
-# crossing itself is the failure (G61); parking only suppresses the *walk*, never
-# an action on the objective's own map.
-RETURN_LIMIT = 3
-
-# How many crossings towards one objective's map may fail to come nearer before
-# travel to it is left alone for this situation. Counted outside the claim
-# counters because those reset on every scene change, and a crossing changes the
-# map. Larger than CLAIM_ACTION_LIMIT: a legitimate route can need many borders,
-# and only a leg that does not reduce the remaining distance is counted here.
-ROUTE_STEP_LIMIT = 12
-
-# One crossing away is not a long route. Measured live 2026-11-04: objective
-# 13958 of quest 4262 sat on 145490944 with 145490945 one border away, and the
-# session sent `nav.goto {map_id: 145490945}` nine times, each one walking the
-# character 299 -> 537 and the next back again, each one logged `advanced`
-# because the client did move. Nine attempts, 84 seconds of an 18-minute budget,
-# and the run then ended on the retirement guard -- all under a limit raised to
-# 12 for routes that legitimately cross many borders. A border that has refused
-# to be crossed twice is not a distance problem, it is an exit that does not work
-# from here: the door, the skill on it, or the gate. Two retries, then explore.
-CROSSING_ASK_LIMIT = 2
-
-# The page records why a crossing did not happen, on `last_nav`, and nothing in the
-# agent read it. Measured live 2026-11-12 on map 146277376 (dofus-01, session
-# a0d4c924): every border cell of that map is `{l: 66}` -- the wall ring of a
-# building, while its interior cells are `{l: 67}` -- so no cell carries an exit
-# flag, `exits` is empty, and `nav.goto` answered
-#
-#     {"stage": "change_requested_no_cell", "from_map": 146277376,
-#      "to_map": 146277633, "direction": "top"}
-#
-# which is the page saying "I had no cell to cross from, so I asked the server
-# directly". The server refused. Nothing read that, so the planner asked the same
-# top neighbour three times under two different objectives, plus left, right and
-# bottom -- six `noop` steps spent on one wall, and the goal ended on it with three
-# objectives still ready.
-#
-# These two stages mean *the border* did not work, as opposed to the walk towards it
-# (`walk_stopped_short`, `cannot_reach`, `walk_failed`) or a request that is still
-# in flight (`change_requested`, `walk_then_change`). `map_change_failed` is an
-# exception from the page rather than an answer from the server, so it is not here.
-NAV_WALL_STAGES = frozenset({"change_requested_no_cell", "change_requested_at_edge"})
-
-# How many consecutive unplannable passes the *active* quest may have before it is
-# retired. One `None` from `_plan_quest` used to execute it immediately, and a single
-# transient situation -- the promise still in flight, the dialog page not yet arrived, a
-# visit whose bar was just spent -- was enough to end the session's last live quest
-# (2026-11-04/05: quest 4262 retired on one unplannable step, then "nothing plannable",
-# then `safe.stop`). The count is keyed on the objective's step and the map, so a quest
-# that changes situation is judged again from zero.
-ACTIVE_PLAN_NONE_LIMIT = 3
-
-# How many ready objectives one plan step may look at. The client lists them in
-# its own quest order, which is not an order of actionability: a live session put
-# an un-actionable wrapper ("Complete the X quest", type 0 = kill) at index 0 in
-# 4,285 of 4,286 observations while a claimable talk objective sat at index 1,
-# and the loop read only index 0 — so `objectives_completed` never left 0 in
-# 11.4 hours. Bounded, because a plan step should not price every ready entry.
-READY_SCAN_LIMIT = 8
-
-# A level gate is an objective that asks for a level, not a conversation
-# ("Reach level 10" on tutorial step 4978). The text is the client's own and the
-# verb anchors the match so a kill objective that mentions a monster's level is
-# not mistaken for a gate. English and French are the two languages the served
-# client has produced; an unknown language leaves the objective to the ordinary
-# planner instead of guessing.
-LEVEL_GATE_RE = re.compile(
-    r"\b(?:reach|attain|atteindre|atteignez|atteins)\b[^0-9]{0,40}?"
-    r"\b(?:level|niveau)\b\s*(\d+)",
-    re.IGNORECASE)
-
-# A quest the server will not activate is a quest this session cannot do. The
-# client answers a `QuestStartRequestMessage` as sent whether or not the server
-# accepts it, and a quest with unmet prerequisites never enters `quests_active`;
-# a live session re-sent quest 584 every step for its whole budget. Three start
-# attempts that the observation says never activated retire it for the session.
-START_ATTEMPT_LIMIT = 3
-
-# Passes a kill objective may wait for a group to respawn on its own map before
-# the planner walks out and searches. Passes, not seconds: the loop's wait
-# cadence is fixed (0.35 s), so 90 is about half a minute of standing still.
-SPAWN_WAIT_PASSES = 90
-
-
-def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
-                  obs: Dict[str, Any]) -> Dict[str, Any]:
-    """The arguments a tool needs, derived from the objective's own parameters.
-
-    This is data movement, not judgement: `parameter0` *is* the npc id. It lives here
-    so the teacher, the student and the corpus generator cannot each invent their own
-    slightly different idea of what `farm.start` should be given.
-    """
-    p = _params(obj)
-    t = obj.get("type_id")
-    if tool == "nav.goto":
-        # `parameter0` is not a destination for a DiscoverMap objective; it is
-        # the text id of the destination's name. Sending it as a map id is how
-        # a live session asked the client to cross to map 698953 nine times.
-        need = obj.get("map_id")
-        try:
-            need = int(need) if need is not None else None
-        except (TypeError, ValueError):
-            need = None
-        if need:
-            return {"map_id": need}
-        # A discovery objective names no place, so the only legal move is an edge
-        # of the current map. This matters to the learned policy too: it picks the
-        # tool, then asks this function for the arguments, and an empty nav.goto is
-        # refused by the client before anything can be discovered.
-        block = obs.get("map") if isinstance(obs, dict) else None
-        exits = block.get("exits") if isinstance(block, dict) else None
-        candidates = []
-        for row in exits or []:
-            if not isinstance(row, dict) or row.get("blocked"):
-                continue
-            direction = row.get("direction")
-            try:
-                dest = int(row.get("map_id"))
-            except (TypeError, ValueError):
-                continue
-            if direction and dest > 0:
-                candidates.append({"direction": direction, "map_id": dest})
-        if candidates:
-            hint = direction_hint(obj)
-            pick = next((e for e in candidates if e["direction"] == hint), None)
-            if pick is None:
-                pick = next((e for e in candidates if not known_map(e["map_id"])),
-                            candidates[0])
-            return {"direction": pick["direction"]}
-        return {}
-    if tool == "quest.advance":
-        npc = p.get("parameter0") if t in (1, 9, 3) else p.get("parameter1")
-        args: Dict[str, Any] = {"quest_id": int(quest["id"])}
-        if npc is not None:
-            try:
-                args["npc_id"] = int(npc)
-            except (TypeError, ValueError):
-                pass
-        return args
-    if tool == "farm.start":
-        if t in DELIVER_TYPES:
-            # `resource`, not `item`: the client reads `args.resource` to start
-            # harvesting, and `item` was rejected by the contract ("unknown argument(s)
-            # for farm.start: item"), so show-item, deliver and soul-stone objectives
-            # could not be planned at all.
-            item = p.get("parameter1") if t == 3 else p.get("parameter0")
-            try:
-                return {"resource": int(item)} if item is not None else {}
-            except (TypeError, ValueError):
-                return {}
-        if declares_monster_target(obj) is False:
-            return {}
-        monster = p.get("parameter0")
-        try:
-            return {"monster": int(monster)} if monster is not None else {}
-        except (TypeError, ValueError):
-            return {}
-    if tool == "fight.join":
-        # Both monster routes need a creature id, and `parameter0` is one only when the
-        # client's own objective-parameter table says so. A text-only class carries a
-        # number the client formats into the objective text; hunting it is how a live
-        # session ordered `fight.join` on 715354 and then walked the world for it.
-        if declares_monster_target(obj) is False:
-            return {}
-        monster = p.get("parameter0")
-        try:
-            return {"monster": int(monster)} if monster is not None else {}
-        except (TypeError, ValueError):
-            return {}
-    return {}
-
-
-def client_quest_ids(obs: Dict[str, Any]) -> set:
-    """Every quest id the running client reported in this snapshot.
-
-    The four places the client names a quest: the active log, the finished list, the
-    tracker it is holding, and the ready-objective entries. Read defensively because the
-    page mixes string and numeric ids (`"3841"` and `3841` both appear), and an id that
-    cannot be read as an int is not evidence of anything.
-    """
-    out: set = set()
-    for raw in list((obs.get("quests_active") or {}).keys()) + list(obs.get("quests_done") or []):
-        try:
-            out.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-    sources = [obs.get("current_objective")]
-    sources += list(obs.get("ready_objectives") or [])
-    for entry in sources:
-        if isinstance(entry, dict) and entry.get("quest_id") is not None:
-            try:
-                out.add(int(entry["quest_id"]))
-            except (TypeError, ValueError):
-                continue
-    return out
-
-
-def names_target(call: Dict[str, Any]) -> bool:
-    """Whether a planned call states the actor or place the objective needs.
-
-    A ready objective's own action path can degenerate into a detour: hunting a
-    group this map does not report ends in "walk out an exit and look" (`nav.goto`
-    with a direction and no map) or in a read. Neither names the thing the
-    objective is about, and a live session spent 4,285 steps on exactly such a
-    detour while a ready objective naming an NPC on a known map sat one entry
-    further down the same list. Ranking by "does this call name its target" comes
-    from the plan rather than from the objective type, so it covers every type the
-    planner can translate.
-    """
-    tool = call.get("tool")
-    args = call.get("args") or {}
-    if tool in READ_ONLY_TOOLS:
-        return False
-    if tool == "nav.goto":
-        return args.get("map_id") is not None
-    if tool == "quest.advance":
-        return (args.get("npc_id") is not None
-                or args.get("objective_id") is not None)
-    if tool in ("fight.join", "farm.start"):
-        return bool(args)
-    return True
-
-
-def catalog_objectives(obs: Dict[str, Any], quest_id: Any) -> List[Dict[str, Any]]:
-    """Objective rows the page captured for one active quest (G29).
-
-    The client's own graph is the only source that describes a live quest: the
-    downloaded cache stops at id 2,546 and the live ids start at 3,841. This is a
-    read of `quests_catalog`; it invents nothing and returns [] when the page did
-    not capture the quest.
-    """
-    catalog = obs.get("quests_catalog") if isinstance(obs, dict) else None
-    if not isinstance(catalog, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for quest in catalog:
-        if not isinstance(quest, dict):
-            continue
-        try:
-            if int(quest.get("id")) != int(quest_id):
-                continue
-        except (TypeError, ValueError):
-            continue
-        for step in quest.get("steps") or []:
-            if not isinstance(step, dict):
-                continue
-            for obj in step.get("objectives") or []:
-                if isinstance(obj, dict):
-                    out.append(obj)
-    return out
-
-
-def dialog_offer(dialog: Any) -> Optional[int]:
-    """The quest this dialog is offering, as the page read it from the client's link.
-
-    G32 publishes `dialog.start_quest` from the client's own `startquest,<id>`
-    payload; an offer is a link, not a reply. The planner may only ask to accept
-    an id this function returns (G31's rule: never a curriculum or KB id).
-    """
-    if not isinstance(dialog, dict):
-        return None
-    try:
-        offered = int(dialog.get("start_quest"))
-    except (TypeError, ValueError):
-        return None
-    return offered if offered > 0 else None
-
-
-# How many times one answer may be asked on one page for one objective before the
-# planner treats that page as reply-insatisfiable. Two keeps the third strike as the
-# blocked one, which is how the rest of the loop already counts failures.
-DIALOG_ASK_LIMIT = 2
-
-# How many replies one conversation may take without the objective changing before the dialog is
-# closed. `DIALOG_ASK_LIMIT` answers "did I repeat this exact page", and its key includes the
-# dialog's message text -- so a conversation that shows a new page for every answer never trips
-# it. Measured live 2026-11-07: eight steps of `quest.advance {reply: 0}`, each accepted with a
-# fresh `reply_id`, none advancing the objective, while the quest wanted "equip the recruit set,
-# then talk". This bound is about the conversation going nowhere, not about repetition.
-DIALOG_STALL_LIMIT = 16
-
 
 class QuestPlanner:
     """A policy that plans over the quest graph."""
@@ -897,8 +458,8 @@ class QuestPlanner:
         """Forgive a quest's unplannable passes: it just got a plan."""
         try:
             self._plan_none.pop(int(quest_id), None)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug("[planner] plan_none pop failed: %s", exc)
 
     @property
     def quests(self) -> Dict[int, Dict[str, Any]]:
@@ -1008,98 +569,26 @@ class QuestPlanner:
     @staticmethod
     def _observed_exits(obs: Optional[Dict[str, Any]],
                         include_blocked: bool = False) -> List[Dict[str, Any]]:
-        """The exits the client reports for the map it is standing on.
-
-        An exit the tutorial marks `blocked` is not an exit this agent can take:
-        the client's tap gate refuses the crossing, and walking to the border cell
-        just parks the character there. Filtering here means every caller — explore,
-        travel, a learned tool choice — sees only crossings that can happen.
-        """
-        if not isinstance(obs, dict):
-            return []
-        block = obs.get("map")
-        rows = block.get("exits") if isinstance(block, dict) else None
-        try:
-            here = int(map_id_of(obs) or (block or {}).get("map_id")
-                       or (obs.get("position") or {}).get("map_id") or 0)
-        except (TypeError, ValueError):
-            here = 0
-        exits: List[Dict[str, Any]] = []
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            direction = row.get("direction")
-            try:
-                dest = int(row.get("map_id"))
-            except (TypeError, ValueError):
-                continue
-            # A self-edge is not a crossing. The live tutorial map reported
-            # right -> its own map id; the client refused every attempt with
-            # "needs ... a map_id different from <here>".
-            if here and dest == here:
-                continue
-            blocked = bool(row.get("blocked"))
-            if blocked and not include_blocked:
-                continue
-            if direction and dest > 0:
-                exits.append({"direction": direction, "map_id": dest,
-                              "blocked": blocked})
-        return exits
+        """The exits the client reports for the map it is standing on."""
+        from agent.navigation_utils import observed_exits as _observed_exits_impl
+        return _observed_exits_impl(obs, include_blocked)
 
     @classmethod
     def _open_exits(cls, obs: Optional[Dict[str, Any]],
                    spent: Optional[Iterable[int]] = None) -> List[Dict[str, Any]]:
-        """The crossings this map reports, minus borders already walked and refused.
-
-        `spent` names maps an edge has been walked towards without delivering them.
-        They are removed before the "all exits lead back" fallback, because that
-        fallback exists for a lap, not for a broken exit: re-listing a refused
-        border is how a bounded bounce came back as an unbounded one.
-        """
-        exits = cls._observed_exits(obs)
-        if spent:
-            spent_ids = {int(m) for m in spent}
-            exits = [e for e in exits if e["map_id"] not in spent_ids]
-        return exits
+        """The crossings this map reports, minus borders already walked and refused."""
+        from agent.navigation_utils import open_exits as _open_exits_impl
+        return _open_exits_impl(obs, spent)
 
     @classmethod
     def _explore_call(cls, obj: Dict[str, Any],
                       obs: Optional[Dict[str, Any]],
                       avoid: Optional[int] = None,
-                      spent: Optional[Iterable[int]] = None) -> Optional[Dict[str, Any]]:
-        """Walk an exit of the current map when the destination is not nameable.
-
-        A DiscoverMap objective with no `map_id` is a generic discovery: the
-        client says "discover a map" and names none, so the only action that can
-        satisfy it is entering a map. Prefer the edge the objective's own text
-        names ("click the right edge"); without a hint, prefer a neighbour the
-        routing graph does not have, since that is the crossing that also extends
-        what the agent knows. None when the observation reports no usable exits.
-
-        Picking `exits[0]` here is what walked a live tutorial character left when
-        the tutorial wanted the right edge: the list is ordered left/right/top/
-        bottom, which is the client's layout, not a preference. `direction_hint`
-        reads the instruction in four languages and knows no quest id.
-        """
-        exits = cls._open_exits(obs, spent)
-        if not exits:
-            return None
-        hint = direction_hint(obj)
-        probe = None
-        if hint:
-            probe = next((e for e in exits if e["direction"] == hint), None)
-        if probe is None:
-            candidates = [e for e in exits if avoid is None or e["map_id"] != avoid]
-            if not candidates:
-                candidates = exits  # all exits lead back; walking back beats stalling
-            probe = next((e for e in candidates if not known_map(e["map_id"])),
-                         candidates[0])
-        return {
-            "tool": "nav.goto",
-            "args": {"direction": probe["direction"]},
-            "why": ("objective %s: discover a map by walking the %s edge (-> %s)"
-                    % (obj.get("type_id"), probe["direction"], probe["map_id"])),
-        }
+                      spent: Optional[Iterable[int]] = None
+                      ) -> Optional[Dict[str, Any]]:
+        """Walk an exit of the current map when the destination is not nameable."""
+        from agent.navigation_utils import explore_call as _explore_call_impl
+        return _explore_call_impl(obj, obs, avoid, spent)
 
     def _explore_with_memory(self, obj: Dict[str, Any],
                              obs: Optional[Dict[str, Any]],
@@ -1190,112 +679,28 @@ class QuestPlanner:
     @staticmethod
     def _groups_here(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The monster groups the snapshot shows on the current map."""
-        block = obs.get("map") if isinstance(obs, dict) else None
-        raw = None
-        if isinstance(block, dict):
-            raw = block.get("groups")
-        if raw is None and isinstance(obs, dict):
-            raw = obs.get("groups")
-        return [row for row in (raw or []) if isinstance(row, dict)]
+        from agent.map_utils import groups_here as _groups_here_impl
+        return _groups_here_impl(obs)
 
     @staticmethod
     def _visible_target(obs: Optional[Dict[str, Any]],
                         monster: Any) -> Optional[bool]:
-        """Whether the map snapshot shows a group containing `monster`.
-
-        None means the observation carries no map block (the offline corpus
-        shape), so the caller keeps its historical choice instead of inventing
-        a search.
-        """
-        groups = None
-        block = obs.get("map") if isinstance(obs, dict) else None
-        if isinstance(block, dict) and isinstance(block.get("groups"), list):
-            groups = [row for row in block["groups"] if isinstance(row, dict)]
-        if groups is None and isinstance(obs, dict) and isinstance(obs.get("groups"), list):
-            # The guard reads `map.groups` with a flat `groups` fallback; reading
-            # one source here and the other there would let a join through on a
-            # map the estimator calls empty.
-            groups = [row for row in obs["groups"] if isinstance(row, dict)]
-        if groups is None:
-            return None
-        if monster is None:
-            return bool(groups)
-        try:
-            target = int(monster)
-        except (TypeError, ValueError):
-            return True   # a name the guard resolves; not ours to second-guess
-        for group in groups:
-            for raw in group.get("monster_ids") or []:
-                try:
-                    if int(raw) == target:
-                        return True
-                except (TypeError, ValueError):
-                    continue
-            for member in group.get("members") or []:
-                if not isinstance(member, dict):
-                    continue
-                try:
-                    if int(member.get("monster_id")) == target:
-                        return True
-                except (TypeError, ValueError):
-                    continue
-        return False
+        """Whether the map snapshot shows a group containing `monster`."""
+        from agent.map_utils import visible_target as _visible_target_impl
+        return _visible_target_impl(obs, monster)
 
     @staticmethod
     def _map_npcs(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The NPCs the current map reports, by template id."""
-        if not isinstance(obs, dict):
-            return []
-        block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
-        raw = obs.get("npcs") or block.get("npcs") or []
-        out: List[Dict[str, Any]] = []
-        for entry in raw:
-            if not isinstance(entry, dict):
-                continue
-            npc_id = entry.get("npc_id", entry.get("templateId"))
-            try:
-                npc_id = int(npc_id)
-            except (TypeError, ValueError):
-                continue
-            if npc_id <= 0:
-                continue
-            out.append({"npc_id": npc_id, "cell": entry.get("cell"),
-                        "actor_id": entry.get("actor_id"),
-                        "has_quest": bool(entry.get("has_quest")),
-                        "has_exclamation": bool(entry.get("has_exclamation")),
-                        "has_question": bool(entry.get("has_question")),
-                        "quests_to_start": list(entry.get("quests_to_start") or []),
-                        "quests_to_valid": list(entry.get("quests_to_valid") or [])})
-        return out
+        from agent.map_utils import map_npcs as _map_npcs_impl
+        return _map_npcs_impl(obs)
 
     @staticmethod
+    @staticmethod
     def _map_interactives(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """The map's interactive elements, from the nested block or the flat key.
-
-        A free-form objective is performed through one of these; the element list is
-        what the client's own renderer reports (`isoEngine.mapRenderer.interactiveElements`),
-        not a table the planner invents.
-        """
-        if not isinstance(obs, dict):
-            return []
-        block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
-        raw = obs.get("interactives")
-        if not isinstance(raw, list):
-            raw = block.get("interactives")
-        out: List[Dict[str, Any]] = []
-        for entry in raw or []:
-            if not isinstance(entry, dict):
-                continue
-            elem_id = entry.get("elem_id", entry.get("element_id", entry.get("elemId")))
-            try:
-                elem_id = int(elem_id)
-            except (TypeError, ValueError):
-                continue
-            row = dict(entry)
-            row["elem_id"] = elem_id
-            out.append(row)
-        return out
-
+        """The map's interactive elements, from the nested block or the flat key."""
+        from agent.map_utils import map_interactives as _map_interactives_impl
+        return _map_interactives_impl(obs)
     def _npc_here(self, obj: Dict[str, Any], obs: Dict[str, Any]) -> bool:
         """Whether a talk objective's NPC stands on the current map.
 
@@ -1320,18 +725,8 @@ class QuestPlanner:
     @staticmethod
     def _cell_distance(a: Any, b: Any) -> int:
         """Dofus cell distance; raw cell ids are not row-major."""
-        try:
-            first, second = int(a), int(b)
-        except (TypeError, ValueError):
-            return 1 << 30
-
-        def point(cell: int) -> Tuple[int, int]:
-            t = cell % 14 - cell // 28
-            return t + 19, t + cell // 14
-
-        ax, ay = point(first)
-        bx, by = point(second)
-        return abs(ax - bx) + abs(ay - by)
+        from agent.map_utils import cell_distance as _cell_distance_impl
+        return _cell_distance_impl(a, b)
 
     def _free_form_calls(self, obj: Dict[str, Any],
                          obs: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1391,27 +786,17 @@ class QuestPlanner:
         try:
             if skill is not None:
                 args["skill_uid"] = int(skill)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug("[planner] skill_uid parse failed: %s", exc)
         return [{"tool": "tap.interactive", "args": args,
                  "why": ("objective %s: free-form; use interactive %s"
                          % (obj.get("type_id"), pick["elem_id"]))}]
 
     @staticmethod
     def _element_usable(row: Dict[str, Any]) -> bool:
-        """Whether the page can send a use for this element at all.
-
-        The client's own interactive entry carries the skill instance uid; when
-        both it and the enabled list are empty there is nothing to send, and the
-        page's refusal is a fact about the element, not about the plan.
-        """
-        try:
-            if row.get("skill_uid") is not None:
-                return True
-        except AttributeError:
-            return False
-        skills = row.get("enabled_skills")
-        return isinstance(skills, list) and bool(skills)
+        """Whether the page can send a use for this element at all."""
+        from agent.equipment_utils import element_usable as _element_usable_impl
+        return _element_usable_impl(row)
 
     def _next_equip_uid(self, quest: Dict[str, Any], obj: Dict[str, Any],
                         obs: Dict[str, Any]) -> Optional[int]:
@@ -1447,19 +832,19 @@ class QuestPlanner:
                 uid_mark = row.get("object_uid", row.get("uid"))
                 if uid_mark is not None:
                     worn_uids.add(int(uid_mark))
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.debug("[planner] worn uid parse failed: %s", exc)
             try:
                 worn_gids[int(row.get("gid"))] = worn_gids.get(int(row.get("gid")), 0) + 1
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.debug("[planner] worn gid parse failed: %s", exc)
         bag_gids: Dict[int, int] = {}
         for row in items:
             if isinstance(row, dict):
                 try:
                     bag_gids[int(row.get("gid"))] = bag_gids.get(int(row.get("gid")), 0) + 1
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    logger.debug("[planner] bag gid parse failed: %s", exc)
 
         def _worn_out(row: Dict[str, Any]) -> bool:
             if row.get("gid") is None:
@@ -1511,144 +896,21 @@ class QuestPlanner:
 
     @staticmethod
     def _worn_slot_for(obs: Dict[str, Any], uid: Any) -> Optional[str]:
-        """The slot a copy of the same template already occupies, when visible.
-
-        The page publishes the bag as `{gid, qty, object_uid}` and what is worn as
-        `{slot, gid}`, so a second copy of a worn item names its own slot without
-        guessing a type table. Live 2026-10-29: 76 refused `inv.equip` calls came
-        from item types that declare no positions, and every refusal asked for a
-        slot; the worn copy's gid is the client's own answer for where that
-        template goes.
-
-        Returns the wire form, not the number: `inv.equip.slot` is declared `str`
-        ("'weapon' or 0-16") and `validate_call` rejects an int, so a producer that
-        returned an int was refused at the executor no matter how right the slot
-        was. The conversion lives here, at the source, so a new caller cannot
-        reintroduce it by forgetting a `str()`.
-        """
-        bag = obs.get("inventory") if isinstance(obs, dict) else None
-        if not isinstance(bag, dict):
-            return None
-        gid = None
-        declared: List[int] = []
-        for row in bag.get("items") or []:
-            if not isinstance(row, dict):
-                continue
-            try:
-                if int(row.get("object_uid") or row.get("uid")) != int(uid):
-                    continue
-            except (TypeError, ValueError):
-                continue
-            gid = row.get("gid")
-            positions = row.get("possible_positions")
-            if isinstance(positions, list):
-                for raw in positions[:16]:
-                    try:
-                        slot = int(raw)
-                    except (TypeError, ValueError):
-                        continue
-                    if 0 <= slot <= 16:
-                        declared.append(slot)
-            break
-        if gid is None:
-            return None
-        for row in bag.get("equipped") or []:
-            if not isinstance(row, dict):
-                continue
-            try:
-                if int(row.get("gid")) != int(gid):
-                    continue
-                slot = int(row.get("slot"))
-            except (TypeError, ValueError):
-                continue
-            if 0 <= slot <= 16:
-                return str(slot)
-        # Nothing of this template is worn, so the worn-copy answer does not exist. The
-        # template's own `possiblePositions` is the client's next answer, and it is the
-        # one the equip handler falls back to; publishing it in the bag row (2026-11-06)
-        # means the caller can pass the slot instead of hoping the fallback chain fires.
-        if declared:
-            return str(declared[0])
-        return None
+        """The slot a copy of the same template already occupies, when visible."""
+        from agent.equipment_utils import worn_slot_for as _worn_slot_for_impl
+        return _worn_slot_for_impl(obs, uid)
 
     @staticmethod
     def _element_named_by(obj: Dict[str, Any], row: Dict[str, Any]) -> bool:
         """Whether the objective's parameter is this element's type."""
-        param = _params(obj).get("parameter0")
-        etype = row.get("element_type_id")
-        try:
-            return param is not None and etype is not None and int(param) == int(etype)
-        except (TypeError, ValueError):
-            return False
+        from agent.equipment_utils import element_named_by as _element_named_by_impl
+        return _element_named_by_impl(obj, row)
 
     @staticmethod
     def _quest_target_npcs(obs: Dict[str, Any]) -> Dict[int, List[int]]:
-        """NPCs an open quest objective names, by template id.
-
-        The client's quest marker over an NPC is paint, not data: the served
-        bundle has no indicator field. The graph behind it does carry the fact --
-        a talk/go-to-NPC objective's `parameter0` is the NPC's template id -- so
-        this reads the source the paint is drawn from. Keys are npc ids, values
-        are the objective ids that name them.
-        """
-        out: Dict[int, List[int]] = {}
-
-        def add(item: Any) -> None:
-            if not isinstance(item, dict):
-                return
-            try:
-                type_id = int(item.get("type_id"))
-            except (TypeError, ValueError):
-                type_id = None
-            name = item.get("type")
-            looks_like_npc = type_id in TALK_TYPES or (
-                isinstance(name, str) and name.lower().startswith("questobjectivegoto"))
-            if not looks_like_npc:
-                return
-            try:
-                npc = int(_params(item).get("parameter0"))
-            except (TypeError, ValueError):
-                return
-            if npc <= 0:
-                return
-            try:
-                oid = int(item.get("id", item.get("objective_id")))
-            except (TypeError, ValueError):
-                oid = 0
-            bucket = out.setdefault(npc, [])
-            if oid and oid not in bucket:
-                bucket.append(oid)
-
-        for quest in obs.get("quests_catalog") or []:
-            if not isinstance(quest, dict):
-                continue
-            for step in quest.get("steps") or []:
-                if not isinstance(step, dict):
-                    continue
-                for objective in step.get("objectives") or []:
-                    add(objective)
-        def check_text(item: Any) -> None:
-            if not isinstance(item, dict):
-                return
-            text = str(item.get("text") or "").lower()
-            if not text:
-                return
-            for kw, nid in KNOWN_NPC_NAMES.items():
-                if kw in text:
-                    try:
-                        oid = int(item.get("id", item.get("objective_id")))
-                    except (TypeError, ValueError):
-                        oid = 0
-                    bucket = out.setdefault(nid, [])
-                    if oid and oid not in bucket:
-                        bucket.append(oid)
-
-        for item in obs.get("ready_objectives") or []:
-            add(item)
-            check_text(item)
-        for item in obs.get("step_objectives") or []:
-            add(item)
-            check_text(item)
+        """NPCs an open quest objective names, by template id."""
+        from agent.equipment_utils import quest_target_npcs as _quest_target_npcs_impl
+        return _quest_target_npcs_impl(obs)
         if isinstance(obs.get("current_objective"), dict):
             add(obs["current_objective"])
             check_text(obs["current_objective"])
@@ -1802,25 +1064,9 @@ class QuestPlanner:
         return set(walls)
 
     def _sealed_borders(self, here: Any, neighbours: Any) -> set:
-        """Borders the cached geometry says this map has no cell to cross from.
-
-        `data/maps/_index.json` carries `walk`, one character per cell, for 2,696 maps,
-        and nothing read it. This branch runs exactly when the client published no exit
-        -- so the cached geometry is the only witness left, and it answers the question
-        the run was spending steps to learn: is there a cell on that edge to stand on?
-
-        Measured live 2026-11-12 on map 146277376: every border cell `{l: 66}`, every
-        interior cell `{l: 67}`, `exits` and `doors` and `interactives` all empty, seven
-        `nav.goto` asks, no crossing. A door would have been handled by the branch above
-        this one, so an empty answer here means the ask cannot work.
-        """
-        try:
-            here_i = int(here)
-        except (TypeError, ValueError):
-            return set()
-        walk = map_walk(here_i)
-        # A walk string of the wrong shape is not evidence about this map: the cache
-        # may predate a map revision. Only a well-formed one is allowed to refuse.
+        """Borders the cached geometry says this map has no cell to cross from."""
+        from agent.map_utils import sealed_borders as _sealed_borders_impl
+        return _sealed_borders_impl(here, neighbours)
         if not walk or len(walk) < 4 * 14 or len(walk) % 14:
             return set()
         out = set()
@@ -2406,48 +1652,19 @@ class QuestPlanner:
     # which is what keeps this generic for every scripted sequence.
 
     @staticmethod
+    @staticmethod
     def _tutorial(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        block = obs.get("tutorial")
-        if isinstance(block, dict) and block.get("active"):
-            return block
-        return None
+        """Tutorial block from observation, if active."""
+        from agent.equipment_utils import _tutorial as _tutorial_impl
+        return _tutorial_impl(obs)
 
+    @staticmethod
     @staticmethod
     def _tutorial_quest(obs: Dict[str, Any],
                         tutorial: Dict[str, Any]) -> Optional[int]:
-        """The quest the scenario is driving, without guessing from the list order.
-
-        The scenario knows its own quest id; the tracker is the fallback. Taking
-        `quests_active[0]` is what let a stall retire the only live quest while the
-        start loop blamed a different one.
-        """
-        tracker = obs.get("current_objective") or {}
-        for raw in (tutorial.get("quest_id"), tracker.get("quest_id")):
-            try:
-                qid = int(raw)
-            except (TypeError, ValueError):
-                continue
-            if qid > 0:
-                return qid
-        active = obs.get("quests_active") or {}
-        if len(active) == 1:
-            try:
-                return int(next(iter(active)))
-            except (TypeError, ValueError):
-                return None
-        return None
-
-    # The client's menu-bar surfaces and the words a step uses for the same thing.
-    # This names a window, never a quest: every fresh character walks the same
-    # onboarding, and each of its UI steps says which surface it wants. A menu key
-    # is the client's own (`menuIconSpell`, `menuIconBook`, ...); the shop is the
-    # floating button the client shows on the map instead of a menu entry.
-    # Which window a menu key opens. This is a *seed*, not the answer: the pair is observable
-    # (press the icon, see what opened -- `ui.tap` already reports `open_before` and
-    # `open_windows`), so the live loop learns it, stores it in the knowledge base and seeds
-    # this table from there on the next start. Only the pair that was measured is listed, and
-    # an unknown key keeps the old behaviour (press anyway), so a missing row cannot make
-    # things worse than they were.
+        """The quest the scenario is driving, without guessing from the list order."""
+        from agent.equipment_utils import _tutorial_quest as _tutorial_quest_impl
+        return _tutorial_quest_impl(obs, tutorial)
     _UI_WINDOWS_SEED = {
         "Bag": "equipment",
     }
@@ -2951,50 +2168,15 @@ class QuestPlanner:
 
     @staticmethod
     def _level_gate_target(obj: Dict[str, Any]) -> Optional[int]:
-        """The level a free-form objective demands, when it is a bare gate.
-
-        Only `QuestObjectiveFreeForm` (type 0) with no monster target can be a
-        gate: a kill objective's text can mention a level and must not be turned
-        into "grind until level N".
-        """
-        if not isinstance(obj, dict):
-            return None
-        if declares_monster_target(obj) is not False:
-            return None
-        try:
-            if int(obj.get("type_id")) != 0:
-                return None
-        except (TypeError, ValueError):
-            return None
-        match = LEVEL_GATE_RE.search(str(obj.get("text") or ""))
-        if not match:
-            return None
-        try:
-            return int(match.group(1))
-        except (TypeError, ValueError):
-            return None
+        """The level a free-form objective demands, when it is a bare gate."""
+        from agent.objective_utils import level_gate_target as _level_gate_target_impl
+        return _level_gate_target_impl(obj)
 
     @staticmethod
     def _kill_objective_target(obj: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
         """(monster id, map id) a kill objective names, or (None, None)."""
-        if not isinstance(obj, dict):
-            return None, None
-        if declares_monster_target(obj) is False:
-            return None, None
-        try:
-            if int(obj.get("type_id")) not in KILL_TYPES:
-                return None, None
-        except (TypeError, ValueError):
-            return None, None
-        try:
-            monster = int(_params(obj).get("parameter0"))
-        except (TypeError, ValueError):
-            return None, None
-        try:
-            need = int(obj.get("map_id")) if obj.get("map_id") else None
-        except (TypeError, ValueError):
-            need = None
-        return monster, need
+        from agent.objective_utils import kill_objective_target as _kill_objective_target_impl
+        return _kill_objective_target_impl(obj)
 
     def _open_objectives(self, obs: Dict[str, Any]) -> List[Tuple[int, int, Dict[str, Any]]]:
         """Every objective the snapshot names, ready or currently tracked.
@@ -3036,72 +2218,33 @@ class QuestPlanner:
 
     @staticmethod
     def _map_groups(obs: Dict[str, Any]) -> List[Dict[str, Any]]:
-        block = obs.get("map") if isinstance(obs, dict) else None
-        raw = None
-        if isinstance(block, dict) and isinstance(block.get("groups"), list):
-            raw = block["groups"]
-        elif isinstance(obs, dict) and isinstance(obs.get("groups"), list):
-            raw = obs["groups"]
-        if raw is None:
-            return []
-        return [row for row in raw if isinstance(row, dict)]
+        """The monster groups the snapshot shows on the current map."""
+        from agent.combat_utils import map_groups as _map_groups_impl
+        return _map_groups_impl(obs)
 
     @staticmethod
     def _group_members(group: Dict[str, Any]) -> int:
-        try:
-            return max(1, int(group.get("member_count")
-                              or len(group.get("members") or []) or 1))
-        except (TypeError, ValueError):
-            return 1
+        """The number of members in a monster group, at least 1."""
+        from agent.combat_utils import group_members as _group_members_impl
+        return _group_members_impl(group)
 
     @staticmethod
     def _group_has(group: Dict[str, Any], monster: int) -> bool:
-        for raw in group.get("monster_ids") or []:
-            try:
-                if int(raw) == monster:
-                    return True
-            except (TypeError, ValueError):
-                continue
-        for member in group.get("members") or []:
-            if not isinstance(member, dict):
-                continue
-            try:
-                if int(member.get("monster_id")) == monster:
-                    return True
-            except (TypeError, ValueError):
-                continue
-        return False
+        """Whether a group contains a monster with the given id."""
+        from agent.combat_utils import group_has as _group_has_impl
+        return _group_has_impl(group, monster)
 
     @staticmethod
     def _group_allowed(group: Dict[str, Any], estimates: Any) -> bool:
-        """Whether this group may be attacked.
-
-        The brain's own estimator is the authority when it has spoken for the
-        group; without one, a group of at most two is the envelope every
-        tutorial fight on this account has been accepted in, and anything larger
-        stays for the estimator rather than being walked into blind.
-        """
-        gid = group.get("group_id")
-        if isinstance(estimates, list) and estimates:
-            for row in estimates:
-                if not isinstance(row, dict):
-                    continue
-                try:
-                    if row.get("group_id") is not None and int(row["group_id"]) == int(gid):
-                        return bool(row.get("allowed"))
-                except (TypeError, ValueError):
-                    continue
-        return QuestPlanner._group_members(group) <= 2
+        """Whether this group may be attacked."""
+        from agent.combat_utils import group_allowed as _group_allowed_impl
+        return _group_allowed_impl(group, estimates)
 
     @staticmethod
     def _travel_allowed(obs: Dict[str, Any]) -> bool:
-        tutorial = obs.get("tutorial")
-        if not isinstance(tutorial, dict) or not tutorial.get("active"):
-            return True
-        gates = tutorial.get("can_change_map")
-        if isinstance(gates, dict) and gates:
-            return any(bool(value) for value in gates.values())
-        return True
+        """Whether the tutorial permits changing map right now."""
+        from agent.combat_utils import travel_allowed as _travel_allowed_impl
+        return _travel_allowed_impl(obs)
 
     def _note_claim(self, key: Tuple[int, int], tool: str,
                     here: Any) -> None:
@@ -3331,46 +2474,15 @@ class QuestPlanner:
 
     @staticmethod
     def _tracker_step(obs: Dict[str, Any], quest_id: int) -> Any:
-        active = obs.get("quests_active") or {}
-        for key in (str(quest_id), quest_id):
-            try:
-                if key in active:
-                    return active[key]
-            except TypeError:
-                continue
-        return None
+        """The current step value for a quest from the client's quests_active."""
+        from agent.tracking_utils import tracker_step as _tracker_step_impl
+        return _tracker_step_impl(obs, quest_id)
 
     @classmethod
     def _situation_sig(cls, obs: Dict[str, Any], quest_id: int) -> Tuple[Any, ...]:
-        """What the world looked like when a quest was given up on.
-
-        A quest retired because the tutorial blocked a crossing is not a quest that
-        cannot be done. Remembering the situation lets the next plan reopen it when
-        the step changes, the map changes, or the tutorial ends — which is exactly
-        what "I advanced the quest myself but the AI still ignored it" was.
-        """
-        tracker = obs.get("current_objective") or {}
-        try:
-            if int(tracker.get("quest_id") or 0) != int(quest_id):
-                tracker = {}
-        except (TypeError, ValueError):
-            tracker = {}
-        tutorial = cls._tutorial(obs) or {}
-        gate = tutorial.get("can_change_map") or {}
-        # The map is deliberately not part of the signature. It was, and a live
-        # session (2026-10-29) retired quest 4262 on map 145490432, walked to
-        # 145490946 for its sibling, and the crossing alone "changed the
-        # situation" and reopened 4262 -- so the next step walked back. A quest
-        # retired for having nothing to do on a map is a question about the map
-        # visit (`_exhausted_at` answers it); it is not a different quest on the
-        # next crossing.
-        return (
-            cls._tracker_step(obs, quest_id),
-            tracker.get("step"),
-            tracker.get("objective_id"),
-            bool(tutorial),
-            tuple(sorted((str(k), bool(v)) for k, v in gate.items())),
-        )
+        """What the world looked like when a quest was given up on."""
+        from agent.tracking_utils import situation_sig as _situation_sig_impl
+        return _situation_sig_impl(obs, quest_id, cls._tutorial(obs))
 
     def _skip(self, quest_id: Any, reason: str) -> None:
         """Retire a quest permanently, saying why.
@@ -3455,44 +2567,9 @@ class QuestPlanner:
                 self._skip_reasons.pop(qid, None)
 
     def _market_listing(self, obs: Dict[str, Any], gid: Any) -> Optional[Dict[str, Any]]:
-        """The cheapest cached listing for a gid, or None.
-
-        `state.snapshot.prices` only contains rows the page built from server
-        messages. A row without a listing uid is not buyable, so it is not
-        returned; the caller falls back to farming.
-        """
-        try:
-            wanted = int(gid)
-        except (TypeError, ValueError):
-            return None
-        rows = obs.get("prices")
-        if not isinstance(rows, list):
-            rows = flatten(obs or {}).get("prices")
-        if not isinstance(rows, list):
-            return None
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            try:
-                if int(row.get("gid")) != wanted:
-                    continue
-            except (TypeError, ValueError):
-                continue
-            candidates = []
-            for listing in row.get("listings") or []:
-                if not isinstance(listing, dict):
-                    continue
-                try:
-                    price = int(listing.get("price"))
-                    uid = int(listing.get("uid"))
-                except (TypeError, ValueError):
-                    continue
-                if uid > 0 and price > 0:
-                    candidates.append({"uid": uid, "price": price,
-                                       "quantity": int(listing.get("quantity") or 1)})
-            if candidates:
-                return min(candidates, key=lambda item: item["price"])
-        return None
+        """The cheapest cached listing for a gid, or None."""
+        from agent.market_utils import market_listing as _market_listing_impl
+        return _market_listing_impl(obs, gid)
 
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3765,8 +2842,8 @@ class QuestPlanner:
                     try:
                         self._exhausted_at.add((int(quest.get("id")),
                                                 int(obj.get("id")), int(here)))
-                    except (TypeError, ValueError, AttributeError):
-                        pass
+                    except (TypeError, ValueError, AttributeError) as exc:
+                        logger.debug("[planner] exhausted_at add failed: %s", exc)
                     explore = self._explore_with_memory(
                         obj, obs, avoid=self._prev_map, key=travel_key)
                     if explore is not None:
@@ -3980,31 +3057,11 @@ class QuestPlanner:
     # -- objectives the knowledge base does not contain --------------------
 
     @staticmethod
+    @staticmethod
     def _objective_from_observation(entry: Any) -> Optional[Dict[str, Any]]:
         """One observation objective in the shape `plan_objective` reads."""
-        if not isinstance(entry, dict):
-            return None
-        oid = entry.get("id", entry.get("objective_id"))
-        if oid is None:
-            return None
-        obj: Dict[str, Any] = {"id": oid}
-        if entry.get("type_id") is not None:
-            obj["type_id"] = entry["type_id"]
-        # The client's class name has to travel with the entry, or the parameter table
-        # is never consulted on the path live quests actually take: the KB holds no live
-        # quest id, so this fallback is *every* live quest, and without the name
-        # `declares_monster_target` can only answer "unknown" and the invented monster
-        # route stays in force (G27).
-        if isinstance(entry.get("type"), str) and entry.get("type"):
-            obj["type"] = entry["type"]
-        if entry.get("map_id"):
-            obj["map_id"] = entry["map_id"]
-        params = entry.get("params")
-        if isinstance(params, dict) and params:
-            obj["params"] = params
-        if entry.get("text"):
-            obj["text"] = entry["text"]
-        return obj
+        from agent.objective_utils import objective_from_observation as _objective_from_observation_impl
+        return _objective_from_observation_impl(entry)
 
     def _lookup_objective(self, quest_id: int, objective_id: Any,
                           fallback: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -4176,8 +3233,8 @@ class QuestPlanner:
                 obj = self._lookup_objective(key[0], key[1], {}) or {}
                 try:
                     self._server_counted_types.add(int(obj.get("type_id")))
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    logger.debug("[planner] server_counted_types add failed: %s", exc)
 
         if started is None or tool != "quest.advance":
             return
@@ -4957,8 +4014,8 @@ class QuestPlanner:
         """
         try:
             self._retire(int(quest_id), self._last_obs, reason=reason)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug("[planner] retire failed: %s", exc)
 
     def plan_quest(self, quest_id: int, obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The whole plan for a quest — used to build the SFT corpus."""

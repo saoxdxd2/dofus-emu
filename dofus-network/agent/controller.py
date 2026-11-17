@@ -37,6 +37,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 # Failure causes. Each one implies a *different* response, which is the whole
 # reason to distinguish them: "wrong target" needs a new target, "stale state"
@@ -279,8 +281,8 @@ class Controller:
             payload["state_key"] = self.state_key
             path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
             self._last_save = now
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[controller] state save failed: %s", exc)
 
     def load(self) -> None:
         try:
@@ -292,8 +294,8 @@ class Controller:
                 self._strategies[key] = StrategyStat(attempts=raw.get("attempts", 0),
                                                      successes=raw.get("successes", 0))
             self.replans = int(data.get("replans", 0) or 0)
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            logger.warning("[controller] state load failed: %s", exc)
 
     # -- cause ------------------------------------------------------------
 

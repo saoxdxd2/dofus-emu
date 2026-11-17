@@ -254,12 +254,14 @@ namespace DofusFarm.Engine
             catch (Exception ex) { Log("[WARN] FarmWatchdog.RestartInstanceAndTile: " + ex.Message); }
 
             Thread.Sleep(1500);
+            // Delay after stopping an instance before attempting to restart it.
             if (!Enabled) return;
 
             string healProxy = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : ("127.0.0.1:" + NetworkSettings.For().BasePort);
             _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, healProxy);
 
             Thread.Sleep(2500);
+            // Delay after launching an instance before enumerating PIDs for health checks.
             if (!Enabled) return;
 
             List<int> pids = new List<int>();
@@ -339,6 +341,7 @@ namespace DofusFarm.Engine
                         {
                             _engine.StopProxy(inst.Port);
                             Thread.Sleep(300);
+                            // Delay after stopping the proxy relay before ensuring it is running again.
                             string upstream = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : "";
                             _engine.EnsureProxyRunning(inst.Port, upstream, inst.Serial);
                             Log(string.Format("Surgical relay restart applied for {0} (port {1})", inst.Name, inst.Port));

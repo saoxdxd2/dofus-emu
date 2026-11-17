@@ -46,6 +46,8 @@ from combat.damage_calculator import CharacterStats, DofusDamageCalculator
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, no runtime import cycle
     from combat.battle_solver import Board, Fighter, LiveSpell
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MEMORY = Path(
@@ -350,8 +352,8 @@ class ThreatMemory:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(self.as_dict(), indent=1, sort_keys=True),
                               encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[threat] memory save failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

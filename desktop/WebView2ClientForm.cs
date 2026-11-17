@@ -2942,18 +2942,7 @@ namespace DofusFarm.Engine
                 // presents a stock desktop Chrome identity: no mobile UA, no wv
                 // marker, no navigator disguise. The game window itself keeps the
                 // mobile disguise, but Google's pages must never see it.
-                string engineMajor = "155";
-                try
-                {
-                    string browserVersion = CoreWebView2Environment.GetAvailableBrowserVersionString();
-                    if (!string.IsNullOrEmpty(browserVersion))
-                    {
-                        int dot = browserVersion.IndexOf('.');
-                        engineMajor = dot > 0 ? browserVersion.Substring(0, dot) : browserVersion;
-                    }
-                }
-                catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
-                string cleanUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + engineMajor + ".0.0.0 Safari/537.36";
+                string cleanUa = DesktopUserAgent();
 
                 if (_sharedEnv != null)
                 {
@@ -3617,8 +3606,8 @@ namespace DofusFarm.Engine
                     }
                     catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm: " + ex.Message); }
 
-                    string desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
-                    string mobileUa = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                    string desktopUa = DesktopUserAgent();
+                    string mobileUa = MobileUserAgent();
 
                     rawTokens = TryNativeExchange(body, cookieHeader, desktopUa, true, "native desktop+cookies");
                     if (rawTokens == null) rawTokens = TryNativeExchange(body, cookieHeader, mobileUa, false, "native mobile+cookies");
@@ -3635,6 +3624,40 @@ namespace DofusFarm.Engine
             {
                 LogLine("[OAUTH-POPUP] exchange probe error: " + ex.Message);
             }
+        }
+
+        /// <summary>The engine's own platform version, e.g. "124".
+        /// Read once per call rather than cached in a field: a WebView2 runtime
+        /// update between sessions must show up in the UA, and a stale constant
+        /// is exactly the failure this exists to remove.</summary>
+        private static string EngineMajor()
+        {
+            try
+            {
+                string version = CoreWebView2Environment.GetAvailableBrowserVersionString();
+                if (!string.IsNullOrEmpty(version))
+                {
+                    int dot = version.IndexOf('.');
+                    return dot > 0 ? version.Substring(0, dot) : version;
+                }
+            }
+            catch (Exception ex) { Debug.WriteLine("[WARN] WebView2ClientForm.EngineMajor: " + ex.Message); }
+            // The page's own disguise has always shipped 155 here; keep it as the
+            // fallback so a probe without a live engine behaves as before.
+            return "155";
+        }
+
+        private static string DesktopUserAgent()
+        {
+            return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                 + "(KHTML, like Gecko) Chrome/" + EngineMajor() + ".0.0.0 Safari/537.36";
+        }
+
+        private static string MobileUserAgent()
+        {
+            return "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) "
+                 + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + EngineMajor()
+                 + ".0.0.0 Mobile Safari/537.36";
         }
 
         private string TryNativeExchange(string body, string cookieHeader, string userAgent, bool sendOrigin, string label)

@@ -38,6 +38,8 @@ from planning.outcome import extract
 from planning.trace import ParamUpdate, Trace, TraceLog
 from planning.kb import REPO_ROOT
 from planning.planner import EXECUTABLE_TOOLS, Goal, Plan, PlanNode, Planner
+import logging
+logger = logging.getLogger(__name__)
 
 STATE_FILE = REPO_ROOT / "data" / "kb" / "schedule_state.json"
 
@@ -125,8 +127,8 @@ class ScheduleManager:
         if self.state_file.exists():
             try:
                 self.state_file.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[schedule] state file clear failed: %s", exc)
 
     def restore(self) -> Optional[Plan]:
         """Reload the goal, then re-plan against the current economy state."""
@@ -166,8 +168,9 @@ class ScheduleManager:
             return
         try:
             self.cache.save()
-        except OSError:
-            pass   # a read-only data dir must not fail a step that already succeeded
+        except OSError as exc:
+            # a read-only data dir must not fail a step that already succeeded
+            logger.warning("[schedule] cache save failed: %s", exc)
 
     # -- execution -----------------------------------------------------------
 

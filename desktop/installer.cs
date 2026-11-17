@@ -1470,7 +1470,7 @@ namespace DofusStandaloneSetup
                                     });
 
                                     Thread.Sleep(1200);
-
+                                    // Wait for the background batch to settle before the next phase.
                                 }
 
 
@@ -1520,10 +1520,11 @@ namespace DofusStandaloneSetup
                         Report(70, "Setting up isolated browser storage and mobile disguise profiles...");
 
                         Thread.Sleep(150);
-
+                        // Brief pause so the progress report is visible before the next step.
                         Report(82, "Configuring GPU WebGL acceleration and local virtual host mapping...");
 
                         Thread.Sleep(150);
+                        // Brief pause so the progress report is visible before continuing.
 
                     }
 
@@ -1703,6 +1704,7 @@ namespace DofusStandaloneSetup
                     Report(100, "Installation complete! Launching Dofus Farm Manager...");
 
                     Thread.Sleep(350);
+                    // Delay to let the UI finish rendering the completion message before launch.
 
 
 

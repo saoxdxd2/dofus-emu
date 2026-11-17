@@ -560,8 +560,8 @@ class LiveLearner:
             if self.model_path.exists():
                 return OnlineValue.from_dict(
                     json.loads(self.model_path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            logger.warning("[live_learn] model load failed: %s", exc)
         return OnlineValue()
 
     def observe(self, board: Dict[str, Any]) -> Optional[TurnCredit]:
@@ -622,8 +622,8 @@ class LiveLearner:
             self.rows_path.parent.mkdir(parents=True, exist_ok=True)
             with self.rows_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(credit.as_row(), ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[live_learn] rows append failed: %s", exc)
 
     def close(self) -> None:
         if self.store is not None:
@@ -639,8 +639,8 @@ class LiveLearner:
             self.model_path.write_text(
                 json.dumps(self.model.as_dict(), indent=1), encoding="utf-8")
             self._since_persist = 0
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[live_learn] model save failed: %s", exc)
 
     def price(self, board: Dict[str, Any]) -> Optional[float]:
         """Expected damage from one enemy turn on this board, or None if not ready."""
@@ -677,7 +677,8 @@ def default_learner() -> LiveLearner:
     global _LEARNER, _LEARNER_PATH, _LEARNER_STAMP
     try:
         stamp: Optional[float] = DEFAULT_MODEL.stat().st_mtime
-    except OSError:
+    except OSError as exc:
+        logger.warning("[live_learn] model stat failed: %s", exc)
         stamp = None
     if _LEARNER is None or _LEARNER_PATH != DEFAULT_MODEL or stamp != _LEARNER_STAMP:
         _LEARNER = LiveLearner(model_path=DEFAULT_MODEL)
@@ -864,8 +865,8 @@ def actual_for_action(row: Dict[str, Any],
     try:
         if float(following.get("time")) <= float(row.get("time")):
             return None
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as exc:
+        logger.warning("[live_learn] time comparison failed: %s", exc)
     target_id = _action(row).get("targetId")
     hp_before = _target_hp(before, target_id)
     if hp_before is None or hp_before <= 0:

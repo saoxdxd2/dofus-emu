@@ -99,6 +99,7 @@ namespace DofusUninstall
                     }
                     catch (Exception ex) { Debug.WriteLine("[WARN] uninstaller: " + ex.Message); }
                     Thread.Sleep(400);
+                    // Delay after waiting for the parent process to exit, giving the OS time to release resources.
                 }
 
                 if (string.IsNullOrEmpty(targetDir) || targetDir.StartsWith(tempDir, StringComparison.OrdinalIgnoreCase))
@@ -142,6 +143,7 @@ namespace DofusUninstall
             if (onProgress != null) onProgress(10, "Stopping active game instances and network proxies...");
             KillProcesses(new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy", "DofusFarm", "adb", "msedgewebview2" }, targetDir);
             Thread.Sleep(1200);
+            // Delay after killing processes to allow them to fully terminate and release file locks.
 
             if (onProgress != null) onProgress(35, "Removing Android virtual disks, snapshots, and caches...");
             string userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
@@ -516,6 +518,7 @@ namespace DofusUninstall
                 });
 
                 Thread.Sleep(500);
+                // Brief UI delay so the status message is visible before proceeding.
                 if (!this.IsDisposed && this.IsHandleCreated)
                 {
                     try

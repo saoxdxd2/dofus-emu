@@ -1931,6 +1931,8 @@ class BattleSolver:
         los_cache: Dict[Tuple[int, int], bool] = {}
         estimate_cache: Dict[Tuple[int, int, str], Any] = {}
         slide_cache: Dict[Tuple[int, int, int], Tuple[Optional[int], int]] = {}
+        placement_cache: Dict[int, float] = {}
+        posting_cache: Dict[int, float] = {}
         character = board.character_stats()
         targets = [f for f in board.fighters if f.alive]
         melee = any(spell.has_damage and spell.max_range <= 1
@@ -1946,7 +1948,9 @@ class BattleSolver:
                 return template_cache[cell]
             out = self._templates(board, cell, character, occupied, los_cache,
                                   estimate_cache, slide_cache, melee,
-                                  me=me, targets=targets)
+                                  me=me, targets=targets,
+                                  placement_cache=placement_cache,
+                                  posting_cache=posting_cache)
             template_cache[cell] = out
             return out
 
@@ -2747,7 +2751,9 @@ class BattleSolver:
                                                   Tuple[Optional[int], int]]] = None,
                    melee: bool = False,
                    me: Optional[Fighter] = None,
-                   targets: Optional[List[Fighter]] = None
+                   targets: Optional[List[Fighter]] = None,
+                   placement_cache: Optional[Dict[int, float]] = None,
+                   posting_cache: Optional[Dict[int, float]] = None
                    ) -> List[_CastTemplate]:
         me = me if me is not None else board.me
         assert me is not None
@@ -2833,8 +2839,15 @@ class BattleSolver:
                     # constant. Dropped at 1.0 against hits in the hundreds it
                     # lost the beam sort every time and never became a plan, so
                     # the `setup` bucket was never populated on any board.
-                    placement = _trade_module().free_placements(board, valid_trap_cells)
-                    for c in valid_trap_cells[:8]:
+                    chosen_trap_cells = valid_trap_cells[:8]
+                    if placement_cache is not None:
+                        uncached = [c for c in chosen_trap_cells if c not in placement_cache]
+                        if uncached:
+                            placement_cache.update(_trade_module().free_placements(board, uncached))
+                        placement = placement_cache
+                    else:
+                        placement = _trade_module().free_placements(board, chosen_trap_cells)
+                    for c in chosen_trap_cells:
                         out.append(_CastTemplate(
                             spell=spell, target_id=0, target_cell=c,
                             damage=0.0, healing=0.0, steal_heal=0.0,
@@ -2868,8 +2881,15 @@ class BattleSolver:
                     # A summon is a body, and a body is worth what it blocks.
                     # The flat 15.0 this replaces valued a summon the same in a
                     # doorway and in the middle of an empty room.
-                    posting = _trade_module().summon_postings(board, valid_summon_cells)
-                    for c in valid_summon_cells[:4]:
+                    chosen_summon_cells = valid_summon_cells[:4]
+                    if posting_cache is not None:
+                        uncached = [c for c in chosen_summon_cells if c not in posting_cache]
+                        if uncached:
+                            posting_cache.update(_trade_module().summon_postings(board, uncached))
+                        posting = posting_cache
+                    else:
+                        posting = _trade_module().summon_postings(board, chosen_summon_cells)
+                    for c in chosen_summon_cells:
                         out.append(_CastTemplate(
                             spell=spell, target_id=0, target_cell=c,
                             damage=0.0, healing=0.0, steal_heal=0.0,

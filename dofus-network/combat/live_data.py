@@ -148,8 +148,8 @@ def _actions_from_last_actions(rows: List[Any], board_round: Any
                 try:
                     damage_by_action[action_id] = (
                         damage_by_action.get(action_id, 0.0) + abs(float(loss)))
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    logger.warning("[live_data] damage attribution failed: %s", exc)
         out.append({
             "type": row.get("type"),
             "action_id": action_id,

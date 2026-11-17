@@ -188,7 +188,8 @@ def _traffic_profile(field: MapField, enemies: List[int], allies: List[int],
 
 
 def choke_bonus(field: MapField, cell: int, ally_cells: Iterable[int],
-                enemy_cells: Iterable[int], scale: float = 1.0) -> float:
+                enemy_cells: Iterable[int], scale: float = 1.0,
+                path_counts: Optional[Dict[int, float]] = None) -> float:
     """How much a body on ``cell`` is worth by standing in the way.
 
     Three geometric facts, each measured rather than fitted:
@@ -214,12 +215,15 @@ def choke_bonus(field: MapField, cell: int, ally_cells: Iterable[int],
     if cell in allies or cell in enemies:
         return 0.0
 
-    intruder = 0.0
-    for enemy in enemies:
-        for ally in allies:
-            if cell in _path_cells(field, enemy, ally)[1:-1]:
-                intruder += 1.0
     routes = float(len(enemies) * len(allies))
+    if path_counts is not None:
+        intruder = path_counts.get(cell, 0.0)
+    else:
+        intruder = 0.0
+        for enemy in enemies:
+            for ally in allies:
+                if cell in _path_cells(field, enemy, ally)[1:-1]:
+                    intruder += 1.0
     between = intruder / routes if routes else 0.0
 
     # Bottleneck: resistance from this cell to the enemy side, relative to the
@@ -228,20 +232,15 @@ def choke_bonus(field: MapField, cell: int, ally_cells: Iterable[int],
     neighbour = min(enemies, key=lambda e: int(field.dist[cell, e])
                     if field.dist[cell, e] != UNREACHABLE else 1 << 12)
     reach = field.resistance[cell, neighbour] if field.dist[cell, neighbour] != UNREACHABLE else 0.0
-    typical = float(np.median(field.resistance[field.walkable])) or 1.0
+    typical = field.resistance_median or 1.0
     bottleneck = max(0.0, min(2.0, float(reach) / typical - 1.0))
 
     # Melee screening: closer to the enemy than the ally it covers.
-    screen = 0.0
-    for ally in allies:
-        gap_to_enemy = min(int(field.dist[cell, e]) for e in enemies
-                           if field.dist[cell, e] != UNREACHABLE) \
-            if any(field.dist[cell, e] != UNREACHABLE for e in enemies) else 1 << 12
-        partner = min(int(field.dist[cell, a]) for a in allies
-                      if field.dist[cell, a] != UNREACHABLE) \
-            if any(field.dist[cell, a] != UNREACHABLE for a in allies) else 1 << 12
-        if gap_to_enemy < partner:
-            screen = max(screen, 1.0)
+    valid_enemy_dists = [int(field.dist[cell, e]) for e in enemies if field.dist[cell, e] != UNREACHABLE]
+    gap_to_enemy = min(valid_enemy_dists) if valid_enemy_dists else 1 << 12
+    valid_ally_dists = [int(field.dist[cell, a]) for a in allies if field.dist[cell, a] != UNREACHABLE]
+    partner = min(valid_ally_dists) if valid_ally_dists else 1 << 12
+    screen = 1.0 if gap_to_enemy < partner else 0.0
     return scale * (2.0 * between + 1.5 * bottleneck + 1.0 * screen)
 
 
@@ -330,8 +329,15 @@ def summon_postings(board: Any, cells: Sequence[int]) -> Dict[int, float]:
     field, enemies, allies = _board_parts(board)
     if field is None or not enemies or not allies:
         return {}
+    path_counts: Dict[int, float] = {}
+    for enemy in enemies:
+        for ally in allies:
+            p = _path_cells(field, enemy, ally)
+            if len(p) > 2:
+                for step in p[1:-1]:
+                    path_counts[step] = path_counts.get(step, 0.0) + 1.0
     out: Dict[int, float] = {}
     for cell in cells:
-        bonus = choke_bonus(field, int(cell), allies, enemies)
+        bonus = choke_bonus(field, int(cell), allies, enemies, path_counts=path_counts)
         out[int(cell)] = SUMMON_VALUE_BASE + SUMMON_VALUE_PER_CHOKE * bonus
     return out

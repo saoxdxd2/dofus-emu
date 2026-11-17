@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from agent.planner import _goal_mode
+import logging
+logger = logging.getLogger(__name__)
 
 INTENTS = (
     "stop", "follow", "travel", "quest", "farm", "fight", "inventory", "market",
@@ -322,8 +324,9 @@ def parse_command(text: str, model: Any = None,
                     from ai.lexical_policy import ground_call
 
                     slots = ground_call(tool, slots, text)
-                except Exception:      # noqa: BLE001 - an unavailable resolver must not lose the command
-                    pass
+                except Exception as exc:
+                    # an unavailable resolver must not lose the command
+                    logger.warning("[commands] slot grounding failed: %s", exc)
             return {
                 "text": text,
                 "lang": _lang(text),

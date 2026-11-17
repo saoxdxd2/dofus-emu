@@ -43,6 +43,7 @@ DISCOVER_DIRS = [REPO / "tools", REPO / "dofus-network"]
 TIMEOUT_S = 120
 # test_base.py is a shared helper module, not a test suite.
 EXCLUDE_NAMES = {"test_base.py"}
+EXCLUDE_PARTS = {".venv", "kaggle", "__pycache__", "site-packages"}
 
 def discover_tests(category: Optional[str] = None) -> List[Path]:
     """Return every test_*.py file under the discover dirs, optionally filtered
@@ -53,6 +54,8 @@ def discover_tests(category: Optional[str] = None) -> List[Path]:
             continue
         for path in sorted(d.rglob("test_*.py")):
             if path.name in EXCLUDE_NAMES:
+                continue
+            if set(path.parts) & EXCLUDE_PARTS:
                 continue
             found.append(path)
     if category is None:

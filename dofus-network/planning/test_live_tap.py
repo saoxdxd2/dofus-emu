@@ -226,6 +226,23 @@ class GoalCompilerStructuralTests(TapFixture):
         # Plain item with default quantity 1
         self.assertEqual(parse_requirement_item("Huile de sésame"), [("Huile de sésame", 1)])
 
+    def test_prose_with_no_guide_falls_through_to_the_kb_phrase_search(self):
+        """Step D of `_extract_candidate_item`, which no other test reached.
+
+        It read `prose_clean`, a local of `resolve()`, so any prose with no guide,
+        no quantity and no allowed-item match raised NameError instead of naming
+        an item -- and `resolve()` raised with it.
+        """
+        from planning.goal_compiler import GoalCompiler
+        compiler = GoalCompiler()
+        prose = "Laine de Bouftou"
+        item_id, qty, name = compiler._extract_candidate_item(prose, {}, {}, set())
+        self.assertIsNotNone(item_id, "the phrase search named no item")
+        self.assertEqual(name, compiler.kb.item(item_id).name)
+        self.assertGreaterEqual(qty, 1)
+        self.assertIn(name.lower(), prose.lower())
+        compiler.resolve(prose)                     # must not raise
+
     def test_condition_a_direct_quest_requirement_passes(self):
         # acces_otomai step requirements include '1 Huile de sésame' (item 399)
         prose = "Apporter 1 Huile de sésame pour l acces otomai"

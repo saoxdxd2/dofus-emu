@@ -110,7 +110,7 @@ namespace DofusFarm.UI
         public static string Apartment()
         {
             try { return Thread.CurrentThread.GetApartmentState().ToString(); }
-            catch { return "unknown"; }
+            catch { Debug.WriteLine("[WARN] uithread: GetApartmentState"); return "unknown"; }
         }
     }
 }

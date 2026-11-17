@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Optional
 
 from planning.kb import REPO_ROOT
 from planning.outcome import Outcome
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_TRACE = REPO_ROOT / "data" / "kb" / "traces.jsonl"
 
@@ -136,8 +138,8 @@ class TraceLog:
                         continue
                     if (row.get("outcome") or {}).get("signal") == "verified":
                         self.learnable_count += 1
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[trace] trace file read failed: %s", exc)
 
     def append(self, trace: Trace) -> None:
         self.pending.append(trace)

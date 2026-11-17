@@ -33,6 +33,8 @@ import urllib.request
 import webbrowser
 import winreg
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 KEY = r"Software\Classes\dofustouch\shell\open\command"
 STATE = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm"
@@ -77,8 +79,8 @@ def main() -> int:
     try:
         if RECORD.exists():
             RECORD.unlink()
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[prove_guest_browser] record cleanup failed: %s", exc)
 
     print("[1] minting a guest token")
     token = guest_token()
@@ -128,8 +130,8 @@ def main() -> int:
                 try:
                     if leftover.exists():
                         leftover.unlink()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning("[prove_guest_browser] leftover cleanup failed: %s", exc)
 
     if not seen:
         print("RESULT: no redirect in %ds. The challenge was not solved by the system" % TIMEOUT_S)

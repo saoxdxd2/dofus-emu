@@ -39,6 +39,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.field_audit import CONSUMERS, _wrap, iter_observations  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 Path_ = Tuple[str, ...]
 
@@ -78,8 +80,9 @@ def asked_paths(paths: Sequence[str], limit: int,
         for name in consumers:
             try:
                 CONSUMERS[name](_wrap(obs, (), record))
-            except Exception:  # noqa: BLE001 - a crashing consumer is field_audit's job
-                pass
+            except Exception as exc:
+                # a crashing consumer is field_audit's job
+                logger.warning("[unread_fields] consumer %s failed: %s", name, exc)
     return asked, found
 
 

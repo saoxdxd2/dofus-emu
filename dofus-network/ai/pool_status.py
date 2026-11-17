@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT = REPO_ROOT.parent
@@ -61,8 +63,8 @@ def read_ini() -> dict:
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
                 out[key.strip()] = value.strip()
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[pool_status] ini read failed: %s", exc)
     return out
 
 

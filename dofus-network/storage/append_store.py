@@ -32,6 +32,7 @@ The body is MessagePack by default (compact, and the sharder reads the same byte
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import threading
@@ -39,6 +40,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 from storage import msgpack_lite
 
@@ -117,12 +120,12 @@ class AppendStore:
             self._closed = True
             try:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning("[append_store] WAL checkpoint failed: %s", exc)
             try:
                 self._conn.close()
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning("[append_store] close failed: %s", exc)
 
     def __enter__(self) -> "AppendStore":
         return self
@@ -252,8 +255,8 @@ class AppendStore:
             if deleted:
                 try:
                     self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                except sqlite3.Error:
-                    pass
+                except sqlite3.Error as exc:
+                    logger.warning("[append_store] WAL checkpoint(PASSIVE) failed: %s", exc)
         return deleted
 
     def _seq_at_offset(self, keep: int) -> Optional[int]:
@@ -355,8 +358,8 @@ class AppendStore:
         for suffix in ("", "-wal", "-shm"):
             try:
                 total += Path(str(self.path) + suffix).stat().st_size
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[append_store] stat failed: %s", exc)
         return total
 
     def _require_open(self) -> None:

@@ -16,6 +16,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+import logging
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.0"
 
@@ -55,8 +57,8 @@ def _safe_git_revision() -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("[provenance] git revision failed: %s", exc)
     return None
 
 

@@ -60,7 +60,7 @@ import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.executor import payload_of
@@ -102,20 +102,28 @@ SESSION_CLOSE_OFF = ("0", "off", "false", "no")
 SESSION_CLOSE_TIMEOUT_S = int(os.environ.get("AUTOPILOT_SESSION_CLOSE_TIMEOUT_S", "300"))
 
 
-def session_close_enabled(environ: Optional[Dict[str, str]] = None,
-                          dry_run: bool = False) -> bool:
-    """Whether a finished run may spawn the post-session pipeline.
+from agent.autopilot_utils import (
+    build_parser,
+    brain_build,
+    brain_inputs,
+    _call_key,
+    _cell_of,
+    client_absent,
+    _compact,
+    _failure_evidence,
+    _load_goals,
+    _map_of,
+    session_close_enabled,
+    settle_deadline,
+    _stamp_brain_build,
+    _summarise,
+    _tutorial_active,
+    _world_sig,
+    _work_remains,
+    _accepts_detail,
+    _standing_on_exit,
+)
 
-    The switch exists because Autopilot threads live inside the shared daemon: a
-    host that stops and restarts runs every few minutes would otherwise pay the
-    rebuild on every stop. Default is on; `AUTOPILOT_SESSION_CLOSE=off` turns it
-    off without touching code.
-    """
-    if dry_run:
-        return False
-    env = os.environ if environ is None else environ
-    return (str(env.get("AUTOPILOT_SESSION_CLOSE", "on")).strip().lower()
-            not in SESSION_CLOSE_OFF)
 LOG_MAX_BYTES = int(os.environ.get("AUTOPILOT_LOG_MAX_BYTES", str(64 * 1024 * 1024)))
 
 # Tools disabled by policy. Empty on purpose: the 28-tool research vocabulary
@@ -203,11 +211,6 @@ ABSENT_CLIENT_MARKERS = (
 )
 
 
-def client_absent(error: Any) -> bool:
-    text = str(error or "").lower()
-    return any(marker in text for marker in ABSENT_CLIENT_MARKERS)
-
-
 # A wait's own clock. The live log paces the loop at a 0.374 s median gap between
 # consecutive steps, of which the round trip is only 18.2 ms -- so the gap is the
 # loop's pacing, and 0.35 s reproduces it. Keeping the cadence matters more than the
@@ -254,22 +257,6 @@ RETIRE_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_LIMIT", "3"))
 # choosing it anyway. Past this the retirement is not patience, it is a cycle.
 RETIRE_REPEAT_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_REPEAT_LIMIT", "3"))
 
-
-def _work_remains(obs: Any) -> bool:
-    """Whether the character still has a quest this run could move.
-
-    The question the idle grace asks before spending another dead window: not "is the
-    session alive" (it is, the loop is running) but "is there anything left that a
-    later observation could turn into an action". A ready objective is the strongest
-    answer; an active quest without one is weaker -- the step may simply be
-    unavailable -- but it is still work, and the grace is bounded either way.
-    """
-    if not isinstance(obs, dict):
-        return False
-    if obs.get("ready_objectives"):
-        return True
-    active = obs.get("quests_active")
-    return bool(active)
 
 # Steps between durable-memory writes. A run is normally killed rather than ended, so
 # waiting for the exit path would lose everything a session learned. Forty steps is
@@ -947,8 +934,8 @@ class Autopilot:
                         f"{self.log_path.stem}.{stamp}-{suffix}{self.log_path.suffix}")
                 self.log_path.rename(rotated)
                 self._log_size = 0
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[autopilot] log rotation failed: %s", exc)
 
     def _append_log_line(self, blob: bytes) -> None:
         self._rotate_log()
@@ -1199,115 +1186,40 @@ class Autopilot:
 
     @staticmethod
     def _obs_map(obs: Any) -> Optional[int]:
-        if not isinstance(obs, dict):
-            return None
-        for value in (obs.get("map_id"), (obs.get("position") or {}).get("map_id"),
-                      (obs.get("map") or {}).get("map_id")):
-            try:
-                return int(value) if value is not None else None
-            except (TypeError, ValueError):
-                continue
-        return None
+        """Extract the map id from an observation."""
+        from agent.autopilot_utils import _obs_map as _obs_map_impl
+        return _obs_map_impl(obs)
 
     @staticmethod
     def _obs_cell(obs: Any) -> Optional[int]:
-        if not isinstance(obs, dict):
-            return None
-        for value in (obs.get("cell"), (obs.get("position") or {}).get("cell"),
-                      (obs.get("map") or {}).get("cell")):
-            try:
-                return int(value) if value is not None else None
-            except (TypeError, ValueError):
-                continue
-        return None
+        """Extract the cell number from an observation."""
+        from agent.autopilot_utils import _obs_cell as _obs_cell_impl
+        return _obs_cell_impl(obs)
 
     @classmethod
     def _world_key(cls, obs: Any) -> Tuple[Any, ...]:
+        """World key from observation."""
+        from agent.autopilot_utils import _obs_map as _obs_map_impl
+        from agent.autopilot_utils import _obs_cell as _obs_cell_impl
         if not isinstance(obs, dict):
             return ()
         objective = obs.get("current_objective")
         objective_id = objective.get("objective_id") if isinstance(objective, dict) else None
-        return (cls._obs_map(obs), cls._obs_cell(obs), bool(obs.get("in_dialog")),
+        return (_obs_map_impl(obs), _obs_cell_impl(obs), bool(obs.get("in_dialog")),
                 bool(obs.get("in_fight")), objective_id,
                 obs.get("objectives_completed"), bool(obs.get("auto_fight")))
 
     @staticmethod
     def _dialog_signature(dialog: Dict[str, Any]) -> Tuple[Any, ...]:
-        """The parts of a dialog block that only change when the page does.
-
-        `ids_ready` and any timestamp tick without the conversation moving, so they
-        are left out: the settle must not exit on its own clock.
-        """
-        replies = dialog.get("replies")
-        if isinstance(replies, list):
-            replies = tuple(str(r) if not isinstance(r, dict) else str(r.get("text"))
-                            for r in replies)
-        else:
-            replies = None
-        return (bool(dialog.get("open")), dialog.get("npc_id"),
-                dialog.get("message"), dialog.get("reply_text"), replies)
+        """The parts of a dialog block that only change when the page does."""
+        from agent.autopilot_utils import _dialog_signature as _dialog_signature_impl
+        return _dialog_signature_impl(dialog)
 
     @classmethod
     def _action_complete(cls, call: Any, before: Any, after: Any) -> bool:
         """Has the action reached the state it promised, not just started?"""
-        if not isinstance(after, dict) or not after:
-            return False
-        before = before if isinstance(before, dict) else {}
-        tool = str(getattr(call, "tool", "") or "")
-        args = getattr(call, "args", {}) or {}
-        if tool == "nav.goto":
-            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
-            # Any crossing completes the step. The planner names the journey's
-            # destination, but the executor sends one border at a time, so waiting for
-            # the far map would hold every hop until the window ran out -- measured
-            # live: a 6.07 s median gap after `nav.goto` while the crossing itself is
-            # one round trip. A walk within the map is the cell target below.
-            if bool(after_map) and after_map != before_map:
-                return True
-            target = args.get("map_id")
-            if target is not None:
-                try:
-                    return cls._obs_map(after) == int(target)
-                except (TypeError, ValueError):
-                    return False
-            target_cell = args.get("cell")
-            if target_cell is not None:
-                try:
-                    return cls._obs_cell(after) == int(target_cell)
-                except (TypeError, ValueError):
-                    return False
-            return False
-        if tool == "quest.advance":
-            # A reply inside an open dialog promises a new page, not a new objective:
-            # the quest only moves when the conversation ends. Without this the settle
-            # waited its whole six-second window on every reply -- measured live, 601
-            # `quest.advance` steps with a 6.73 s median gap to the next step, while the
-            # page answered in 18 ms. The dialog block is the witness (the same page
-            # text, npc and reply list the planner reads).
-            a_dlg = after.get("dialog")
-            b_dlg = before.get("dialog")
-            if args.get("close"):
-                if before.get("in_dialog") and not after.get("in_dialog"):
-                    return True
-            elif args.get("reply") is not None or args.get("reply_text") is not None:
-                if isinstance(a_dlg, dict) and cls._dialog_signature(a_dlg) != \
-                        cls._dialog_signature(b_dlg if isinstance(b_dlg, dict) else {}):
-                    return True
-            if after.get("in_dialog") and not before.get("in_dialog"):
-                return True
-            if after.get("objectives_completed") != before.get("objectives_completed"):
-                return True
-            b_obj = before.get("current_objective")
-            a_obj = after.get("current_objective")
-            if (a_obj or {}).get("objective_id") != (b_obj or {}).get("objective_id"):
-                return True
-            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
-            return bool(after_map) and after_map != before_map
-        if tool in ("fight.join", "farm.start"):
-            if after.get("in_fight") and not before.get("in_fight"):
-                return True
-            return bool(after.get("auto_fight")) and not bool(before.get("auto_fight"))
-        return bool(changed_keys(before, after))
+        from agent.autopilot_utils import _action_complete as _action_complete_impl
+        return _action_complete_impl(call, before, after)
 
     def _settle(self, before: Any, after: Any, call: Any = None,
                 step_s: float = 0.4) -> Any:
@@ -1384,12 +1296,15 @@ class Autopilot:
         return best
 
     def _record_observation(self, observation: Any) -> None:
+        from agent.autopilot_utils import _record_observation as _record_observation_impl
+        return _record_observation_impl(observation)
         writer = getattr(getattr(self, "runtime", None), "observe", None)
         if callable(writer) and isinstance(observation, dict) and observation:
             try:
                 writer(observation, source="live")
-            except Exception:  # noqa: BLE001 - a log failure must not fail a step
-                pass
+            except Exception as exc:
+                # a log failure must not fail a step
+                logger.warning("[autopilot] observation writer failed: %s", exc)
 
     def _record_settled(self, best: Any, after: Any) -> None:
         # Record only a state produced by a poll. If no poll happened, `after`
@@ -1401,8 +1316,9 @@ class Autopilot:
         if callable(writer):
             try:
                 writer(best, source="live")
-            except Exception:  # noqa: BLE001 - a log failure must not fail a step
-                pass
+            except Exception as exc:
+                # a log failure must not fail a step
+                logger.warning("[autopilot] settled writer failed: %s", exc)
 
     def observe(self, max_age_ms: float = OBS_FRESH_MS,
                 record: bool = True) -> Optional[Dict[str, Any]]:
@@ -1477,8 +1393,9 @@ class Autopilot:
         try:
             from agent.quest_manager import apply as _apply_qws
             prepared = _apply_qws(prepared)
-        except Exception:  # noqa: BLE001 - the working set must never break a step
-            pass
+        except Exception as exc:
+            # the working set must never break a step
+            logger.warning("[autopilot] quest_workspace apply failed: %s", exc)
         self._prepared_obs = prepared
         return prepared
 
@@ -1821,13 +1738,11 @@ class Autopilot:
         time.sleep(1.0)
 
     @staticmethod
+    @staticmethod
     def _farm_counters(observation: Dict[str, Any]) -> Optional[tuple]:
         """(fights, kills, xp, kamas, drops) from the page session, if present."""
-        session = observation.get("farm_session") if isinstance(observation, dict) else None
-        if not isinstance(session, dict):
-            return None
-        return (session.get("fights"), session.get("kills"), session.get("xp"),
-                session.get("kamas"), session.get("drop_count"))
+        from agent.autopilot_utils import _farm_counters as _farm_counters_impl
+        return _farm_counters_impl(observation)
 
     def _wait_out_farm(self, observation: Dict[str, Any],
                        goal: Optional[str] = None) -> None:
@@ -2099,8 +2014,9 @@ class Autopilot:
                 else:
                     try:
                         self.runtime.policy.last_stack = None
-                    except Exception:  # noqa: BLE001 - only the learned planner has one
-                        pass
+                    except Exception as exc:
+                        # only the learned planner has one
+                        logger.warning("[autopilot] last_stack clear failed: %s", exc)
                     call = self.runtime.policy.choose(goal, before or {}, tools)
                     # The reason a no-call carries goes on the blocked row below, read
                     # from `last_no_call` at the one place that writes it. It used to be
@@ -2312,8 +2228,9 @@ class Autopilot:
                     if reporter is not None:
                         try:
                             reporter(call.tool, False, refusal, before or {})
-                        except Exception:  # noqa: BLE001 - history must not kill a run
-                            pass
+                        except Exception as exc:
+                            # history must not kill a run
+                            logger.warning("[autopilot] reporter failed: %s", exc)
                     decision = self.controller.on_step(
                         Verdict("blocked", 0.9, None, False, "guard"),
                         call.tool, False, refusal, before, None)
@@ -2517,8 +2434,9 @@ class Autopilot:
                             reporter(*reported, getattr(result, "data", None))
                         else:
                             reporter(*reported)
-                    except Exception:  # noqa: BLE001 - policy history must not kill a run
-                        pass
+                    except Exception as exc:
+                        # policy history must not kill a run
+                        logger.warning("[autopilot] reporter failed: %s", exc)
 
                 note = ""
                 dialog_decision = getattr(self.runtime.policy, "last_dialog_decision", None)
@@ -2610,8 +2528,9 @@ class Autopilot:
                 if self.on_step:
                     try:
                         self.on_step(step)
-                    except Exception:  # noqa: BLE001 - a UI callback must not kill the run
-                        pass
+                    except Exception as exc:
+                        # a UI callback must not kill the run
+                        logger.warning("[autopilot] on_step callback failed: %s", exc)
 
                 # ---- agent 2 decides what happens next ----------------------
                 # First credit the previous decision with this outcome, then ask
@@ -2892,8 +2811,9 @@ class Autopilot:
         try:
             self.runtime.executor.execute("safe.stop", {}, instance=self.runtime.instance,
                                           source="live")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            # never raises
+            logger.warning("[autopilot] stop_client failed: %s", exc)
 
     def _acquire_run_lock(self) -> bool:
         """Become the only loop driving this instance, or stand down.
@@ -2931,8 +2851,8 @@ class Autopilot:
             if handle is not None:
                 try:
                     handle.close()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning("[autopilot] handle close failed: %s", exc)
             return False
         self._lock_handle = handle
         self._lock_path = path
@@ -2964,50 +2884,29 @@ class Autopilot:
 
                     handle.seek(0)
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[autopilot] lock unlock failed: %s", exc)
             try:
                 handle.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[autopilot] handle close failed: %s", exc)
             self._lock_handle = None
         try:
             if getattr(self, "_lock_path", None) is not None:
                 self._lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[autopilot] lock path unlink failed: %s", exc)
         try:
             if getattr(self, "_lock_path_global", None) is not None:
                 self._lock_path_global.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[autopilot] global lock path unlink failed: %s", exc)
 
+    @staticmethod
     def _warn_if_no_bridge(self) -> None:
-        """Say it once, up front, instead of grinding 6 s per directive.
-
-        Without this, starting the loop with no client open looks like a hang: each
-        call waits for the HTTP timeout, the controller retries, and three failures
-        per goal take ~18 s before anything is printed.
-        """
-        # A TCP connect is not enough: a force-killed host leaves a listening socket
-        # that accepts connections and never answers, which makes every directive
-        # wait for the full HTTP timeout. Ask for a response instead.
-        from agent.bridge import bridge_port, reachable
-
-        if reachable():
-            return
-        port = bridge_port()
-        logger.debug("[autopilot] FATAL: no client bridge answering on 127.0.0.1:%d." % port)
-        logger.debug("[autopilot]   The app publishes its port to "
-              "LOCALAPPDATA\\DofusFarm\\bridge_port.txt; a stale file means the app "
-              "is not running, or its bridge never bound.")
-        logger.debug("[autopilot]   A port held by another process is the usual cause: the"
-              " bridge logs '[AGENT] directive bridge listening on ...' when it binds.")
-        logger.debug("[autopilot]   Refusing to run: every directive would fail and the run"
-              " would look like it finished.")
-        raise SystemExit(3)
-
-    # Probe results that will not improve by asking again.
+        """Say it once, up front, instead of grinding 6 s per directive."""
+        from agent.autopilot_utils import _warn_if_no_bridge as _warn_if_no_bridge_impl
+        _warn_if_no_bridge_impl()
     BRAIN_FINAL_STATES = ("reused", "started", "no_interpreter")
 
     def _ensure_brain(self, reason: str = "startup") -> None:
@@ -3181,8 +3080,8 @@ class Autopilot:
                 try:
                     if selected is not None and int(selected) > 0:
                         args["character_id"] = int(selected)
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    logger.debug("[autopilot] character_id parse failed: %s", exc)
                 logger.debug("[autopilot] at character selection; entering the world as %s "
                       "(%d/%d)" % (selected, enter["tries"], enter["max"]))
                 try:
@@ -3222,102 +3121,39 @@ class Autopilot:
 
     @staticmethod
     def _world_screen(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Name the screen the world wait is looking at.
-
-        The 2026-10-29 rescue that waited 751.8 s left only the elapsed time
-        behind: its console lived in the daemon process, so the persisted
-        recovery row could not say whether the client was at the login form,
-        at character selection, or carrying a snapshot with no world in it.
-        These fields are the evidence that question needed.
-        """
-        if not isinstance(obs, dict) or not obs:
-            return {"state": "no_snapshot"}
-        character = obs.get("character") if isinstance(obs.get("character"), dict) else {}
-        position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
-        login = obs.get("login") if isinstance(obs.get("login"), dict) else None
-        map_id = position.get("map_id")
-        if obs.get("in_world") is not False and map_id not in (None, 0):
-            state = "in_world"
-        elif obs.get("in_world") is False and character.get("name"):
-            state = "character_selection"
-        elif obs.get("in_world") is False:
-            state = "login"
-        else:
-            state = "unknown"
-        screen = {"state": state, "connected": obs.get("connected"),
-                  "map_id": map_id, "character": character.get("name")}
-        if login and login.get("text"):
-            screen["login"] = str(login["text"])[:80]
-        return screen
+        """Name the screen the world wait is looking at."""
+        from agent.autopilot_utils import _world_screen as _world_screen_impl
+        return _world_screen_impl(obs)
 
     @staticmethod
     def _screen_text(screen: Optional[Dict[str, Any]]) -> str:
-        if not isinstance(screen, dict) or not screen:
-            return "no screen recorded"
-        parts = [str(screen.get("state") or "?")]
-        for key in ("connected", "map_id", "character", "login"):
-            if screen.get(key) is not None:
-                parts.append("%s=%s" % (key, screen[key]))
-        return " ".join(parts)
+        """Format screen info as text."""
+        from agent.autopilot_utils import _screen_text as _screen_text_impl
+        return _screen_text_impl(screen)
 
     @staticmethod
     def _login_banned(obs: Optional[Dict[str, Any]]) -> bool:
-        """Whether the page's login screen is refusing this account for good.
-
-        The page publishes `login` from the client's own popup text ("Your account
-        has been permanently banned"); an absent or malformed block is "not
-        banned", because guessing a ban would end a healthy session.
-        """
-        if not isinstance(obs, dict):
-            return False
-        block = obs.get("login")
-        return bool(isinstance(block, dict) and block.get("banned"))
+        """Whether the page's login screen is refusing this account for good."""
+        from agent.autopilot_utils import _login_banned as _login_banned_impl
+        return _login_banned_impl(obs)
 
     @staticmethod
     def _login_lockout(obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """The page's login cooldown once it has escalated past a slow server.
-
-        The page's backoff is 10 min after the first refused guest press, then
-        60 min, then 3 h. One refusal is worth waiting out inside the run; from
-        the second on the slot stays shut for an hour and only a per-slot reset
-        (a fresh guest) or waiting changes the answer, so the wait ends with the
-        reason instead of parking silently.
-        """
-        if not isinstance(obs, dict):
-            return None
-        cool = obs.get("login_cooldown")
-        if not isinstance(cool, dict):
-            return None
-        try:
-            remaining = float(cool.get("remaining_s") or 0)
-            fails = int(cool.get("fails") or 0)
-        except (TypeError, ValueError):
-            return None
-        if remaining < 1800 and fails < 2:
-            return None
-        return {"reason": cool.get("reason"),
-                "remaining_s": remaining,
-                "fails": fails}
+        """The page's login cooldown once it has escalated past a slow server."""
+        from agent.autopilot_utils import _login_lockout as _login_lockout_impl
+        return _login_lockout_impl(obs)
 
     @staticmethod
     def _farm_allowed(goal: str, obs: Optional[Dict[str, Any]]) -> bool:
         """A quests prompt may farm only to gather a delivery item."""
-        if _goal_mode(goal) != "quest":
-            return True
-        obj = (obs or {}).get("current_objective") or {}
-        try:
-            return int(obj.get("type_id")) in DELIVER_TYPES
-        except (TypeError, ValueError):
-            return False
+        from agent.autopilot_utils import _farm_allowed as _farm_allowed_impl
+        return _farm_allowed_impl(goal, obs)
 
     @staticmethod
     def _bridge_alive() -> bool:
-        try:
-            from agent.bridge import reachable
-
-            return bool(reachable())
-        except Exception:  # noqa: BLE001 - a probe must not end a run
-            return True
+        """Whether the bridge is currently alive."""
+        from agent.autopilot_utils import _bridge_alive as _bridge_alive_impl
+        return _bridge_alive_impl()
 
     def _wait_for_window(self) -> bool:
         """Wait until the host has a client window again.
@@ -3676,25 +3512,11 @@ class Autopilot:
         return None
 
     @staticmethod
+    @staticmethod
     def _quest_data_pending(obs: Any) -> bool:
-        """In the world with no quest block at all -- a snapshot taken too early.
-
-        The tell is the bag: a character that has been in the world long enough to hold items
-        has quests too, so an empty `quests_active` next to a non-empty bag means the client
-        has not published them yet. A genuinely questless character with an empty bag falls
-        through to the old verdict, and the caller bounds the wait anyway.
-        """
-        if not isinstance(obs, dict) or not obs.get("in_world"):
-            return False
-        if obs.get("quests_active") or obs.get("ready_objectives"):
-            return False
-        if obs.get("current_objective"):
-            return False
-        tutorial = obs.get("tutorial")
-        if isinstance(tutorial, dict) and tutorial.get("active"):
-            return False
-        items = (obs.get("inventory") or {}).get("items")
-        return bool(items)
+        """In the world with no quest block at all -- a snapshot taken too early."""
+        from agent.autopilot_utils import _quest_data_pending as _quest_data_pending_impl
+        return _quest_data_pending_impl(obs)
 
     def _hold_wait(self, goal: str, before: Any) -> bool:
         """Spend time, not a step, on a wait the policy asked for.
@@ -4183,8 +4005,9 @@ class Autopilot:
             if self.on_replan is not None:
                 try:
                     self.on_replan(decision.reason, decision)
-                except Exception:  # noqa: BLE001 - a host callback must not kill the run
-                    pass
+                except Exception as exc:
+                    # a host callback must not kill the run
+                    logger.warning("[autopilot] on_replan callback failed: %s", exc)
             return "replan"
         if decision.action == "abort":
             logger.debug(f"[autopilot] agent2 aborts {goal!r}: {decision.reason}")

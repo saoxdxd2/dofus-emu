@@ -23,11 +23,14 @@ Kept dependency-free: it runs in the embedded runtime next to the agent.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Higher wins a conflict. Same discipline as label weighting: a human correction
 # outranks what the loop inferred, and an observation outranks a guess.
@@ -92,16 +95,16 @@ class KnowledgeStore:
                         continue
                     fact = Fact(**raw)
                     self._facts[(fact.kind, fact.key)] = fact
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[knowledge_store] load failed: %s", exc)
 
     def _append(self, fact: Fact) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(fact.as_dict(), ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[knowledge_store] append failed: %s", exc)
 
     def _maybe_compact(self) -> None:
         """Bound the append-only log without needing an operator.
@@ -116,8 +119,8 @@ class KnowledgeStore:
         try:
             if self.path.exists() and self.path.stat().st_size >= COMPACT_BYTES:
                 self.compact()
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[knowledge_store] maybe_compact failed: %s", exc)
 
     def compact(self) -> int:
         """Rewrite the log with only the live facts. Returns how many were dropped.
@@ -133,8 +136,8 @@ class KnowledgeStore:
                 for fact in self._facts.values():
                     fh.write(json.dumps(fact.as_dict(), ensure_ascii=False) + "\n")
             tmp.replace(self.path)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[knowledge_store] compact failed: %s", exc)
         return len(self._facts)
 
     # -- writing -----------------------------------------------------------

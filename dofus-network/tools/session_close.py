@@ -52,7 +52,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
+
+logger = logging.getLogger("dofus.tools.session_close")
 import sys
 import time
 import traceback
@@ -418,8 +421,8 @@ def _train_move(data_dir: Path, out_dir: Path, seeds: int = 3,
     metrics_path = Path(out_dir) / "metrics_move_head.json"
     try:
         metrics_path.unlink()
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[session_close] metrics cleanup failed: %s", exc)
     proc = subprocess.run(
         [sys.executable, str(REPO_ROOT / "ai" / "train_move_head_gated.py"),
          "--data", str(data_dir), "--out", str(out_dir), "--seeds", str(seeds),

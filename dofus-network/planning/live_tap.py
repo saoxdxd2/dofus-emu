@@ -43,6 +43,7 @@ from planning.thinking_cache import ThinkingCache
 from planning.trace import TraceLog
 
 log = logging.getLogger(__name__)
+logger = log
 
 DISABLE_ENV = "DOFUS_SCHEDULE_TAP"
 STATE_NAMES = ("schedule_state.json", "economy_state.json", "traces.jsonl",
@@ -187,8 +188,8 @@ class ScheduleTap:
                         drops = int(payload.get("drops") or payload.get("qty") or payload.get("bought") or 0)
                         if drops > 0:
                             return f"tool_produced_item:{tool}:+{drops}"
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.warning("[live_tap] drops parse failed: %s", exc)
 
         # 3. Check quest advance or counter delta
         if ok and tool == "quest.advance":
@@ -197,8 +198,8 @@ class ScheduleTap:
                 try:
                     if int(q_id) == int(f.quest_id):
                         return "quest_advance_success"
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.warning("[live_tap] quest_id compare failed: %s", exc)
             elif f.quest_id is None:
                 return "quest_advance_success"
 
@@ -226,8 +227,8 @@ class ScheduleTap:
                         try:
                             if int(eid) == item_id:
                                 return int(entry.get("quantity") or entry.get("qty") or entry.get("count") or 1)
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError) as exc:
+                            logger.warning("[live_tap] inventory qty parse failed: %s", exc)
         return 0
 
     @staticmethod

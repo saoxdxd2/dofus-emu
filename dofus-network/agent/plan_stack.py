@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional
 
 from agent.features import DELIVER_TYPES, FIGHT_TYPES, MAP_TYPES, TALK_TYPES
 from agent.observe import flatten
+import logging
+logger = logging.getLogger(__name__)
 
 MAX_GOALS = int(os.environ.get("DOFUS_MAX_GOALS", "16"))
 MAX_BYTES = int(os.environ.get("DOFUS_MAX_BYTES", "2048"))
@@ -223,8 +225,8 @@ def child_for_objective(objective: Optional[Dict[str, Any]],
                     # Groups are visible but the page could not read them into
                     # `groups`; walking away would chase a read defect.
                     return None
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.warning("[plan_stack] child_for_objective check failed: %s", exc)
             direction = _direction(observation)
             return {"kind": "explore", "args": {"direction": direction} if direction else {}}
     if type_id in MAP_TYPES:

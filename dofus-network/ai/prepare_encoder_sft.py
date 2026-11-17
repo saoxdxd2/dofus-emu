@@ -54,6 +54,8 @@ from ai.data_splits import (  # noqa: E402
     write_jsonl,
 )
 from ai.lang_detect import detect  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 
 REFERENCE_FIELDS = frozenset({"quest_id", "map_id"})
@@ -266,8 +268,9 @@ def _write_tokenizer(rows: Sequence[Dict[str, Any]], out: Path,
         from agent.tool_eval import GOLD
         for case in GOLD:
             texts.append(f"Goal: {case['goal']}")
-    except Exception:  # noqa: BLE001 - GOLD is a nicety, not a requirement
-        pass
+    except Exception as exc:
+        # GOLD is a nicety, not a requirement
+        logger.warning("[prepare_encoder_sft] GOLD load failed: %s", exc)
     texts = [text for text in texts if text]
     if not texts:
         return None

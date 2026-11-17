@@ -302,8 +302,8 @@ class ObjectiveLedger:
             try:
                 if int(want["level"]) != int((obs.get("character") or {}).get("level") or 0):
                     return True
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.warning("[objective_ledger] level check failed: %s", exc)
         if want.get("bag_grew") and len(_bag(obs).get("items") or []) > int(
                 want.get("bag_items") or 0):
             return True
@@ -332,8 +332,8 @@ class ObjectiveLedger:
                 rec.status = "closed"
                 rec.confirmed_at = time.time()
                 return True
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning("[objective_ledger] objectives_completed check failed: %s", exc)
         cur_before, cur_after = _current(before), _current(after)
         if cur_after is not None and cur_after != key:
             rec.status = "closed"

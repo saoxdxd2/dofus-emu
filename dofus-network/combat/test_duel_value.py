@@ -105,7 +105,7 @@ class FitTests(unittest.TestCase):
         features = rng.random((600, dv.FEATURES)).astype(np.float32)
         signal = features[:, -1] * 2.0 - features[:, 0]
         labels = np.clip(signal + 0.05 * rng.standard_normal(600), -1, 1)
-        fitted = dv.train(features, labels, epochs=25, batch=64, hidden=32,
+        fitted = dv.train(features, labels, epochs=8, batch=64, hidden=32,
                           layers=2, verbose=False)
         values = dv.predict(fitted["params"], features)
         self.assertEqual(values.shape, (600,))
@@ -185,7 +185,7 @@ class ListwiseTests(unittest.TestCase):
         offset = np.repeat(rng.normal(0.0, 1.0, size=boards), width)
         returns = signal + offset
         groups = np.repeat(np.arange(boards), width)
-        fitted = dv.train_listwise(X, groups, returns, epochs=40, batch=32,
+        fitted = dv.train_listwise(X, groups, returns, epochs=12, batch=32,
                                    hidden=32, layers=2, temp=0.08, verbose=False)
         self.assertGreater(fitted["report"]["val_top1"], 0.6)
         self.assertGreater(fitted["report"]["val_spearman"], 0.3)

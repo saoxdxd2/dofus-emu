@@ -220,22 +220,51 @@ class ReleaseGateIntegrationTests(unittest.TestCase):
         rep = self.glicko_archetypes({}, {}, cases, min_support=20)
         self.assertEqual(rep["rows"][0]["matches"], 25)
 
+    @staticmethod
+    def _json_payload(text):
+        """The `--json` block appended after the human-readable table.
+
+        Found by the first line that opens a JSON object, not by searching for
+        "\\n{\\n": an empty payload serialises to `{}` on a single line, so a
+        delimiter that demands a newline after the brace cannot locate it.
+        """
+        import json
+        offset = 0
+        for line in text.splitlines(keepends=True):
+            if line.startswith("{"):
+                return json.loads(text[offset:])
+            offset += len(line)
+        raise AssertionError("no JSON payload in gate output: %r" % text[-200:])
+
     def test_the_default_gate_is_unchanged_by_the_glicko_wiring(self):
         import io
-        import json
         from contextlib import redirect_stdout
         from ai.release_gate import main
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = main(["--limit", "10", "--splits", "val", "--json"])
         self.assertEqual(code, 0)
-        # `--json` appends the payload after the human-readable table
-        text = buf.getvalue()
-        start = text.find("\n{\n")
-        self.assertGreaterEqual(start, 0)
-        payload = json.loads(text[start + 1:])
+        payload = self._json_payload(buf.getvalue())
         self.assertIn("val", payload)
         self.assertNotIn("glicko", payload)
+
+    def test_an_empty_split_still_emits_a_parsable_payload(self):
+        """A split with no rows prints no table, and `{}` is still the payload.
+
+        The gate must stay machine-readable when the data is missing: exit 0
+        with an empty object is a report of "nothing scored", not a crash and
+        not a silent pass.
+        """
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        from ai import release_gate
+        with mock.patch.object(release_gate, "load_jsonl", return_value=[]):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = release_gate.main(["--limit", "10", "--splits", "val", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self._json_payload(buf.getvalue()), {})
 
 
 if __name__ == "__main__":

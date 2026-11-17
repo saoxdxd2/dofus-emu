@@ -41,6 +41,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.bridge import client_count, directive_url  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 LOGS = REPO_ROOT / "trajectories"
 STATE = REPO_ROOT / "data" / "auto_live"
@@ -128,8 +130,9 @@ def wait_for_slot(slot: int, deadline_s: float, stop: Path, dismiss=None,
         if dismiss is not None:
             try:
                 dismiss(limit=2)
-            except Exception:  # noqa: BLE001 - a dialog that will not close is reported, not fatal
-                pass
+            except Exception as exc:
+                # a dialog that will not close is reported, not fatal
+                logger.warning("[auto_live] dialog dismiss failed: %s", exc)
         last = probe(slot)
         if last.get("in_world"):
             return {"ok": True, "wait_s": round(deadline_s - (deadline - time.time()), 1),

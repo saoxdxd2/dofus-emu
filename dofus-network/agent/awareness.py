@@ -14,6 +14,9 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     import orjson as _orjson
 except ImportError:  # pragma: no cover - orjson ships with the runtime
@@ -28,8 +31,8 @@ def _digest(value: Any) -> str:
         try:
             encoded = _orjson.dumps(value, option=_orjson.OPT_SORT_KEYS)
             return hashlib.sha1(encoded).hexdigest()
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning("[awareness] orjson digest failed: %s", exc)
     encoded = json.dumps(value, sort_keys=True, ensure_ascii=False,
                          default=str).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()

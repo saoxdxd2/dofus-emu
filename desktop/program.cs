@@ -401,6 +401,7 @@ namespace DofusFarm
                     }
                     catch (Exception ex) { Debug.WriteLine("[WARN] program: " + ex.Message); }
                     Thread.Sleep(250);
+                    // Poll interval for the periodic health check timer.
                 }
             });
 

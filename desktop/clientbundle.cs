@@ -248,6 +248,7 @@ namespace DofusFarm.Engine
                 {
                     last = ex;
                     if (attempt == 1) System.Threading.Thread.Sleep(400);
+                    // Backoff before the second download attempt.
                 }
             }
             throw last;
@@ -264,6 +265,7 @@ namespace DofusFarm.Engine
                     last = ex;
                     try { if (File.Exists(dest)) File.Delete(dest); } catch (Exception exInner) { Debug.WriteLine("[WARN] ClientBundle: " + exInner.Message); }
                     if (attempt == 1) System.Threading.Thread.Sleep(400);
+                    // Backoff before the second download attempt.
                 }
             }
             throw last;

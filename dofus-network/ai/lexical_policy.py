@@ -45,6 +45,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent.commands import TOOL_INTENT, _ARG_SLOTS          # noqa: E402  the seam's own mapping
 from agent.schema import TOOLS                              # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 # slot name -> tool-argument name. _ARG_SLOTS is the forward map; retrieval of a rule slot has to land
 # back on the key the schema validates.
@@ -378,8 +380,9 @@ def _resolvers() -> Dict[str, Any]:
         from planning.kb import DEFAULT_KB, DEFAULT_NAMES, KnowledgeBase
         if DEFAULT_KB.exists() and DEFAULT_NAMES.exists():
             out["kb"] = KnowledgeBase(DEFAULT_KB, DEFAULT_NAMES)
-    except Exception:                              # noqa: BLE001 - same
-        pass
+    except Exception as exc:
+        # same
+        logger.warning("[lexical_policy] resolvers load failed: %s", exc)
     _RZ = out
     return out
 

@@ -434,8 +434,8 @@ class ProblemMemory:
                     if isinstance(row, dict) and row.get("outcome") in ("worked",
                                                                         "failed"):
                         out.append(row)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[problem_nn] rows read failed: %s", exc)
         return out
 
     def fit(self, model_path: Optional[Path] = None,
@@ -484,8 +484,9 @@ class ProblemAdvisor:
     def learn(self, situation: Dict[str, Any], remedy: str) -> None:
         try:
             self.memory.record(situation, remedy)
-        except Exception:  # noqa: BLE001 - learning must never stop a repair
-            pass
+        except Exception as exc:
+            # learning must never stop a repair
+            logger.warning("[problem_nn] learn record failed: %s", exc)
 
     def label(self, component: str, outcome: str) -> Optional[Dict[str, Any]]:
         try:

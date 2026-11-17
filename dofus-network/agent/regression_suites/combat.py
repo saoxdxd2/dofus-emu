@@ -1,22 +1,14 @@
-"""Combat-related regression tests, moved from regression.py.
-
-These tests exercise the combat solver, grid model, duel simulation,
-damage calibration, and related combat subsystems.
-"""
-
+"""Extracted regression suite: combat"""
 from __future__ import annotations
-
 import importlib.util
 import json as _json
 import re
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
-
-from agent.regression_suites.common import REPO_ROOT, OPTIONAL_IMPORTS, check, section
-
+from typing import Any, Dict, List, Optional
+from agent.regression_suites.common import REPO_ROOT, OPTIONAL_IMPORTS, check, section, logger
 
 def test_side_swap() -> None:
     import unittest
@@ -46,6 +38,10 @@ def test_move_gate() -> None:
 
 def test_damage_calibration_join() -> None:
     section("Damage calibration (the solver's estimate vs the server's own loss)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
     tool = REPO_ROOT.parent / "tools" / "damage_calibration.py"
     check("the calibration tool exists", tool.is_file(), str(tool))
     check("the live fight-outcome capture tool exists",
@@ -69,20 +65,26 @@ def test_damage_calibration_join() -> None:
     ]), encoding="utf-8")
     outcomes = [{"kind": "fight_outcome", "fight_id": 124, "won": True, "end": {
         "fight_id": 124, "won": True, "battle_log": [
+            # Live semantics (fight 133, 2026-10-28): the cast's action id is 300
+            # for every spell, and the damage arrives as an effect with its own id.
             {"type": "GameActionFightSpellCastMessage", "at_action": 300,
              "source": 4434090, "spell": 99, "target": 4434090},
             {"type": "GameActionFightSpellCastMessage", "at_action": 300,
              "source": 4434090, "spell": 10, "target": -1},
             {"type": "GameActionFightLifePointsLostMessage", "at_action": 96,
              "source": 4434090, "target": -1, "loss": 18},
+            # A second effect of the same cast (multi-hit) adds to it.
             {"type": "GameActionFightLifePointsLostMessage", "at_action": 96,
              "source": 4434090, "target": -1, "loss": 8},
             {"type": "GameActionFightSpellCastMessage", "at_action": 300,
              "source": 4434090, "spell": 0, "target": -1},
+            # A summon's damage is still this side's damage.
             {"type": "GameActionFightLifePointsLostMessage", "at_action": 97,
              "source": -22358, "target": -1, "loss": 11},
+            # A cast the log does not follow with a loss: counted, not hidden.
             {"type": "GameActionFightSpellCastMessage", "at_action": 300,
              "source": 4434090, "spell": 10, "target": -1},
+            # The enemy's own cast and the damage it did to me are not mine.
             {"type": "GameActionFightSpellCastMessage", "at_action": 10,
              "source": -1, "spell": 97, "target": 4434090},
             {"type": "GameActionFightLifePointsLostMessage", "at_action": 10,
@@ -130,6 +132,8 @@ def test_damage_calibration_live_evidence() -> None:
     run reported; a change here means the joiner stopped reading live rows.
     """
     section("Damage calibration on captured live fights (fixtures)")
+    import importlib.util
+
     tool = REPO_ROOT.parent / "tools" / "damage_calibration.py"
     decisions_path = REPO_ROOT / "data" / "live_evidence" / "decisions_fixture.jsonl"
     outcomes_path = REPO_ROOT / "data" / "live_evidence" / "fight_outcomes_fixture.jsonl"
@@ -165,24 +169,97 @@ def test_damage_calibration_live_evidence() -> None:
 def test_combat_suites() -> None:
     section("Combat suites (delegated, so '892 checks' includes them)")
     for module in ("combat.test_battle_solver", "combat.test_grid_model",
+                   # The encoder itself, which was missing from this list until
+                   # 2026-11-11 -- and a dead `0.0` fighter-feature slot survived
+                   # there unnoticed for as long as nothing ran its suite. The
+                   # model can only understand what the tensor carries.
                    "combat.test_grid_dataset",
+                   # The trainer's input contract and loss. A corpus built for a
+                   # narrower encoder used to fail deep inside a jitted matmul,
+                   # and the loss silently changed from a hard label to a
+                   # distribution over the solver's tied-best set -- which makes
+                   # every older metric incomparable if it is ever misapplied.
                    "combat.test_grid_train",
                    "combat.test_live_policy", "combat.test_normal_build_duel",
                    "combat.test_live_data", "combat.test_side_swap",
                    "combat.test_live_learn",
                    "combat.test_online_learn", "combat.test_env_math",
+                   # The positional half of the turn: what a cell costs to stand
+                   # on, learned from the fights themselves.
                    "combat.test_threat",
+                   # The engagement ladder the supervisor repairs with. It is the
+                   # difference between a repair that works and one that logs ok=True.
                    "agent.test_hunting",
+                   # Which failure is this, and what fixed it last time. The net is
+                   # allowed to have no opinion, and that path is most of the suite.
                    "agent.test_problem_nn",
+                   # The map as geometry rather than as twelve scalars: distance,
+                   # directed line of sight and reachability, each checked against
+                   # `CellMap`, which is the decoder the live client has been
+                   # exercised against.
                    "combat.test_map_field",
+                   # The outcome-trained value and the one-step lookahead built on
+                   # it. Two failures it exists to catch already happened once: a
+                   # feature-width constant drifting from the encoder (a broadcast
+                   # error three frames inside a jitted matmul), and a value head
+                   # with no spread -- "inert" -- which made every value-vs-solver
+                   # duel measure the solver against itself.
                    "combat.test_duel_value",
+                   # What a monster can actually cast. The live board sends an empty
+                   # spell list for every enemy, so without this the policy is asked
+                   # to avoid a reach nobody told it.
                    "combat.test_monster_mech",
+                   # Wins, losses and draws kept apart, and a probability scored by
+                   # a proper rule. `network_win_rate: 0.4062` over 1 win and 157
+                   # draws is the score, not a win rate.
                    "combat.test_outcome_stats",
+                   # A loopback probe must not be handed to HTTP_PROXY. This gate's own
+                   # `/health` check failed on 2026-11-11 with `WinError 10054` while the
+                   # brain was answering, because the probe went through the machine's
+                   # proxy -- and the same fault made `brain_is_up` declare a live brain
+                   # dead and respawn it. A false failure here accuses the product of the
+                   # harness's own fault, so the rule is a test, not a comment.
                    "agent.test_bridge",
+                   # Boards nobody wrote down: a seeded generator over the payload the
+                   # client actually sends, checking AP/MP conservation, HP bounds,
+                   # cast limits, determinism and "never raises" across both an
+                   # actionable and a malformed corpus. It carries its own coverage
+                   # guard, because the first version of it only ever saw passes.
+                   "combat.test_battle_solver_fuzz",
+                   # The structure cache the planner reasons through. It existed as
+                   # 184 lines nothing constructed -- the read path was in
+                   # `Planner.plan`, the flush path was nowhere, and the one
+                   # construction site passed neither. This is the only delegated
+                   # non-combat suite in this loop and it is here because the loop is
+                   # the only place the gate delegates to a module runner.
                    "planning.test_thinking_cache",
+                   # G126's production caller. The tap must reuse the loop's store,
+                   # keep every state file out of the staged `data/kb` tree, never
+                   # raise into the loop, and never submit a goal on its own (which
+                   # would put a fabricated objective in front of the policy).
                    "planning.test_live_tap",
+                   # The recalibration of `move_prob`. Three hardcoded cuts in
+                   # `planner_nn` (0.20, 0.20, 0.25) are only meaningful if 0.20
+                   # means one in five, and on the newest era it did not: the base
+                   # rate of "this action moved the world" went from 0.22 to 0.645
+                   # because `nav.goto` started working. The suite pins the three
+                   # properties that make the fit safe -- never worse than identity
+                   # in sample, never a negative slope (which would make the planner
+                   # prefer the candidate it is sure will fail), and bit-identical
+                   # output when no sidecar is present.
                    "agent.test_calibration",
+                   # The inert-action attribution. The reviews quote "86% inert" as
+                   # a permanent property of the agent; the corpus says it was one
+                   # chronological quarter (88.6%) that ended when nav.goto started
+                   # working (39.5% in the newest quarter). This suite pins the two
+                   # things that keep that claim honest: exclusive layers sum to the
+                   # inert count, and `obs_source=carried` -- on 96% of inert rows
+                   # but 99% of effective ones -- is never reported as a cause.
                    "agent.test_inert_attribution",
+                   # Glicko-2 as an archetype-stratified release gate. Pinned against
+                   # Glickman's published worked example (1464.06 / 151.52 / 0.05999)
+                   # and against the property that matters: a 3-case family can win
+                   # 3-0 and still fail, because the gate uses r - 2*RD, not r.
                    "ai.test_glicko2"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
@@ -191,11 +268,17 @@ def test_combat_suites() -> None:
                        if "No module named '%s'" % m in text), None) \
             if proc.returncode != 0 else None
         if absent:
-            print("   SKIP: %s needs %r, which this interpreter does not ships"
+            # Same policy as `tools/gate.py`: a wheel this box lacks is not a regression.
+            logger.debug("   SKIP: %s needs %r, which this interpreter does not ship"
                   % (module, absent))
             check("%s is skipped for a missing optional wheel (%s)" % (module, absent),
                   True, absent)
             continue
+        # Exit code 0 is not the same as "the suite ran". A module whose tests all
+        # failed to *collect* still exits 0, and for a while every line here would
+        # have accepted a suite of zero tests. `Ran 0 tests` is the signature of a
+        # rename that broke discovery, which is exactly what a delegated suite
+        # cannot report on itself.
         ran = re.search(r"^Ran (\d+) tests?", text, re.MULTILINE)
         executed = int(ran.group(1)) if ran else 0
         check("%s passes" % module, proc.returncode == 0 and executed > 0,
@@ -203,10 +286,4 @@ def test_combat_suites() -> None:
               "no 'Ran N tests' line: the module collected nothing\n" + text.strip()[-300:])
 
 
-__all__ = [
-    "test_side_swap",
-    "test_move_gate",
-    "test_damage_calibration_join",
-    "test_damage_calibration_live_evidence",
-    "test_combat_suites",
-]
+__all__ = ['test_side_swap', 'test_move_gate', 'test_damage_calibration_join', 'test_damage_calibration_live_evidence', 'test_combat_suites']

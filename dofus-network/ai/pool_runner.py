@@ -36,6 +36,8 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT = REPO_ROOT.parent
@@ -205,8 +207,8 @@ def deep_check(entry: str, timeout: float) -> tuple[bool, str]:
         finally:
             try:
                 sock.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[pool_runner] socket close failed: %s", exc)
     return True, "ok"
 
 

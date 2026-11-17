@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 if hasattr(sys.stdout, "reconfigure"):
     # The docs are UTF-8 and full of arrows; a cp1252 console must not kill the sweep.
@@ -591,8 +593,8 @@ def remember() -> Dict[str, List[int]]:
         try:
             HISTORY.parent.mkdir(parents=True, exist_ok=True)
             HISTORY.write_text(json.dumps(seen, indent=1, sort_keys=True), encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[doc_facts] history write failed: %s", exc)
     return seen
 
 

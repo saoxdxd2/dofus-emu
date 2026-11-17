@@ -26,7 +26,10 @@ the same intent are one call and not three.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:  # reuse the gate's own definition of "the same call"
     from agent.gate import VOLATILE_ARGS as _VOLATILE
@@ -72,8 +75,8 @@ def label_call(tool: str, args: Optional[Dict[str, Any]], count: int = 1,
     try:
         if int(count) > 1:
             label += " x%d" % int(count)
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as exc:
+        logger.warning("[action_memory] count label failed: %s", exc)
     return label
 
 

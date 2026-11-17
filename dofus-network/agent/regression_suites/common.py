@@ -19,6 +19,12 @@ ROOT = REPO_ROOT.parent                                        # .../dofus-emu
 
 _CHECKS = 0
 _FAILURES: List[str] = []
+_DELEGATIONS: List[Dict[str, Any]] = []
+
+def _delegation(name: str, ran: bool, sources: Path, detail: str = "") -> None:
+    """Record that a delegated suite ran, or why it could not."""
+    _DELEGATIONS.append({"name": name, "ran": ran,
+                         "sources": sources.exists(), "detail": detail})
 
 # Wheels this repository treats as optional.
 OPTIONAL_IMPORTS = ("jax", "sklearn")

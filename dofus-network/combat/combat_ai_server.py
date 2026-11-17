@@ -166,13 +166,13 @@ def _close_log_locked(flush: bool = True) -> None:
     try:
         if flush:
             handle.flush()
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[combat_ai_server] log flush failed: %s", exc)
     finally:
         try:
             handle.close()
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[combat_ai_server] log close failed: %s", exc)
 
 
 def _open_log_locked() -> None:
@@ -202,8 +202,8 @@ def _rotate_log_locked() -> None:
                 rotated = LOG_PATH.with_name(
                     f"{LOG_PATH.stem}.{stamp}-{suffix}{LOG_PATH.suffix}")
             LOG_PATH.rename(rotated)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[combat_ai_server] log rotation failed: %s", exc)
     _LOG_BYTES = 0
     _open_log_locked()
 
@@ -237,13 +237,15 @@ def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str
             if _LOG_PENDING >= LOG_FLUSH_BYTES:
                 _LOG_HANDLE.flush()
                 _LOG_PENDING = 0
-    except OSError:
+    except OSError as exc:
         # An unwritable log must never stop the fight API.
+        logger.warning("[combat_ai_server] log flush failed: %s", exc)
         with _LOG_LOCK:
             try:
                 _close_log_locked(flush=False)
-            except Exception:  # noqa: BLE001 - best effort close
-                pass
+            except Exception as exc:
+                # best effort close
+                logger.warning("[combat_ai_server] log close failed: %s", exc)
     return record
 
 
@@ -256,8 +258,9 @@ def _flush_decision_log() -> None:
     try:
         if _SHADOW_AUDITOR is not None:
             _SHADOW_AUDITOR.flush()
-    except Exception:  # noqa: BLE001 - shutdown must not raise
-        pass
+    except Exception as exc:
+        # shutdown must not raise
+        logger.warning("[combat_ai_server] shadow auditor flush failed: %s", exc)
 
 
 _LEARNER = None
@@ -458,15 +461,17 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
     credit = None
     try:
         credit = _learner().observe(payload)
-    except Exception:  # noqa: BLE001 - a learner must never stop a fight
-        pass
+    except Exception as exc:
+        # a learner must never stop a fight
+        logger.warning("[combat_ai_server] learner observe failed: %s", exc)
     # Same ordering, different question: the learner prices a whole enemy turn,
     # this prices one monster. Both have to run before the decision, because the
     # solver reads the per-monster table to decide where to stand this turn.
     try:
         _threat_observer().observe(payload)
-    except Exception:  # noqa: BLE001 - a threat model must never stop a fight
-        pass
+    except Exception as exc:
+        # a threat model must never stop a fight
+        logger.warning("[combat_ai_server] threat observer failed: %s", exc)
     if POLICY is None:
         return {"ok": False, "action": None, "reason": "policy_not_loaded",
                 "latency_ms": 0.0}
@@ -488,8 +493,9 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
     # measurement of what the server just priced, and it must not delay the answer.
     try:
         _shadow_auditor().observe(record)
-    except Exception:  # noqa: BLE001 - an auditor must never stop a fight
-        pass
+    except Exception as exc:
+        # an auditor must never stop a fight
+        logger.warning("[combat_ai_server] shadow auditor failed: %s", exc)
     return decision
 
 

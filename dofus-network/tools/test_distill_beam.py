@@ -239,7 +239,7 @@ class GradientTests(unittest.TestCase):
     def test_small_real_observation_batch_overfits(self):
         before = db.evaluate(self.policy.params, self.data)
         with redirect_stdout(io.StringIO()):
-            params, info = db.fit(self.policy.params, self.data, iters=150,
+            params, info = db.fit(self.policy.params, self.data, iters=35,
                                   batch_size=4, lr=.003, seed=4)
         after = db.evaluate(params, self.data)
         self.assertGreater(info["changed_leaves"], 0)

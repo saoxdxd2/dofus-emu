@@ -56,9 +56,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass, field as dc_field
 from functools import lru_cache
 from pathlib import Path
+
+
+def _entry_cap(variable: str, fallback: int) -> int:
+    """A small cache size from the environment, or ``fallback``.
+
+    These are *process* settings, not client constants: how many maps a session
+    keeps resident depends on the machine's memory and on how many slots are
+    running, and neither is known at build time. Pinned by hand they were just
+    another hardcoded number an operator could not change without editing
+    source (`combat/test_combat_integrity.py` flagged them for that reason).
+    """
+    try:
+        value = int(os.environ.get(variable, ""))
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -250,6 +267,7 @@ class MapField:
     spectral: np.ndarray              # float32[560,SPECTRAL_DIM]
     spectral_values: np.ndarray       # float32[SPECTRAL_DIM], ascending
     _los: Optional[np.ndarray] = dc_field(default=None, repr=False)
+    _resistance_median: Optional[float] = dc_field(default=None, repr=False, compare=False)
 
     # -- construction -------------------------------------------------------
 
@@ -440,6 +458,13 @@ class MapField:
 
     # -- tactical intent & resistance gradient -------------------------------
 
+    @property
+    def resistance_median(self) -> float:
+        """Median resistance over walkable cells; a map constant, cached (47 s of one 85 s plan)."""
+        if self._resistance_median is None:
+            self._resistance_median = float(np.median(self.resistance[self.walkable]))
+        return self._resistance_median
+
     def resistance_gradient(self, origin: int, dest: int, target: int) -> float:
         """Difference in effective resistance to target between dest and origin."""
         if not (0 <= origin < NB_CELLS and 0 <= dest < NB_CELLS and 0 <= target < NB_CELLS):
@@ -592,9 +617,13 @@ class MapField:
 # Caching
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=8)
+MAP_CACHE_ENTRIES = _entry_cap("DOFUS_MAP_CACHE_ENTRIES", 8)
+
+
+@lru_cache(maxsize=MAP_CACHE_ENTRIES)
 def field_for(map_id: int) -> MapField:
-    """Per-process cache. Eight maps is more than one session fights on."""
+    """Per-process cache. Eight maps is more than one session fights on;
+    `DOFUS_MAP_CACHE_ENTRIES` raises it on a box running many slots."""
     return MapField.from_map_id(map_id)
 
 
@@ -625,9 +654,9 @@ def _store_los(map_id: Optional[int], los: np.ndarray) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(path, los=los, version=np.int32(LOS_VERSION))
-    except Exception:
+    except Exception as exc:
         # A read-only tree is not a reason to fail a decision.
-        pass
+        logger.warning("[map_field] cache write failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

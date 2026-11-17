@@ -375,7 +375,9 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		upstreamPrimary = upstreamChain[0]
 	}
 	if cacheDir != "" {
-		_ = os.MkdirAll(cacheDir, 0755)
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			log.Printf("[PROXY] mkdir cache %s: %v", cacheDir, err)
+		}
 	}
 	isSocks := upstreamPrimary != nil && strings.HasPrefix(strings.ToLower(upstreamPrimary.Scheme), "socks5")
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
@@ -548,12 +550,18 @@ func newAssetClient(ups []*url.URL, resolver *FastDNSResolver) *http.Client {
 			if err != nil {
 				return nil, err
 			}
-			_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+			if err := conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+				log.Printf("[PROXY] set deadline: %v", err)
+				_ = conn.Close()
+				return nil, err
+			}
 			if err := connectThrough(conn, u.Scheme, host, portStrInt(portStr), userOf(u), ""); err != nil {
 				_ = conn.Close()
 				return nil, err
 			}
-			_ = conn.SetDeadline(time.Time{})
+			if err := conn.SetDeadline(time.Time{}); err != nil {
+				log.Printf("[PROXY] clear deadline: %v", err)
+			}
 			return conn, nil
 		},
 	}
@@ -715,7 +723,9 @@ func (p *ProxyServer) saveHopIndex() {
 	if raw, err := json.Marshal(out); err == nil {
 		tmp := p.hopIdxPath + ".tmp"
 		if os.WriteFile(tmp, raw, 0o644) == nil {
-			_ = os.Rename(tmp, p.hopIdxPath)
+			if err := os.Rename(tmp, p.hopIdxPath); err != nil {
+				log.Printf("[PROXY] rename hop index: %v", err)
+			}
 		}
 	}
 }
@@ -1350,7 +1360,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"gc_cycles":        m.NumGC,
 					"total_alloc":      m.TotalAlloc,
 				}
-				_ = json.NewEncoder(w).Encode(payload)
+				if err := json.NewEncoder(w).Encode(payload); err != nil {
+					log.Printf("[PROXY] encode telemetry: %v", err)
+				}
 				return
 			}
 			if r.URL.Path == "/__audit" {
@@ -2100,7 +2112,9 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 		return err
 	}
 	if ct != "" {
-		_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
+if err := os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644); err != nil {
+		log.Printf("[PROXY] write cache meta: %v", err)
+}
 	}
 	p.mirrorCachedFile(targetStr, cacheFilePath)
 	if assetPath != "" {
@@ -2211,7 +2225,9 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			gz := gzip.NewWriter(w)
 			_, _ = gz.Write(payload)
-			_ = gz.Close()
+if err := gz.Close(); err != nil {
+		log.Printf("[PROXY] close gzip: %v", err)
+}
 			return
 		}
 		_, _ = w.Write(payload)
@@ -2564,7 +2580,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		bufPool.Put(buf)
 		return
 	}
-	_ = p.storeCacheEntry(targetStr, assetPath, cacheFilePath, resp.Header.Get("Content-Type"), resp.Body, resp.ContentLength, w)
+if err := p.storeCacheEntry(targetStr, assetPath, cacheFilePath, resp.Header.Get("Content-Type"), resp.Body, resp.ContentLength, w); err != nil {
+		log.Printf("[PROXY] store cache entry: %v", err)
+}
 }
 
 func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, bool) {
@@ -2760,7 +2778,9 @@ func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
 	p.prefetchMu.Unlock()
 
 	// Drop the job when the pool queue is full: the data plane never blocks on warming.
-	_ = p.prefetchPool.Submit(npprefetch.Job{Target: target, ID: id, Depth: 0})
+if err := p.prefetchPool.Submit(npprefetch.Job{Target: target, ID: id, Depth: 0}); err != nil {
+		log.Printf("[PROXY] submit prefetch job: %v", err)
+}
 }
 
 func (p *ProxyServer) processPrefetchJob(ctx context.Context, job npprefetch.Job) {
@@ -2813,7 +2833,9 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job npprefetch.Job
 		p.prefetchMu.Unlock()
 		if !skip {
 			// Drop the job when the pool queue is full.
-			_ = p.prefetchPool.Submit(npprefetch.Job{Target: prefix + "maps/" + strconv.FormatInt(nid, 10) + ".json", ID: nid, Depth: job.Depth + 1})
+if err := p.prefetchPool.Submit(npprefetch.Job{Target: prefix + "maps/" + strconv.FormatInt(nid, 10) + ".json", ID: nid, Depth: job.Depth + 1}); err != nil {
+		log.Printf("[PROXY] submit prefetch job: %v", err)
+}
 		}
 	}
 }
@@ -2886,7 +2908,9 @@ func (p *ProxyServer) precacheMaps(ctx context.Context, assetsURL, spec string, 
 		})
 		return true
 	})
-	_ = eg.Wait()
+if err := eg.Wait(); err != nil {
+		log.Printf("[PROXY] wait group: %v", err)
+}
 	log.Printf("[PRECACHE] done: total=%d fetched=%d cached=%d failed=%d",
 		atomic.LoadInt64(&total), atomic.LoadInt64(&fetched), atomic.LoadInt64(&cached), atomic.LoadInt64(&failed))
 }
@@ -3085,7 +3109,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		if resp.Header.Get("Content-Encoding") != "" {
 			expLen = -1
 		}
-		_ = p.storeCacheEntry(targetStr, targetURL.Path, cacheFilePath, ct, bodyReader, expLen, w)
+if err := p.storeCacheEntry(targetStr, targetURL.Path, cacheFilePath, ct, bodyReader, expLen, w); err != nil {
+		log.Printf("[PROXY] store cache entry: %v", err)
+}
 		return
 	}
 	buf := bufPool.Get().([]byte)
@@ -3230,7 +3256,9 @@ func main() {
 	}
 	if target != "" {
 		if dir := filepath.Dir(target); dir != "" {
-			_ = os.MkdirAll(dir, 0o755)
+if err := os.MkdirAll(dir, 0o755); err != nil {
+	log.Printf("[PROXY] mkdir %s: %v", dir, err)
+}
 		}
 		if f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			log.SetOutput(f)
@@ -3357,5 +3385,7 @@ func main() {
 	<-runCtx.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+if err := server.Shutdown(ctx); err != nil {
+		log.Printf("[PROXY] server shutdown: %v", err)
+}
 }

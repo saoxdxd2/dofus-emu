@@ -72,6 +72,19 @@ namespace DofusFarm.Engine
             }
         }
 
+        // Default net daemon port -- a different service from the sentinel above,
+        // which is why it has its own name and its own override rather than sharing
+        // BrainPort. `aipanel.cs` and `mainform.cs` each held this number privately;
+        // one definition here is what stops the two copies disagreeing.
+        public static int NetDaemonPort
+        {
+            get
+            {
+                int np;
+                return int.TryParse(Environment.GetEnvironmentVariable("DOFUS_NET_DAEMON_PORT") ?? "", out np) && np > 0 ? np : (8800 + 95);
+            }
+        }
+
         // false = if the tunnel cannot start, run direct instead of refusing.
         // That exposes the real IP, so it stays on unless the user turns it off.
         public bool FailClosed = true;

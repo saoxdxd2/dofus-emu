@@ -38,6 +38,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.commands import INTENTS, SLOT_KEYS  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 TOKEN_RE = re.compile(r"-?\d+(?:[.,]\d+)?|[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]*|[^\s]",
                       re.UNICODE)
@@ -235,8 +237,8 @@ def decode_slots(text: str, tokens, tag_ids, action: str) -> Dict[str, Any]:
             elif slot in ("level_min", "price", "quantity", "quest_id", "x", "y"):
                 try:
                     slots[slot] = int(re.sub(r"[^\d-]", "", raw))
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.warning("[train_command_model] slot int parse failed: %s", exc)
             elif slot == "channel":
                 slots[slot] = CHANNEL_ALIASES.get(raw.lower(), raw.lower())
             elif raw:

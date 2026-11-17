@@ -16,10 +16,13 @@ Includes:
 from __future__ import annotations
 
 import itertools
+import logging
 import math
 import threading
 from dataclasses import astuple, dataclass, replace
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 from data.game_data_extractor import (
     MonsterInfo,
@@ -43,8 +46,8 @@ for _name, _default in (
     try:
         _val = int(_dmg_os.environ[_name])
         globals()[_name] = _val
-    except (KeyError, ValueError):
-        pass
+    except (KeyError, ValueError) as exc:
+        logger.warning("[damage_calculator] env var %s parse failed: %s", _name, exc)
 
 
 @dataclass

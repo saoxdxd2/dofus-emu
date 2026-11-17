@@ -49,11 +49,15 @@ def available_codec() -> str:
         return "zlib"
 
 
+import logging
+import zlib
+
+logger = logging.getLogger(__name__)
+
 def _compress(data: bytes, codec: str, level: int = 6) -> bytes:
     if codec == "zstd":
         import zstandard
         return zstandard.ZstdCompressor(level=level).compress(data)
-    import zlib
     return zlib.compress(data, level)
 
 
@@ -232,8 +236,8 @@ def _remove(shard: Path) -> None:
     for path in (shard, _index_path(shard)):
         try:
             path.unlink()
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[sharder] shard cleanup failed: %s", exc)
 
 
 def verify_shard(shard: Path) -> Dict[str, Any]:

@@ -71,24 +71,34 @@ def ok(label: str, detail: str = "") -> None:
 def check_machine_paths() -> None:
     ok("scanning for machine-specific absolute paths")
     total = 0
-    for path in REPO.rglob("*"):
+    # `walk_files`, not `REPO.rglob("*")`: rglob descends into `.git`,
+    # `runtimes/` and `.venv/` and only then rejects them, which is why this
+    # gate took minutes. The pruned walk returns the same files this loop
+    # wants -- `should_scan` still has the last word on each one.
+    for path in test_base.walk_files(REPO):
         if not test_base.should_scan(path):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        code_lines = [ln for ln in text.splitlines()
-                      if not ln.lstrip().startswith("#")]
-        code = "\n".join(code_lines)
-        for pat, what in ((CONCRETE_USER, "concrete user path"),
-                          (USER_PROFILE, "user-profile path")):
-            for m in pat.finditer(code):
+        # Scan line by line, carrying the real line number. The previous form
+        # matched against a comment-stripped copy of the file and then located
+        # the hit by indexing into the *original* text -- two different
+        # coordinate systems, so the reported line was wherever that byte offset
+        # landed rather than where the path was.
+        for lineno, raw in enumerate(text.splitlines(), 1):
+            if raw.lstrip().startswith("#"):
+                continue
+            for pat, what in ((CONCRETE_USER, "concrete user path"),
+                              (USER_PROFILE, "user-profile path")):
+                if not pat.search(raw):
+                    continue
                 total += 1
                 if total <= 25:
-                    line_no = text[: m.start()].count("\n") + 1
-                    fail(f"machine-specific path in {path.name}:{line_no}",
-                         f"{what}={m.group(0)!r}")
+                    hit = pat.search(raw).group(0)
+                    fail(f"machine-specific path in {path.name}:{lineno}",
+                         f"{what}={hit!r}")
     if total == 0:
         ok("no machine-specific absolute paths")
     else:
@@ -102,7 +112,7 @@ def check_machine_paths() -> None:
 def check_secrets() -> None:
     ok("scanning for hardcoded secrets")
     total = 0
-    for path in REPO.rglob("*"):
+    for path in test_base.walk_files(REPO):
         if not test_base.should_scan(path):
             continue
         try:
@@ -141,16 +151,19 @@ def check_ankama_hosts() -> None:
     for root in [REPO / "scripts", REPO / "desktop", REPO / "dofus-network"]:
         if not root.exists():
             continue
-        for globpat in ("*.py", "*.go", "*.js", "*.cs", "*.ini"):
-            for path in root.rglob(globpat):
-                name = path.name.lower()
-                if name.startswith("test_") or name.startswith("test-") or "_test" in name or "-test" in name or "diagnostic" in name:
-                    continue
-                try:
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    continue
-                for lineno, raw in enumerate(text.splitlines(), 1):
+        # One walk per root instead of one per glob: the glob loop used to wrap
+        # `rglob`, so five patterns enumerated the same tree five times.
+        for path in test_base.walk_files(root):
+            if path.suffix.lower() not in {".py", ".go", ".js", ".cs", ".ini"}:
+                continue
+            name = path.name.lower()
+            if name.startswith("test_") or name.startswith("test-") or "_test" in name or "-test" in name or "diagnostic" in name:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for lineno, raw in enumerate(text.splitlines(), 1):
                     s = raw.strip()
                     if s and s.startswith(("#", "//", "/*", "*", "--", "'")):
                         continue
@@ -188,8 +201,8 @@ def check_frozen_config() -> None:
     for root in [REPO / "desktop", REPO / "scripts", REPO / "dofus-network"]:
         if not root.exists():
             continue
-        for path in root.rglob("*"):
-            if path.is_dir() or path.suffix.lower() not in {".py", ".go", ".js", ".cs", ".ini"}:
+        for path in test_base.walk_files(root):
+            if path.suffix.lower() not in {".py", ".go", ".js", ".cs", ".ini"}:
                 continue
             name = path.name.lower()
             if name.startswith("test_") or name.startswith("test-") or "_test" in name or "-test" in name or "diagnostic" in name:
@@ -218,8 +231,15 @@ def check_frozen_config() -> None:
                                     continue
                         total += 1
                         if total <= 25:
-                            line_no = text[: m.start()].count("\n") + 1
-                            fail(f"frozen config literal in {path.name}:{line_no}",
+                            # `lineno` is the line the match is on. The previous
+                            # line here used `m.start()` -- an index into `raw` --
+                            # as an index into the whole file, so every report
+                            # pointed at whichever line happened to sit at that
+                            # byte offset: a UA on line 2,900 was reported as
+                            # "line 6", which is `using System.IO;`. A gate whose
+                            # locations are wrong sends the reader to a file's
+                            # imports and gets itself ignored.
+                            fail(f"frozen config literal in {path.name}:{lineno}",
                                  f"{label}={m.group(0)!r}")
     if total == 0:
         ok("no frozen config literals")

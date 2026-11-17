@@ -33,6 +33,8 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+# Read through the module: `check()` rebinds `_CHECKS`, so a from-import would freeze it at 0.
+from agent.regression_suites import common as _common  # noqa: E402
 from agent.regression_suites.common import (  # noqa: E402
     REPO_ROOT,
     ROOT,
@@ -41,6 +43,8 @@ from agent.regression_suites.common import (  # noqa: E402
     section,
     logger,
     _FAILURES,
+    _DELEGATIONS,
+    _delegation,
 )
 
 # Mutation targets no test the sweep runs touches, named rather than counted. Measured
@@ -108,23 +112,17 @@ CHECK_COUNTS: Dict[str, int] = {}
 # harness needs it too because it runs most tests in-process, where there is no fallback
 # interpreter to hand a suite that needs one.
 
-def _delegation(name: str, ran: bool, sources: Path, detail: str = "") -> None:
-    """Record that a delegated suite ran, or why it could not."""
-    _DELEGATIONS.append({"name": name, "ran": ran,
-                         "sources": sources.exists(), "detail": detail})
+from agent.regression_utils import (
+    code_only,
+    _builder_host_sources,
+    _empty_catch_count,
+    _find_csharp_compiler,
+    _new_verifier,
+)
 
-def code_only(text: str) -> str:
-    """Source with whole-line comments removed, for the C#/JS needle checks.
 
-    Measured twice, same trap: a needle matched a statement that had been
-    commented out (the updater's User-Agent assignment, the step-row fragment
-    filter), so the check passed while the code was broken and its mutation was
-    MISSED. A gate that reads comments is not reading the code.
-    """
-    return "\n".join(line for line in text.splitlines()
-                     if not line.strip().startswith("//"))
 
-# ---------------------------------------------------------------------------
+
 def test_verdict_vocabulary() -> None:
     from agent import verifier
 
@@ -137,13 +135,6 @@ def test_verdict_vocabulary() -> None:
           set(verifier.READ_ONLY_TOOLS),
           sorted(verifier.READ_ONLY_TOOLS))
 
-def _new_verifier() -> Any:
-    from agent.verifier import Verifier
-    # A human path that does not exist loads empty and never touches the real
-    # %LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl.
-    missing = Path(tempfile.gettempdir()) / "dofus_regression_no_human.jsonl"
-    missing.unlink(missing_ok=True)
-    return Verifier(model_path=None, human_path=missing, veto_threshold=0.0)
 
 def test_verifier_rules() -> None:
     from agent import verifier
@@ -240,8 +231,8 @@ def test_verifier_model_contract() -> None:
     for p in (none_human, tmp / "dofus_regression_vb.json", bad):
         try:
             p.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[regression] cleanup unlink failed: %s", exc)
 
 def test_tool_vocabulary() -> None:
     from agent import schema, features
@@ -1822,63 +1813,6 @@ def test_go_relay_suites() -> None:
           (proc.stderr or proc.stdout).strip()[-300:])
     _delegation("go relay tests", True, scripts)
 
-def _find_csharp_compiler() -> Optional[List[str]]:
-    """The compiler builder/build.cs would pick: Roslyn from any .NET SDK, else
-    the .NET Framework csc.exe."""
-    dotnet = shutil.which("dotnet")
-    if dotnet:
-        roots = [Path(os.environ.get("ProgramFiles", "C:\\" + "Program Files")) / "dotnet" / "sdk",
-                 Path(os.environ.get("ProgramFiles(x86)", "C:\\" + "Program Files (x86)")) / "dotnet" / "sdk"]
-        sdks: List[Path] = []
-        for root in roots:
-            try:
-                sdks.extend(sorted(root.iterdir(), reverse=True))
-            except OSError:
-                continue
-        for sdk in sdks:
-            csc = sdk / "Roslyn" / "bincore" / "csc.dll"
-            if csc.exists():
-                return [dotnet, str(csc)]
-    windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
-    for flavour in ("Framework64", "Framework"):
-        csc = windir / "Microsoft.NET" / flavour / os.environ.get("DOFUS_NET_FX_VERSION", "v4." + "0.30319") / "csc.exe"
-        if csc.exists():
-            return [str(csc)]
-    return None
-
-def _builder_host_sources(build_cs: Path) -> List[str]:
-    """The host's .cs files, read out of builder/build.cs.
-
-    The builder is the authority on what DofusFarm.exe is made of; this gate only
-    borrows its answer. Parsing is deliberately narrow -- `Path.Combine(desktopDir,
-    "X.cs")` is the only shape the list uses -- so a reformat that changes the
-    shape returns an empty list and the gate says so instead of silently
-    compiling a subset.
-    """
-    try:
-        text = build_cs.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    # Only the host's list. build.cs also compiles setup.exe and uninstall.exe
-    # from their own `Path.Combine(desktopDir, ...)` blocks, and taking those too
-    # produced `Duplicate 'AssemblyCompany' attribute` -- a gate failure that says
-    # nothing about the host.
-    start = text.find("var farmSources")
-    if start < 0:
-        return []
-    end = text.find("};", start)
-    if end < 0:
-        return []
-    names: List[str] = []
-    for match in re.finditer(
-            r'Path\.Combine\(\s*desktopDir\s*,((?:\s*"[^"]+"\s*,?)+)\s*\)',
-            text[start:end]):
-        parts = re.findall(r'"([^"]+)"', match.group(1))
-        name = "/".join(parts)
-        if name not in names:
-            names.append(name)
-    return names
-
 # Swallowed exceptions in the C# host, measured 2026-11-13 over desktop/*.cs: 446 `catch`
 # blocks whose body is empty once comments are stripped. The distribution is the finding:
 # farmengine.cs 113, WebView2ClientForm.cs 78, mainform.cs 56, installer.cs 34, aipanel.cs 32,
@@ -1890,36 +1824,6 @@ def _builder_host_sources(build_cs: Path) -> List[str]:
 # never needs this constant edited, while a 447th fails the gate. Turning 446 empty bodies
 # into structured logging is a deliberate pass, not something to do blind in a hot path.
 EMPTY_CATCHES_MAX = 446
-
-def _empty_catch_count(sources: List[Path]) -> Tuple[int, List[Tuple[str, int]]]:
-    """Count `catch { }` blocks that swallow, and report the worst files.
-
-    A block is empty when, after removing comments, nothing remains between the braces --
-    which is what makes an exception unobservable rather than handled.
-    """
-    total = 0
-    per_file: List[Tuple[str, int]] = []
-    for path in sources:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        n = 0
-        for m in re.finditer(r"catch\s*(?:\([^)]*\))?\s*\{", text):
-            i = m.end()
-            depth, j = 1, i
-            while j < len(text) and depth:
-                if text[j] == "{":
-                    depth += 1
-                elif text[j] == "}":
-                    depth -= 1
-                j += 1
-            body = re.sub(r"//[^\n]*|/\*.*?\*/", "", text[i:j - 1], flags=re.S).strip()
-            if not body:
-                n += 1
-        if n:
-            per_file.append((path.name, n))
-        total += n
-    per_file.sort(key=lambda row: -row[1])
-    return total, per_file
-
 def test_csharp_error_swallowing_is_bounded() -> None:
     """The host must not grow more places that hide a failure.
 
@@ -9421,8 +9325,8 @@ def test_one_log_record_per_line() -> None:
         for line in written:
             try:
                 parsed.append(json.loads(line))
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("[regression] JSON parse failed: %s", exc)
         check("and both parse back", [r.get("kind") for r in parsed] == ["brain", "step"],
               parsed)
 
@@ -12557,8 +12461,9 @@ def test_observed_quest_ingest() -> None:
         try:
             ingest.main([str(first), "--out", str(out)])
             ingest.main([str(second), "--out", str(out)])
-        except Exception:      # noqa: BLE001 - the checks below report the abort
-            pass
+        except Exception as exc:
+            # the checks below report the abort
+            logger.warning("[regression] ingest merge failed: %s", exc)
         merged = ingest.read_rows(out)
     check("a second run merges with the file instead of replacing it",
           set(merged) == {(999, 5), (3841, 14070), (3841, 14071)}, sorted(merged))
@@ -13298,8 +13203,8 @@ def test_single_control_plane() -> None:
             try:
                 conn, _ = listener.accept()
                 conn.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[regression] drain accept failed: %s", exc)
 
         _threading.Thread(target=_drain, daemon=True).start()
         check("an answered port is visible before a server is built",
@@ -15695,8 +15600,8 @@ def test_counterfactual_factory_alive() -> None:
     stats = {}
     try:
         stats = _json.loads(proc.stdout)
-    except ValueError:
-        pass
+    except ValueError as exc:
+        logger.warning("[regression] harness stdout parse failed: %s", exc)
     check("the harness still generates counterfactual rows",
           proc.returncode == 0 and stats.get("rows", 0) > 0,
           {"rc": proc.returncode, "rows": stats.get("rows"),
@@ -15773,7 +15678,7 @@ def test_no_suite_stops_answering() -> None:
     against the per-suite counts `data/last_gate_run.json` now carries from the previous run.
     """
     section("The gate's own per-suite check counts")
-    entered = _CHECKS
+    entered = _common._CHECKS
     path = REPO_ROOT / "data" / "last_gate_run.json"
     previous: Dict[str, int] = {}
     if path.is_file():
@@ -15799,10 +15704,10 @@ def test_no_suite_stops_answering() -> None:
     added = sorted(name for name in CHECK_COUNTS if name not in previous)
     if added:
         logger.debug("   new since the previous run: %s" % ", ".join(added))
-    own = _CHECKS - entered
+    own = _common._CHECKS - entered
     check("the per-suite counts account for every check this run registered",
-          sum(CHECK_COUNTS.values()) + own == _CHECKS,
-          (sum(CHECK_COUNTS.values()), own, _CHECKS))
+          sum(CHECK_COUNTS.values()) + own == _common._CHECKS,
+          (sum(CHECK_COUNTS.values()), own, _common._CHECKS))
     # A suite that exists and is never called is not "silent", it was never asked:
     # the previous-run comparison above cannot see it, because it has no count in
     # either run. Measured 2026-11-12: three suites -- G112's wall suite, the
@@ -15846,7 +15751,7 @@ def _run_test(fn) -> None:
     from agent import witness
 
     started = time.perf_counter()
-    before = _CHECKS
+    before = _common._CHECKS
     name = getattr(fn, "__name__", str(fn))
     # What the test executes, reads and spawns, recorded for the mutation ratchet. Off
     # unless `run()` installed the instrument, so `scratch/one_test.py` stays untouched.
@@ -15872,7 +15777,7 @@ def _run_test(fn) -> None:
                   False, "%s: %s" % (type(exc).__name__, exc))
     finally:
         witness.stop()
-    CHECK_COUNTS[name] = _CHECKS - before
+    CHECK_COUNTS[name] = _common._CHECKS - before
     DURATIONS[name] = round(time.perf_counter() - started, 2)
 
 def run() -> Tuple[int, List[str]]:
@@ -16160,7 +16065,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_mutation_targets_have_witnesses)
     # Last, because it audits the counts every other test registered.
     _run_test(test_no_suite_stops_answering)
-    return _CHECKS, _FAILURES
+    return _common._CHECKS, _FAILURES
 
 def test_fight_hint_tap() -> None:
     section("Fight-time tutorial hint (the challenge step needs a real touchend)")
@@ -17739,8 +17644,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "at": time.time(),
             "per_test": CHECK_COUNTS,
         }), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[regression] summary write failed: %s", exc)
     logger.debug("\n%d checks, %d failed" % (checks, len(failures)))
     if failures:
         logger.debug("\nFAILURES:\n  " + "\n  ".join(failures))

@@ -3472,8 +3472,8 @@ def eval_one_mutation(item, in_place: bool = False):
         finally:
             try:
                 shadow.unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[mutate_cause_gate] shadow cleanup failed: %s", exc)
 
 
 def main():

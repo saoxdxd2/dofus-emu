@@ -404,8 +404,8 @@ class BrainDaemon:
                 legacy.write_text(json.dumps(payload), encoding="utf-8")
             else:
                 legacy.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[brain_daemon] legacy write failed: %s", exc)
 
     def _policy(self, config: Dict[str, Any]):
         ns = argparse.Namespace(
@@ -438,8 +438,8 @@ class BrainDaemon:
         stop_path = self.log_dir / ("AUTOPILOT_STOP.%s" % instance)
         try:
             stop_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[brain_daemon] stop_path unlink failed: %s", exc)
         goals = config.get("goals") or ["do all the quests"]
         if isinstance(goals, str):
             goals = [line.strip() for line in goals.splitlines() if line.strip()]
@@ -619,8 +619,8 @@ class BrainDaemon:
                     try:
                         item.stop_path.write_text(why + " at " + time.strftime("%H:%M:%S"),
                                                   encoding="utf-8")
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        logger.warning("[brain_daemon] stop_path write failed: %s", exc)
                 stopped.append(item.status())
             self._write_daemon_lock()
         return {"ok": True, "stopped": stopped}

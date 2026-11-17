@@ -29,6 +29,8 @@ from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 from agent import consult_gate
 from agent.calibration import HierarchicalLogOddsTracker
 from agent.objective_ledger import ObjectiveLedger
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "models" / "tool_policy.onnx"))
@@ -530,8 +532,9 @@ class NNPlanner(QuestPlanner):
             try:
                 from ai.guard_policy import legality_mask
                 logits = legality_mask(logits, self.tools, obs)
-            except Exception:  # noqa: BLE001 - legality must never break planning
-                pass
+            except Exception as exc:
+                # legality must never break planning
+                logger.warning("[planner_nn] legality mask failed: %s", exc)
             # The dedicated model also predicts whether this step advances the
             # objective. Recorded for calibration and checked below as a progress-gate
             # veto: when self.last_value < 0.25 (or streak >= 2), the agent defers.
@@ -561,8 +564,9 @@ class NNPlanner(QuestPlanner):
                             for hyp in rec.hypotheses:
                                 if hyp.refuted and hyp.tool in self.tools:
                                     scores[self.tools.index(hyp.tool)] = float("-inf")
-                    except Exception:  # noqa: BLE001 - ledger must never break planning
-                        pass
+                    except Exception as exc:
+                        # ledger must never break planning
+                        logger.warning("[planner_nn] ledger sync failed: %s", exc)
             policy_tool = self.tools[int(max(range(len(scores)),
                                              key=lambda i: scores[i]))]
             stacked = self._stack_choice(x[0], logits)
@@ -637,8 +641,8 @@ class NNPlanner(QuestPlanner):
             if hasattr(super(), "note_result"):
                 try:
                     super().note_result(tool, ok, note, obs, kwargs.get("detail"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("[planner_nn] note_result failed: %s", exc)
         elif "failed" in kwargs or "latency_s" in kwargs:
             latency_s = float(kwargs.get("latency_s", 0.0))
             failed = bool(kwargs.get("failed", False))
@@ -708,7 +712,8 @@ class NNPlanner(QuestPlanner):
                 if npc is not None and self.store is not None:
                     try:
                         need = self.store.get("npc_map", "npc:%d" % int(npc))
-                    except Exception:  # noqa: BLE001
+                    except Exception as exc:
+                        logger.warning("[planner_nn] store get failed: %s", exc)
                         need = None
             if need is not None:
                 try:

@@ -24,6 +24,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 NET = Path(__file__).resolve().parent.parent
 PORT = 8897
@@ -54,8 +56,9 @@ def wait_for_port(deadline_s: float) -> bool:
             health = call("GET", "/brain/health", timeout=3)
             if health.get("service") == "dofus-brain":
                 return True
-        except Exception:  # noqa: BLE001 - the port is not listening yet
-            pass
+        except Exception as exc:
+            # the port is not listening yet
+            logger.debug("[prove_console_guard] port wait: %s", exc)
         time.sleep(0.7)
     return False
 
@@ -125,11 +128,12 @@ def main() -> int:
         try:
             proc.terminate()
             proc.wait(timeout=10)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            logger.debug("[prove_console_guard] terminate failed: %s", exc)
             try:
                 proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc2:
+                logger.debug("[prove_console_guard] kill failed: %s", exc2)
 
 
 if __name__ == "__main__":

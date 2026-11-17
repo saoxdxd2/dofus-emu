@@ -584,8 +584,9 @@ def estimate_from_facts(
                 notes.append(
                     "player damage corrected x%.3f from %d live shadow residuals"
                     % (factor, int(overall.get("rows") or 0)))
-        except Exception:  # noqa: BLE001 - calibration must never block an estimate
-            pass
+        except Exception as exc:
+            # calibration must never block an estimate
+            logger.warning("[fight_estimate] calibration failed: %s", exc)
 
     player_hp = max(0.0, float(player.current_hp or player.max_hp or 0.0))
     if player_hp <= 0:
@@ -1701,8 +1702,8 @@ class FightOutcomeLog:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[fight_estimate] outcome log write failed: %s", exc)
 
 
 def _hp_of(observation: Optional[Dict[str, Any]]) -> Optional[float]:

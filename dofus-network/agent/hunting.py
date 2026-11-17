@@ -30,6 +30,8 @@ import json
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STATE = REPO_ROOT / "models" / "hunt_policy.json"
@@ -362,8 +364,9 @@ def _data_of(result: Any) -> Dict[str, Any]:
         inner = payload_of(result)
         if inner:
             return inner
-    except Exception:  # noqa: BLE001 - the fallback below is always correct
-        pass
+    except Exception as exc:
+        # the fallback below is always correct
+        logger.warning("[hunting] page read failed: %s", exc)
     data = getattr(result, "data", None)
     return data if isinstance(data, dict) else {}
 

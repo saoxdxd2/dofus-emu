@@ -15,6 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.bridge import local_headers, local_opener  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 BRAIN = "http://127.0.0.1:8895"
 LOG = Path.home() / "AppData" / "Local" / "DofusFarm" / "autopilot.dofus-01.jsonl"
@@ -65,8 +67,8 @@ def main(argv):
             continue
         try:
             rows.append(json.loads(line))
-        except ValueError:
-            pass
+        except ValueError as exc:
+            logger.warning("[live_run] JSON parse failed: %s", exc)
     steps_rows = [r for r in rows if "kind" not in r and "index" in r]
     for row in steps_rows:
         print("%-3s %-20s %-8s %-7s %s" % (

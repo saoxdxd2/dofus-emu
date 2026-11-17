@@ -123,7 +123,7 @@ namespace DofusFarm.Engine
                 if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
                 return uri.IsLoopback;
             }
-            catch { return false; }
+            catch { Debug.WriteLine("[WARN] LocalSecret.IsLoopbackUrl: " + ex.Message); return false; }
         }
 
         private static string NewToken()

@@ -1703,8 +1703,9 @@ class ToolExecutor:
                 hits = self.canonical_store.find_entity(kind, text, limit=1)
                 if hits:
                     return int(hits[0]["id"])
-            except Exception:  # noqa: BLE001 - fall back to the lazy index
-                pass
+            except Exception as exc:
+                # fall back to the lazy index
+                logger.warning("[executor] canonical store lookup failed: %s", exc)
         try:
             hits = self.knowledge.search(text, kind, 1)
         except Exception:  # noqa: BLE001 - an index problem is a resolution miss

@@ -16,6 +16,8 @@ import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import logging
+logger = logging.getLogger(__name__)
 
 CHANNEL_ALIASES = {
     "team": "team", "équipe": "team", "equipe": "team", "equipo": "team",
@@ -58,8 +60,8 @@ def decode_slots(text: str, offsets: Sequence[Tuple[int, int]], tags: Sequence[i
                 if digits not in ("", "-"):
                     try:
                         slots[slot] = int(digits)
-                    except ValueError:
-                        pass
+                    except ValueError as exc:
+                        logger.warning("[command_onnx] int parse failed for %r: %s", slot, exc)
             elif slot == "channel":
                 slots[slot] = CHANNEL_ALIASES.get(raw.lower(), raw.lower())
             elif raw:

@@ -167,8 +167,8 @@ def _character_element(obs: Dict[str, Any]) -> str:
             bid = int(breed_val)
             if bid in _BREED_ID_DEFAULT_ELEMENT:
                 return _BREED_ID_DEFAULT_ELEMENT[bid]
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning("[dialog_policy] breed parse failed: %s", exc)
         b_str = unicodedata.normalize("NFKD", str(breed_val)).encode("ascii", "ignore").decode("ascii").casefold().strip()
         for b_name, elem in _BREED_DEFAULT_ELEMENT.items():
             if b_name in b_str:
@@ -215,7 +215,8 @@ def _needs_travel(obs: Dict[str, Any]) -> bool:
     """Whether an open objective names a map other than the one the player is on."""
     try:
         here = int(obs.get("map_id"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("[dialog_policy] map_id parse failed: %s", exc)
         here = None
     entries = [obs.get("current_objective")] + list(obs.get("ready_objectives") or [])
     for entry in entries:
@@ -223,7 +224,8 @@ def _needs_travel(obs: Dict[str, Any]) -> bool:
             continue
         try:
             need = int(entry.get("map_id"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("[dialog_policy] entry map_id parse failed: %s", exc)
             need = None
         if need is not None and need > 0 and (here is None or need != here):
             return True
@@ -265,8 +267,8 @@ def _quest_id(obs: Dict[str, Any], knowledge: Dict[str, Any]) -> Optional[int]:
         try:
             quest_id = int(ready[0].get("quest_id"))
             return quest_id if quest_id > 0 else None
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.warning("[dialog_policy] quest_id parse failed: %s", exc)
     return None
 
 

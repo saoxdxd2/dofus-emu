@@ -71,8 +71,8 @@ class NetworkHealthBridge:
                 if resp.status == 200:
                     data = resp.read()
                     return json.loads(data.decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("[bridge] request failed: %s", exc)
         return None
 
     def poll_once(self) -> dict[str, Any]:

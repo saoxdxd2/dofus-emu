@@ -300,8 +300,9 @@ def _observation_text(observation: Any, limit: int = 1200) -> Optional[str]:
         world_line = describe_world_text(observation)
         if world_line:
             lines.append("world: " + world_line)
-    except Exception:  # noqa: BLE001 - perception must never break rendering
-        pass
+    except Exception as exc:
+        # perception must never break rendering
+        logger.warning("[tool_dataset] world_text render failed: %s", exc)
 
     last_nav = observation.get("last_nav")
     if isinstance(last_nav, dict) and last_nav:
@@ -326,8 +327,9 @@ def _observation_text(observation: Any, limit: int = 1200) -> Optional[str]:
         if qws:
             lines.append(qws)
             rendered.add("quest_working_set")
-    except Exception:  # noqa: BLE001 - perception must never break rendering
-        pass
+    except Exception as exc:
+        # perception must never break rendering
+        logger.warning("[tool_dataset] quest_working_set render failed: %s", exc)
 
     inventory = observation.get("inventory")
     if isinstance(inventory, dict):

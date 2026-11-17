@@ -27,6 +27,7 @@ encoder is enough for the language part: the world model is *not* in the model.
 
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import mmap as _mmap
 import unicodedata
@@ -35,6 +36,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from ai.data_splits import normalize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO_ROOT / "data" / "cache"
@@ -546,6 +549,7 @@ class KnowledgeBase:
                 return True
         return False
 
+    @lru_cache(maxsize=1024)
     def _trigram_rows(self, table: str, text: str) -> Optional[np.ndarray]:
         """Rows whose folded name shares the query's trigrams, or None if unknown."""
         # `_name_hits` is called with "item_name"; the index is stored per table

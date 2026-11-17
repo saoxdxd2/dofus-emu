@@ -29,6 +29,8 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+import logging
+logger = logging.getLogger(__name__)
 
 # The repo root: `dofus-network/agent/witness.py` -> `dofus-network` -> the repo. Targets
 # live on both sides of it (`desktop/program.cs` above, `agent/planner.py` below), so
@@ -83,8 +85,9 @@ def _audit(event: str, args) -> None:
                 cur["spawn"].add(" ".join(str(a) for a in argv))
             elif argv:
                 cur["spawn"].add(str(argv))
-    except Exception:  # noqa: BLE001 - an audit hook that raises kills the process
-        pass
+    except Exception as exc:
+        # an audit hook that raises kills the process
+        logger.warning("[witness] audit hook failed: %s", exc)
 
 
 def install() -> bool:

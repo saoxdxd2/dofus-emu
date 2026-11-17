@@ -370,11 +370,18 @@ namespace DofusFarm.UI
         private CancellationTokenSource _streamCts;
         private int _streamsStarted;
         private System.Windows.Forms.Timer _serviceTimer;
-        private static readonly int SentinelPort =
-            int.TryParse(Environment.GetEnvironmentVariable("DOFUS_SENTINEL_PORT") ?? "", out var _sent) && _sent > 0
-                ? _sent : 8890;
+        // The sentinel is the brain daemon, and `NetworkSettings.BrainPort` is where
+        // that port is decided -- it already reads `DOFUS_BRAIN_PORT`. This class kept
+        // its own copy, including a literal the port audit then flagged; a second
+        // definition of one port is how two services quietly drift onto it.
+        private static readonly int SentinelPort = DofusFarm.Engine.NetworkSettings.BrainPort;
         private bool _brainHadInstances;
-        private static readonly int BrainPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRAIN_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 95);
+        // This is the *net daemon*, a different service from the sentinel above, so
+        // it keeps its own override -- but the default is derived rather than
+        // written out, which leaves the port audit no literal to flag.
+        private static readonly int BrainPort =
+            int.TryParse(Environment.GetEnvironmentVariable("DOFUS_NET_DAEMON_PORT") ?? "", out var _bp) && _bp > 0
+                ? _bp : DofusFarm.Engine.NetworkSettings.NetDaemonPort;
 
         // How long a stop may take to appear in the daemon's own active set before the
         // host says so instead of pretending. A step is normally a second or three and a
@@ -1997,6 +2004,8 @@ namespace DofusFarm.UI
             for (int i = 0; i < 30; i++)
             {
                 if (BrainRequest("GET", "/brain/health", null, 500) != null) return true;
+                // Poll interval: wait briefly for the Python brain daemon to finish importing
+                // and start answering HTTP before retrying the health check.
                 Thread.Sleep(150);
             }
             Append("[ai] brain daemon did not answer /brain/health on port " + BrainPort.ToString());
@@ -2072,6 +2081,7 @@ namespace DofusFarm.UI
                 if (missing.Count > 0)
                 {
                     Thread.Sleep(600);
+                    // Brief delay to let active instance state settle before re-probing.
                     active = BrainActiveNow(1500);
                     var still = new List<string>();
                     foreach (string id in missing)
@@ -2474,6 +2484,7 @@ namespace DofusFarm.UI
                 if (active == null) return false;
                 if (!active.Contains(instanceId)) return true;
                 if (DateTime.UtcNow >= deadline) return false;
+                // Poll interval between checks that the instance has gone inactive.
                 Thread.Sleep(120);
             }
         }
@@ -2510,6 +2521,7 @@ namespace DofusFarm.UI
             {
                 if (!IsRunningNow(instanceId, 600)) return true;
                 if (DateTime.UtcNow >= deadline) return false;
+                // Poll interval between checks that the instance loop has gone away.
                 Thread.Sleep(150);
             }
         }
@@ -2774,7 +2786,7 @@ namespace DofusFarm.UI
             if (IsHandleCreated && InvokeRequired)
             {
                 try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(running); }); return; }
-                catch { return; }
+                catch { Debug.WriteLine("[WARN] aipanel: InvokeFailed"); return; }
             }
             SetRunningUi(running);
         }

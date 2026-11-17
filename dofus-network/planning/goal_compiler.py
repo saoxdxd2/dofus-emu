@@ -22,6 +22,7 @@ from planning.kb import Item, KnowledgeBase
 from planning.planner import Goal
 
 log = logging.getLogger(__name__)
+logger = log
 
 
 @dataclass
@@ -289,8 +290,8 @@ class GoalCompiler:
                 it = self.kb.item(eid)
                 name = it.name if it else str(eid)
                 return eid, max(1, eqty), name
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("[goal_compiler] item parse failed: %s", exc)
 
         if not prose:
             if len(req_items) == 1:
@@ -325,7 +326,7 @@ class GoalCompiler:
                         return hits[0].id, qty_val, hits[0].name
 
         # D. General KB item search for phrases in prose
-        words = prose_clean.split()
+        words = prose.split()
         for length in range(min(5, len(words)), 1, -1):
             for i in range(len(words) - length + 1):
                 phrase = " ".join(words[i:i + length])
@@ -351,6 +352,6 @@ class GoalCompiler:
         if m:
             try:
                 return int(m.group(1))
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("[goal_compiler] qty parse failed: %s", exc)
         return None

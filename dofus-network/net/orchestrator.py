@@ -27,11 +27,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +41,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from agent.bridge import opener_for
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent          # .../dofus-network
 TOKEN_FILE = REPO_ROOT / "data" / "run_token.json"
@@ -83,8 +87,8 @@ def run_token(path: Path = TOKEN_FILE, now: Optional[float] = None,
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps({"token": token, "created": stamp,
                                             "pid": os.getpid()}), encoding="utf-8")
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[orchestrator] token write failed: %s", exc)
     os.environ[SESSION_TOKEN_ENV] = token
     return token
 
@@ -343,8 +347,8 @@ def attest_exit(port: int = 40000, fetch: Optional[Callable[[str], Optional[str]
     try:
         store.parent.mkdir(parents=True, exist_ok=True)
         store.write_text(json.dumps({"exit": body, "at": round(time.time(), 3)}), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[orchestrator] status write failed: %s", exc)
     return out
 
 
@@ -568,8 +572,8 @@ def write_status(report: Dict[str, Any]) -> None:
     try:
         STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
         STATUS_PATH.write_text(json.dumps(report, default=str), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("[orchestrator] status persist failed: %s", exc)
 
 
 def report_now(refresh: bool = False) -> Dict[str, Any]:
@@ -592,8 +596,8 @@ def report_now(refresh: bool = False) -> Dict[str, Any]:
                 report.setdefault("problems", [r["component"] for r in report["components"]
                                                if r.get("state") != "answering"])
                 return report
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            logger.warning("[orchestrator] classify failed: %s", exc)
     try:
         report = status()
     except Exception as exc:                                # noqa: BLE001 - the route must answer
@@ -613,8 +617,6 @@ def start_watchdog(interval_s: float = 120.0, log: Optional[Callable[[str], None
     fetch in this file goes through the tunnel, and a failure to attest is reported, not retried
     direct.
     """
-    import threading
-
     stop = stop or threading.Event()
 
     def loop() -> None:

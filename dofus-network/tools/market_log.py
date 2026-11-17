@@ -33,6 +33,9 @@ that a non-zero exit for a pipeline that depends on the join.
 from __future__ import annotations
 
 import argparse
+import logging
+
+logger = logging.getLogger("dofus.tools.market_log")
 import glob
 import json
 import os
@@ -351,8 +354,8 @@ def _scan_frame(event: Dict[str, Any], stats: Dict[str, Any]) -> None:
             try:
                 json.loads(preview)
                 stats["parseable_previews"] += 1
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("[market_log] preview parse failed: %s", exc)
         return
     prices = args.get("avgPrices") or args.get("prices")
     if isinstance(prices, list):

@@ -43,6 +43,8 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = REPO_ROOT.parent
@@ -360,8 +362,8 @@ class Supervisor:
             if self.advisor is not None and remedy:
                 try:
                     self.advisor.learn(situation, remedy)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:
+                    logger.warning("[forever] advisor learn failed: %s", exc)
                 self._pending[component.name] = {"remedy": remedy,
                                                  "situation": situation}
             try:
@@ -399,8 +401,9 @@ class Supervisor:
         if self.advisor is not None:
             try:
                 self.advisor.label(component.name, outcome)
-            except Exception:  # noqa: BLE001 - learning must never stop a repair
-                pass
+            except Exception as exc:
+                # learning must never stop a repair
+                logger.warning("[forever] advisor label failed: %s", exc)
 
     def run(self, max_ticks: Optional[int] = None) -> Dict[str, Any]:
         """Loop until the stop file appears. Every exit is a deliberate one."""

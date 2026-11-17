@@ -50,6 +50,7 @@ back to its level prior. Missing is not zero.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
@@ -470,7 +471,22 @@ def _live_damage(effects: Any) -> List[Tuple[str, int, int]]:
     return [(best, per_element[best][0], per_element[best][1])]
 
 
-@lru_cache(maxsize=1)
+def _entry_cap(variable: str, fallback: int) -> int:
+    """Cache size from the environment, or ``fallback`` when unset or unusable."""
+    try:
+        value = int(os.environ.get(variable, ""))
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
+
+
+#: How many loaded monster tables to keep. One costs 10-20 MB, so the default is
+#: one; a machine with the memory and several slots can raise it rather than the
+#: number being decided for everyone in source.
+MECHANICS_CACHE_ENTRIES = _entry_cap("DOFUS_MECHANICS_CACHE_ENTRIES", 1)
+
+
+@lru_cache(maxsize=MECHANICS_CACHE_ENTRIES)
 def mechanics() -> MonsterMechanics:
     """Process-wide instance; the cache file is 10-20 MB."""
     return MonsterMechanics.load()

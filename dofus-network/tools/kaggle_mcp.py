@@ -34,6 +34,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import logging
+logger = logging.getLogger(__name__)
 
 URL = "https://www.kaggle.com/mcp"
 PROTOCOL = "2025-06-18"
@@ -62,8 +64,8 @@ def resolve_token() -> str:
             payload = json.loads(legacy.read_text(encoding="utf-8"))
             if payload.get("key"):
                 return str(payload["key"]).strip()
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as exc:
+            logger.warning("[kaggle_mcp] legacy token parse failed: %s", exc)
     raise SystemExit("no Kaggle token: set KAGGLE_API_TOKEN or ~/.kaggle/access_token")
 
 

@@ -155,6 +155,28 @@ class GeometryTests(unittest.TestCase):
             ce.choke_bonus(self.field, self.walk[0], [self.walk[0]],
                            [self.walk[200]]), 0.0)
 
+    def test_the_map_median_is_not_recomputed_per_scored_cell(self):
+        """Recomputing it per cell cost 84.9 s on one fuzz board, 0.28 s cached."""
+        import numpy as np
+        field = self.field
+        enemy, ally = self.walk[100], self.walk[400]
+        field.resistance_median                       # warm the map constant
+        real, calls = np.median, []
+
+        def counting(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        np.median = counting
+        try:
+            for cell in self.walk[:40]:
+                ce.choke_bonus(field, cell, [ally], [enemy])
+        finally:
+            np.median = real
+        self.assertEqual(len(calls), 0,
+                         "choke_bonus recomputed the map median %d times over 40 cells"
+                         % len(calls))
+
 
 class TrapIsReachableTests(unittest.TestCase):
     """Gate 1: a trap spell must produce templates at all."""

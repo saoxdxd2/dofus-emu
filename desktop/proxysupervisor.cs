@@ -319,7 +319,7 @@ namespace DofusFarm.Engine
             //
             // This is the fast path and the stable one. Waiting for a full probe round cost up to
             // ProbeTimeoutMs + 5s before the first client could connect, and the egress it landed
-            // on was often a different address than the one the last session used — which is the
+            // on was often a different address than the one the last session used ï¿½ which is the
             // reconnect-from-a-new-IP pattern the server closes.
             if (!forceRefresh)
             {
@@ -396,7 +396,7 @@ namespace DofusFarm.Engine
                 // This used to give up after 6 s while the refresh it was waiting on allows
                 // itself ProbeTimeoutMs + 5 s. With a dozen slow candidates the first launch of
                 // the session therefore always saw "no healthy egress" and refused, and then the
-                // supervisor found a perfectly good egress 45 s later — which reads as "the pool
+                // supervisor found a perfectly good egress 45 s later ï¿½ which reads as "the pool
                 // is dead" when it was only still being tested.
                 ProxyCandidate wait = Active;
                 int budgetMs = ProbeTimeoutMs + 6000;
@@ -404,6 +404,7 @@ namespace DofusFarm.Engine
                 while (wait == null && waited < budgetMs)
                 {
                     Thread.Sleep(100);
+                    // Poll interval while waiting for a healthy egress proxy to become available.
                     waited += 100;
                     wait = Active;
                 }
@@ -535,7 +536,7 @@ namespace DofusFarm.Engine
                     // probe outlives it, its slot is still null. The healthy-list loop below
                     // skips nulls, but this array is what Describe() walks, and
                     // `foreach (c in all) if (c.Healthy)` on a null slot throws on a thread-pool
-                    // thread — which is not catchable and takes the whole process down. That was
+                    // thread ï¿½ which is not catchable and takes the whole process down. That was
                     // the "Fatal Error: Object reference not set to an instance of an object"
                     // arriving from SettingsPage.RefreshNetState while the supervisor was still
                     // probing.
@@ -550,7 +551,7 @@ namespace DofusFarm.Engine
                     // This used to compare against `_active`, which `best == null` also clears.
                     // So one probe pass that missed every candidate set _active to null, the
                     // next pass picked the same tunnel again, `changed` fired, and
-                    // RebuildAllRelays stopped and restarted the relay on the same port —
+                    // RebuildAllRelays stopped and restarted the relay on the same port ï¿½
                     // dropping every live socket, including the game connection. From the
                     // client that is "it was not possible to connect to the server", right after
                     // a login that had just worked, and it repeated because the tunnel's latency
@@ -644,7 +645,7 @@ namespace DofusFarm.Engine
         /// Probe with an explicit timeout. The pinned-egress check runs on the launch path, and
         /// paying the full 8 s there is 8 s of a window that has not appeared yet: measured 6.6 s
         /// before the client could even start. A pinned proxy that cannot answer in a couple of
-        /// seconds is not worth waiting for — the pool is right behind it.
+        /// seconds is not worth waiting for ï¿½ the pool is right behind it.
         /// </summary>
         private ProxyCandidate Probe(string url, string source, int timeoutMs)
         {
@@ -877,7 +878,7 @@ namespace DofusFarm.Engine
         /// The hops the relay may use to reach a fixed exit, comma separated.
         ///
         /// The pick is no longer one of them: it becomes the exit, the address Ankama is allowed
-        /// to see. These are the disposable middle of the path — the relay races them and takes
+        /// to see. These are the disposable middle of the path ï¿½ the relay races them and takes
         /// whichever can reach the exit, so any of them can die without the session's identity
         /// changing.
         /// </summary>
@@ -899,7 +900,7 @@ namespace DofusFarm.Engine
             // Then the ones that did not answer the probe, as last resort.
             //
             // A chain built only from candidates that passed leaves a one-deep chain whenever the
-            // pool is thin, and a one-deep chain cannot survive its upstream dying — the relay
+            // pool is thin, and a one-deep chain cannot survive its upstream dying ï¿½ the relay
             // then has nothing to fail over to and the session ends. That is exactly what the log
             // showed: one upstream, dead five seconds in, "servers under maintenance".
             //

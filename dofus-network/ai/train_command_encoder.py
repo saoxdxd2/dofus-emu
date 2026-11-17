@@ -32,9 +32,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import logging
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -322,8 +325,8 @@ def _decode_slots(text: str, offsets: List[Tuple[int, int]], tags: List[int],
                 if digits not in ("", "-"):
                     try:
                         slots[slot] = int(digits)
-                    except ValueError:
-                        pass
+                    except ValueError as exc:
+                        logger.warning("[train_command_encoder] slot int parse failed: %s", exc)
             elif slot == "channel":
                 slots[slot] = CHANNEL_ALIASES.get(raw.lower(), raw.lower())
             elif raw:

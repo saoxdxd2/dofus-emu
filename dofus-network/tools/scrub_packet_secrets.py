@@ -19,6 +19,8 @@ import os
 import re
 import sys
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DATA = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "DofusFarm"
@@ -56,8 +58,8 @@ def scrub(path: Path, write: bool) -> int:
             print("  LOCKED %s (%s); left as it was" % (path, exc))
             try:
                 tmp.unlink()
-            except OSError:
-                pass
+            except OSError as exc2:
+                logger.warning("[scrub_packet_secrets] tmp cleanup failed: %s", exc2)
             return -count
     return count
 

@@ -49,6 +49,8 @@ from agent.features import (TOOLS, TOOL_INDEX, objective_features,  # noqa: E402
                             objective_type)
 from agent.planner import QuestPlanner, args_for_tool  # noqa: E402
 from sim.world import World  # noqa: E402
+import logging
+logger = logging.getLogger(__name__)
 
 DEPTH = 5
 
@@ -361,8 +363,8 @@ def _parallel(args: argparse.Namespace) -> int:
                         counts[name] += 1
                         try:
                             tools[json.loads(line)["tool"]] += 1
-                        except Exception:  # noqa: BLE001
-                            pass
+                        except Exception as exc:
+                            logger.warning("[tool_choice] tool count failed: %s", exc)
 
     total = counts["train"] + counts["val"]
     if total == 0:

@@ -8,7 +8,10 @@ Kaggle toolkit dependency-free.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 try:
     import orjson as _orjson
@@ -22,10 +25,10 @@ def dumps_bytes(value: Any) -> bytes:
     if _orjson is not None:
         try:
             return _orjson.dumps(value, option=_OPTIONS)
-        except TypeError:
+        except TypeError as exc:
             # Types or keys the installed orjson cannot represent still have a
             # stdlib path; the fallback keeps a logging call from killing a run.
-            pass
+            logger.warning("[jsonio] orjson dump failed: %s", exc)
     return json.dumps(value, ensure_ascii=False).encode("utf-8")
 
 

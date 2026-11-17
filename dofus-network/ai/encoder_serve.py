@@ -44,6 +44,8 @@ from typing import Any, Dict, List, Optional
 from agent.runtime import ToolCall
 from agent.schema import validate_call
 from ai.lang_detect import reply_language
+import logging
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -139,8 +141,8 @@ class EncoderToolPolicy:
             payload = getattr(self.gazetteer, "payload", None) or {}
             try:
                 total += len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) / 1e6
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.warning("[encoder_serve] resolver size failed: %s", exc)
         if self.kb is not None:
             stats = self.kb.stats()
             total += float(stats.get("arrays_mb", 0.0)) + float(stats.get("names_mb", 0.0))

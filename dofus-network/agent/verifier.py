@@ -318,8 +318,8 @@ class HumanLabels:
                         source="human",
                         reasons=("human:" + str(row.get("note", "")),) if row.get("note") else ("human",),
                     )
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.warning("[verifier] human labels read failed: %s", exc)
 
     def get(self, session: str, index: int) -> Optional[Verdict]:
         self._reload_if_changed()
@@ -604,8 +604,8 @@ def _main(argv: list[str]) -> int:
         if len(args) > i + 2:
             try:
                 limit = int(args[i + 2])
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("[verifier] limit parse failed: %s", exc)
         rows = [r for r in read_steps(log) if str(r.get("session")) == sid]
         if not rows:
             logger.debug("no steps for session %s in %s" % (sid, log))

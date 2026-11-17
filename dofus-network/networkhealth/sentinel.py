@@ -874,8 +874,9 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                     model=_mv,
                     resolved_tool=None if directive == "CUSTOM_ACTION" else directive,
                     channel="parse_command")
-            except Exception:      # noqa: BLE001 - capture is append-only and must never break a command
-                pass
+            except Exception as exc:
+                # capture is append-only and must never break a command
+                logger.warning("[sentinel] command capture failed: %s", exc)
 
             self._send_json(200, resp_data)
 
