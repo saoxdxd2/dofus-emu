@@ -231,6 +231,15 @@ class NNPlanner(QuestPlanner):
         # Predicted probability that the next action advances the objective, when the
         # loaded model has a value head. None for the shipped 21-logit MLP.
         self.last_value: Optional[float] = None
+        # Phase 1 activation steering: a direction in the 192-wide pre-logit
+        # space plus the classifier rows needed to turn it into a logit delta.
+        # `hidden_index` is the position of that tensor in the session outputs,
+        # or -1 when the base graph (which does not expose it) is loaded.
+        self.steering: Optional[Dict[str, Any]] = None
+        self.probe: Optional[Dict[str, Any]] = None
+        self.hidden_output = ""
+        self.hidden_index = -1
+        self.last_probe: Optional[Dict[str, Any]] = None
 
     def _ensure_model(self) -> None:
         if self._model_loaded:
@@ -242,11 +251,63 @@ class NNPlanner(QuestPlanner):
             return
         try:
             from agent.model_cache import onnx_session
-            self.session = onnx_session(str(path))
             self.model_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            meta = path.with_suffix(".json")
+            payload: Dict[str, Any] = {}
+            if meta.exists():
+                try:
+                    payload = json.loads(meta.read_text(encoding="utf-8"))
+                except ValueError:
+                    payload = {}
+            sidecar_tools = list(payload.get("tools") or [])
+            # The SAE and the transition probe both read the pre-logit tensor.
+            # The shipped graph does not expose it, so a generated copy beside
+            # the model is used when an artifact matches this exact checkpoint.
+            # A mismatch is a different model: fail open to the base graph
+            # rather than steer the wrong hidden state.
+            hidden_path = path.with_name("tool_policy_hidden.onnx")
+            steering: Optional[Dict[str, Any]] = None
+            probe: Optional[Dict[str, Any]] = None
+            if hidden_path.exists():
+                sae_path = path.with_name("tool_policy_sae.json")
+                if sae_path.exists():
+                    try:
+                        cand = json.loads(sae_path.read_text(encoding="utf-8"))
+                        block = cand.get("steering") or {}
+                        if (cand.get("model_sha256") == self.model_sha256
+                                and list(cand.get("tools") or []) == sidecar_tools
+                                and float(block.get("alpha") or 0.0) != 0.0):
+                            steering = block
+                    except (OSError, ValueError):
+                        steering = None
+                probe_path = path.with_name("tool_policy_probe.json")
+                if probe_path.exists():
+                    try:
+                        cand = json.loads(probe_path.read_text(encoding="utf-8"))
+                        if cand.get("model_sha256") == self.model_sha256:
+                            probe = cand
+                    except (OSError, ValueError):
+                        probe = None
+            use_hidden = bool(steering or probe)
+            self.session = onnx_session(str(hidden_path if use_hidden else path))
+            self.hidden_output = ""
+            self.hidden_index = -1
+            if use_hidden:
+                names = [item.name for item in self.session.get_outputs()]
+                wanted = ((steering or {}).get("hidden_output")
+                          or (probe or {}).get("hidden_output") or "")
+                if wanted in names:
+                    self.hidden_output = wanted
+                    self.hidden_index = names.index(wanted)
+                else:
+                    use_hidden = False
+                    steering = None
+                    probe = None
+                    self.session = onnx_session(str(path))
+            self.steering = steering
+            self.probe = probe
             self.input_name = self.session.get_inputs()[0].name
             self.expected_features = int(self.session.get_inputs()[0].shape[1])
-            meta = path.with_suffix(".json")
             if meta.exists():
                 payload = json.loads(meta.read_text(encoding="utf-8"))
                 self.tools = payload.get("tools") or []
@@ -479,6 +540,84 @@ class NNPlanner(QuestPlanner):
 
     # -- learned choice ----------------------------------------------------
 
+    def _apply_activation_steering(self, logits: Any, hidden: Any,
+                                   features: Any) -> Any:
+        """Add the SAE direction's logit delta, gated by a state feature.
+
+        The artifact's direction lives in the same 192-wide pre-logit space the
+        classifier reads, so a step of size ``alpha`` along it changes every
+        tool's logit by exactly ``(W_out @ d) * logit_scale``. The gate is a
+        feature of the state, not a tool predicate: on the measured val split
+        every nav.goto <-> quest.advance confusion row has
+        ``hops_to_target == 0``, so the literal off-map predicate never fires;
+        ``obs_stale`` covers 35/65 of those rows and is what was selected on
+        train and scored once on val.
+
+        Shape mismatches return the logits untouched. A stale artifact beside
+        a newer checkpoint must fail open, not crash the planner.
+        """
+        block = getattr(self, "steering", None)
+        if block is None:
+            return logits
+        import numpy as np
+        h = np.asarray(hidden, dtype=np.float32)
+        direction = np.asarray(block.get("d_off_map") or [], dtype=np.float32)
+        weight = np.asarray(block.get("w_out") or [], dtype=np.float32)
+        mask = block.get("mask") or {}
+        feature = int(mask.get("feature", -1))
+        threshold = float(mask.get("threshold", 0.5))
+        state = np.asarray(features, dtype=np.float32)
+        if (direction.shape != h.shape
+                or weight.shape != (len(self.tools), h.shape[0])
+                or not 0 <= feature < state.shape[0]
+                or float(state[feature]) < threshold):
+            return logits
+        alpha = float(block.get("alpha") or 0.0)
+        scale = float(block.get("logit_scale") or 1.0)
+        projection = max(0.0, float(h @ direction))
+        if projection <= 0.0 or alpha == 0.0:
+            return logits
+        effect = (weight @ direction) * scale
+        return logits - (alpha * projection) * effect
+
+    def _apply_transition_probe(self, logits: Any, hidden: Any) -> Any:
+        """Score the transition probe and, only if enabled, penalise non-reads.
+
+        The probe asks the hidden state whether this decision changes the world.
+        The shipped artifact is disabled (val AUC 0.5594, test AUC 0.5588, both
+        below the 0.65 enable rule), so ``last_probe`` records the score for the
+        decision log and the logits are returned unchanged. The penalty path is
+        kept and tested so enabling the probe is an artifact edit, not a code
+        change.
+        """
+        self.last_probe = None
+        block = getattr(self, "probe", None)
+        if block is None:
+            return logits
+        import numpy as np
+        h = np.asarray(hidden, dtype=np.float32)
+        mean = np.asarray(block.get("mean") or [], dtype=np.float32)
+        std = np.asarray(block.get("std") or [], dtype=np.float32)
+        w = np.asarray(block.get("w") or [], dtype=np.float32)
+        if mean.shape != h.shape or std.shape != h.shape or w.shape != h.shape:
+            return logits
+        z = float(((h - mean) / np.where(std < 1e-6, 1.0, std)) @ w
+                  + float(block.get("b") or 0.0))
+        score = 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, z))))
+        tau = float(block.get("tau") or 0.5)
+        enabled = bool(block.get("enabled"))
+        self.last_probe = {"score": round(score, 4), "tau": tau,
+                           "enabled": enabled}
+        if not enabled or score >= tau:
+            return logits
+        penalty = float(block.get("penalty") or 0.0)
+        read_only = set(block.get("read_only_tools") or [])
+        out = np.asarray(logits, dtype=np.float32).copy()
+        for index, name in enumerate(self.tools):
+            if name not in read_only:
+                out[index] -= penalty
+        return out
+
     def _choose_tool(self, quest: Dict[str, Any], step_idx: int,
                      obj: Dict[str, Any], obs: Dict[str, Any]) -> Optional[str]:
         self._ensure_model()
@@ -516,6 +655,16 @@ class NNPlanner(QuestPlanner):
             if len(logits) != len(self.tools):
                 raise ValueError("model scored %d tools, sidecar names %d"
                                  % (len(logits), len(self.tools)))
+            # Phase 1A/1B both read the pre-logit tensor, so they run before
+            # the capability penalty and the legality mask: a steered logit
+            # must still be judged for legality, not steer an illegal tool in.
+            hidden_index = getattr(self, "hidden_index", -1)
+            if 0 <= hidden_index < len(outputs):
+                hidden = outputs[hidden_index][0]
+                logits = self._apply_activation_steering(logits, hidden, x[0])
+                logits = self._apply_transition_probe(logits, hidden)
+            else:
+                self.last_probe = None
             # A capability the corpus never labelled has a descriptor and a
             # score but no calibration. Penalise it by a fixed scalar instead
             # of masking it: it can still win when the state matches it

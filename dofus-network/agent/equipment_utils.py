@@ -7,10 +7,13 @@ agent/planner.py to reduce its size and improve separation of concerns.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from agent.features import _params, TALK_TYPES
 from agent.planner_utils import KNOWN_NPC_NAMES
+
+logger = logging.getLogger(__name__)
 
 
 def element_usable(row: Dict[str, Any]) -> bool:
@@ -160,3 +163,28 @@ def quest_target_npcs(obs: Dict[str, Any]) -> Dict[int, List[int]]:
         add(obs["current_objective"])
         check_text(obs["current_objective"])
     return out
+
+
+def _tutorial(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The scripted tutorial block, when the client says a step is running.
+
+    The page publishes this block itself (`scripts/mobile-disguise.js` builds
+    `active`, `quest_id`, `step_id`, `special_step_id`, `hint_target`,
+    `interactive_hint`, `tap_anywhere`, `unblocked_cells`, ...). The planner
+    reads the step's own gates from it instead of deriving a plan the client
+    would refuse, so this is an accessor, not a heuristic.
+    """
+    block = obs.get("tutorial") if isinstance(obs, dict) else None
+    if not isinstance(block, dict) or not block.get("active"):
+        return None
+    return block
+
+
+def _tutorial_quest(obs: Dict[str, Any],
+                    tutorial: Dict[str, Any]) -> Optional[int]:
+    """The quest the scenario is driving, from the block's own quest id."""
+    try:
+        qid = int((tutorial or {}).get("quest_id"))
+    except (TypeError, ValueError):
+        return None
+    return qid if qid > 0 else None

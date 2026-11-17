@@ -2304,26 +2304,13 @@ func (p *ProxyServer) loadModsIfChanged() {
 	if fi.ModTime().Equal(p.modsRulesMod) {
 		return
 	}
-	raw, err := os.ReadFile(rulesPath)
+	loaded, err := nppatch.Load(rulesPath)
 	if err != nil {
-		return
-	}
-	var rules []modRule
-	if err := json.Unmarshal(raw, &rules); err != nil {
 		log.Printf("[MODS] rules.json parse error: %v", err)
 		return
 	}
-	res := make([]*regexp.Regexp, len(rules))
-	for i := range rules {
-		re, err := regexp.Compile(rules[i].Match)
-		if err != nil {
-			log.Printf("[MODS] rule %d has invalid match %q: %v", i, rules[i].Match, err)
-			continue
-		}
-		res[i] = re
-	}
-	p.modsRules, p.modsRes, p.modsRulesMod = rules, res, fi.ModTime()
-	log.Printf("[MODS] loaded %d rule(s) from %s", len(rules), rulesPath)
+	p.modsRules, p.modsRes, p.modsRulesMod = loaded.Rules, loaded.Regex, loaded.Mod
+	log.Printf("[MODS] loaded %d rule(s) from %s", len(loaded.Rules), rulesPath)
 }
 
 func (p *ProxyServer) applyModRules(w http.ResponseWriter, r *http.Request, targetStr string) bool {
@@ -2351,7 +2338,7 @@ func (p *ProxyServer) applyModRules(w http.ResponseWriter, r *http.Request, targ
 			if p.serveModOverride(w, r, rule, targetStr) {
 				return true
 			}
-		case "patch":
+		case "patch", "replace":
 			if p.serveModPatched(w, r, rule, targetStr) {
 				return true
 			}
@@ -2361,12 +2348,11 @@ func (p *ProxyServer) applyModRules(w http.ResponseWriter, r *http.Request, targ
 }
 
 func (p *ProxyServer) serveModOverride(w http.ResponseWriter, r *http.Request, rule modRule, targetStr string) bool {
-	rel := strings.TrimSpace(rule.File)
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+	full, ok := nppatch.SafeModFile(p.modsDir, rule.File)
+	if !ok {
 		p.prefetchLog("[MODS] override rule for %s has invalid file %q", targetStr, rule.File)
 		return false
 	}
-	full := filepath.Join(p.modsDir, filepath.FromSlash(rel))
 	f, err := os.Open(full)
 	if err != nil {
 		p.prefetchLog("[MODS] override file missing: %s", full)
@@ -2778,9 +2764,7 @@ func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
 	p.prefetchMu.Unlock()
 
 	// Drop the job when the pool queue is full: the data plane never blocks on warming.
-if err := p.prefetchPool.Submit(npprefetch.Job{Target: target, ID: id, Depth: 0}); err != nil {
-		log.Printf("[PROXY] submit prefetch job: %v", err)
-}
+	p.prefetchPool.Submit(npprefetch.Job{Target: target, ID: id, Depth: 0})
 }
 
 func (p *ProxyServer) processPrefetchJob(ctx context.Context, job npprefetch.Job) {
@@ -2833,9 +2817,7 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job npprefetch.Job
 		p.prefetchMu.Unlock()
 		if !skip {
 			// Drop the job when the pool queue is full.
-if err := p.prefetchPool.Submit(npprefetch.Job{Target: prefix + "maps/" + strconv.FormatInt(nid, 10) + ".json", ID: nid, Depth: job.Depth + 1}); err != nil {
-		log.Printf("[PROXY] submit prefetch job: %v", err)
-}
+			p.prefetchPool.Submit(npprefetch.Job{Target: prefix + "/maps/" + strconv.FormatInt(nid, 10) + ".json", ID: nid, Depth: job.Depth + 1})
 		}
 	}
 }

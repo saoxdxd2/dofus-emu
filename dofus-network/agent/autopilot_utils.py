@@ -13,11 +13,20 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-def session_close_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
-    """Whether session close is enabled based on environment."""
+def session_close_enabled(environ: Optional[Dict[str, str]] = None,
+                          dry_run: bool = False) -> bool:
+    """Whether a finished run may hand itself to the close pipeline.
+
+    A dry run never closes a session: it wrote no new rows, and the pipeline
+    would rescan the log for nothing. The switch is the same `AUTOPILOT_*`
+    family the rest of the loop uses.
+    """
     import os
+    if dry_run:
+        return False
     env = environ if environ is not None else os.environ
-    return env.get("DOFUS_SESSION_CLOSE", "1") != "0"
+    return str(env.get("AUTOPILOT_SESSION_CLOSE", "1")).lower() not in (
+        "0", "off", "false", "no")
 
 
 def settle_deadline(tool: str, started: float, last_change: float) -> float:
@@ -312,26 +321,35 @@ def _bridge_alive() -> bool:
 
 
 def _world_screen(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Determine which screen the world wait is looking at."""
+    """Name the screen the world wait is looking at.
+
+    A wait that only persisted an elapsed time could not say which screen had
+    held it, so the recovery row could not be triaged. The states are the ones
+    the wait can actually be stuck on, read from the snapshot the loop already
+    carries: no page, login, character selection, or in world.
+    """
     if not isinstance(obs, dict):
-        return {}
-    return {
-        "in_world": obs.get("in_world", False),
-        "in_dialog": obs.get("in_dialog", False),
-        "in_fight": obs.get("in_fight", False),
-        "auto_fight": obs.get("auto_fight", False),
-    }
+        return {"state": "no_snapshot"}
+    if obs.get("in_world") is True:
+        return {"state": "in_world"}
+    if obs.get("in_world") is False:
+        character = obs.get("character")
+        name = character.get("name") if isinstance(character, dict) else None
+        if name:
+            return {"state": "character_selection", "character": name}
+        return {"state": "login"}
+    return {"state": "unknown"}
 
 
 def _screen_text(screen: Optional[Dict[str, Any]]) -> str:
-    """Format screen info as text."""
+    """Format the screen name for the wait's log line."""
     if not isinstance(screen, dict):
         return ""
-    parts = []
-    for key in ("in_world", "in_dialog", "in_fight", "auto_fight"):
-        if screen.get(key):
-            parts.append(key)
-    return ", ".join(parts)
+    state = str(screen.get("state") or "")
+    character = screen.get("character")
+    if state and character:
+        return "%s (%s)" % (state, character)
+    return state
 
 
 def _login_banned(obs: Optional[Dict[str, Any]]) -> bool:
