@@ -692,5 +692,139 @@ class SpentMovementTests(unittest.TestCase):
         self.assertIsNone(action, "out of reach with no MP: nothing to cast")
 
 
+class CommitPlanTests(unittest.TestCase):
+    """A held plan is what a continuation-level gain needs to reach the page.
+
+    400-board side-swap gate: the two-ply arm gains +1.00 over the solver, but
+    1 of its 17 plan changes alters a first action; keeping only first-action
+    changes gives +0.01, the shipped chain's value. Live asks one action at a
+    time, so the chain must hold the turn's plan and emit its actions in
+    order -- re-checked against each fresh board.
+    """
+
+    def setUp(self):
+        from combat.battle_solver import PlannedAction, TurnPlan
+
+        self.PlannedAction = PlannedAction
+        self.TurnPlan = TurnPlan
+
+    def step(self, from_cell=MY_CELL, cell=FOE_CELL, spell_id=10, ap=3,
+             target_id=-1):
+        return self.PlannedAction(kind="cast", spell_id=spell_id,
+                                  from_cell=from_cell, target_id=target_id,
+                                  target_cell=cell, ap_cost=ap)
+
+    def policy(self, steps, calls):
+        plan = self.TurnPlan(actions=list(steps), final_cell=FOE_CELL,
+                             remaining_ap=0, remaining_mp=0.0,
+                             expected_damage=20.0, expected_healing=0.0,
+                             kills=[], score=20.0)
+
+        def plan_candidates(board, k, deadline=None):
+            calls.append(board.my_ap)
+            return [plan]
+
+        policy = policy_stub()
+        policy.solver = SimpleNamespace(
+            plan_candidates=plan_candidates,
+            evaluate_two_ply=lambda *a, **k: None)
+        policy.plan_k = 8
+        policy._value_choice = lambda board, plans: None
+        policy._grid_choice = lambda board, plans: None
+        policy._hp_choice = lambda board, plans: None
+        return policy
+
+    def test_the_default_is_off_and_a_turn_holds_nothing(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DOFUS_COMBAT_COMMIT_PLAN", None)
+            self.assertFalse(LivePolicy._commit_enabled())
+            calls = []
+            policy = self.policy([self.step()], calls)
+            policy._solver_turn(Board.from_fight_state(board_payload()))
+            self.assertIsNone(getattr(policy, "_held_plan", None))
+
+    def test_the_second_action_of_the_held_plan_is_emitted_without_replanning(self):
+        calls = []
+        plan_steps = [self.step(),
+                      self.step(cell=MY_CELL, spell_id=11, ap=1,
+                                target_id=1)]
+        policy = self.policy(plan_steps, calls)
+        with mock.patch.dict(os.environ, {"DOFUS_COMBAT_COMMIT_PLAN": "1"}):
+            first, _f, reason = policy._solver_turn(
+                Board.from_fight_state(board_payload()))
+            self.assertEqual(reason, "solver")
+            self.assertEqual(first, {"type": "cast", "spellId": 10,
+                                     "targetId": -1, "cell": FOE_CELL})
+            payload = board_payload()
+            payload["fighters"][0]["ap"] = 3
+            second, _f, reason = policy._solver_turn(
+                Board.from_fight_state(payload))
+        self.assertEqual(reason, "commit")
+        self.assertEqual(second, {"type": "cast", "spellId": 11,
+                                  "targetId": 1, "cell": MY_CELL})
+        self.assertEqual(len(calls), 1, "the held plan must not re-plan mid-turn")
+        self.assertIsNone(policy._held_plan, "both actions spent the plan")
+
+    def test_a_dead_target_drops_the_plan_and_replans(self):
+        calls = []
+        policy = self.policy([self.step(), self.step()], calls)
+        with mock.patch.dict(os.environ, {"DOFUS_COMBAT_COMMIT_PLAN": "1"}):
+            policy._solver_turn(Board.from_fight_state(board_payload()))
+            payload = board_payload()
+            payload["fighters"][0]["ap"] = 3
+            payload["fighters"][1]["alive"] = False
+            payload["fighters"][1]["hp"] = 0
+            _a, _f, reason = policy._solver_turn(Board.from_fight_state(payload))
+        self.assertEqual(reason, "solver")
+        self.assertEqual(len(calls), 2)
+
+    def test_a_new_round_drops_the_plan(self):
+        calls = []
+        policy = self.policy([self.step(), self.step()], calls)
+        with mock.patch.dict(os.environ, {"DOFUS_COMBAT_COMMIT_PLAN": "1"}):
+            policy._solver_turn(Board.from_fight_state(board_payload()))
+            payload = board_payload()
+            payload["round"] = 2
+            _a, _f, reason = policy._solver_turn(Board.from_fight_state(payload))
+        self.assertEqual(reason, "solver")
+        self.assertEqual(len(calls), 2)
+
+    def test_spent_ap_drops_the_plan(self):
+        calls = []
+        policy = self.policy([self.step(), self.step()], calls)
+        with mock.patch.dict(os.environ, {"DOFUS_COMBAT_COMMIT_PLAN": "1"}):
+            policy._solver_turn(Board.from_fight_state(board_payload()))
+            payload = board_payload()
+            payload["fighters"][0]["ap"] = 2
+            _a, _f, reason = policy._solver_turn(Board.from_fight_state(payload))
+        self.assertEqual(reason, "solver")
+        self.assertEqual(len(calls), 2)
+
+    def test_a_walk_prefix_does_not_consume_the_cast_step(self):
+        from_cell = _POINTS[(11, 10)]
+        target_cell = _POINTS[(12, 10)]
+        calls = []
+        policy = self.policy(
+            [self.step(from_cell=from_cell, cell=target_cell)], calls)
+        payload = board_payload()
+        payload["fighters"][1]["cell"] = target_cell
+        with mock.patch.dict(os.environ, {"DOFUS_COMBAT_COMMIT_PLAN": "1"}):
+            walk, _f, reason = policy._solver_turn(
+                Board.from_fight_state(payload))
+            self.assertEqual(walk["type"], "move")
+            self.assertEqual(walk["cell"], from_cell)
+            self.assertEqual(reason, "solver_move")
+            payload2 = board_payload()
+            payload2["my_cell"] = from_cell
+            payload2["fighters"][0]["cell"] = from_cell
+            payload2["fighters"][1]["cell"] = target_cell
+            cast, _f, reason = policy._solver_turn(
+                Board.from_fight_state(payload2))
+        self.assertEqual(reason, "commit")
+        self.assertEqual(cast["type"], "cast")
+        self.assertEqual(cast["cell"], target_cell)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

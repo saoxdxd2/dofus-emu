@@ -281,16 +281,17 @@ class LivePolicy:
             current = parent[current]
         return list(reversed(path))
 
-    def _action_for_plan(self, board: Board, plan: TurnPlan) -> Dict[str, Any]:
-        if not plan.actions or plan.actions[0].kind == "pass":
+    def _action_for_plan(self, board: Board, plan: TurnPlan,
+                         index: int = 0) -> Dict[str, Any]:
+        if index >= len(plan.actions) or plan.actions[index].kind == "pass":
             return {"type": "pass"}
-        first = plan.actions[0]
-        if first.kind == "cast":
-            return {"type": "cast", "spellId": int(first.spell_id),
-                    "targetId": int(first.target_id) if first.target_id is not None else None,
-                    "cell": int(first.target_cell) if first.target_cell is not None else None}
-        if first.kind == "move":
-            cell = int(first.move_to) if first.move_to is not None else board.my_cell
+        step = plan.actions[index]
+        if step.kind == "cast":
+            return {"type": "cast", "spellId": int(step.spell_id),
+                    "targetId": int(step.target_id) if step.target_id is not None else None,
+                    "cell": int(step.target_cell) if step.target_cell is not None else None}
+        if step.kind == "move":
+            cell = int(step.move_to) if step.move_to is not None else board.my_cell
             return {"type": "move", "cell": cell,
                     "path": self._path_to(board, board.my_cell, cell)}
         return {"type": "pass"}
@@ -746,6 +747,15 @@ class LivePolicy:
     def _solver_turn(self, board: Board
                      ) -> Optional[Tuple[Dict[str, Any], bool, str]]:
         """The best legal solver plan for this turn, value/grid re-ranked."""
+        if self._commit_enabled():
+            committed = self._commit_action(board)
+            if committed is not None:
+                action, consumed = committed
+                if consumed:
+                    self._held_index = int(getattr(self, "_held_index", 0)) + 1
+                    if self._held_index >= len(self._held_plan.actions):
+                        self._held_plan = None
+                return action, False, "commit"
         try:
             plans = self.solver.plan_candidates(
                 board, max(2, int(self.plan_k)),
@@ -756,17 +766,31 @@ class LivePolicy:
                  if plan.actions and plan.actions[0].kind != "pass"]
         if not plans:
             return None
-        picked = self._value_choice(board, plans)
+        picked = None
+        hp_first = self._hp_first()
+        if hp_first:
+            picked = self._hp_choice(board, plans)
+        if picked is None:
+            picked = self._value_choice(board, plans)
         if picked is None:
             picked = self._grid_choice(board, plans)
-        if picked is None:
+        if picked is None and not hp_first:
             picked = self._hp_choice(board, plans)
         if picked is None:
             picked = plans[0]
         # Kept for the decision record. "He walked into the enemy" has to be a
         # number in the log, not an impression from watching the character.
         self._last_plan = picked
-        return self._emit(board, picked, False, "solver", "solver_move")
+        action, fallback, reason = self._emit(board, picked, False, "solver",
+                                              "solver_move")
+        if self._commit_enabled():
+            self._held_plan = picked
+            self._held_key = self._turn_key(board)
+            # `_emit` walks first when the cast starts elsewhere; that walk is
+            # not one of the plan's actions, so the cursor stays on the cast.
+            self._held_index = 1 if action == self._action_for_plan(
+                board, picked) else 0
+        return action, fallback, reason
 
     @staticmethod
     def _plan_deadline() -> Optional[float]:
@@ -807,6 +831,20 @@ class LivePolicy:
         return {"asked": int(getattr(self, "_hp_asked", 0)),
                 "changed": int(getattr(self, "_hp_changed", 0))}
 
+    @staticmethod
+    def _hp_first() -> bool:
+        """Whether the two-ply re-ranker decides before the value critic.
+
+        The critic returns a plan on every solver turn (2,799 of 2,799 in the
+        400-board side-swap gate), so `_hp_choice` -- the arm measured at +1.00
+        damage/turn over the solver -- never fired in the shipped chain. Asked
+        first, it decides every turn the two-ply ranking covers. Off by default
+        until the paired comparison against the shipped chain clears zero;
+        `DOFUS_COMBAT_HP_FIRST=1` turns it on for that measurement.
+        """
+        return str(os.environ.get("DOFUS_COMBAT_HP_FIRST", "0")).strip().lower() \
+            in ("1", "on", "true", "yes")
+
     def _hp_choice(self, board: Board,
                    plans: Sequence[TurnPlan]) -> Optional[TurnPlan]:
         """Re-rank the solver's plans by the HP differential they produce.
@@ -839,9 +877,12 @@ class LivePolicy:
         self._hp_asked = getattr(self, "_hp_asked", 0) + 1
 
         if os.environ.get("DOFUS_COMBAT_TWO_PLY", "1") != "0":
+            table = None
+            if os.environ.get("DOFUS_COMBAT_TWO_PLY_TABLE", "1") != "0":
+                table = self._two_ply_table()
             try:
                 ranked = self.solver.evaluate_two_ply(
-                    board, plans, live_table=self._two_ply_table(), top_k=6)
+                    board, plans, live_table=table, top_k=6)
             except Exception:  # noqa: BLE001 - the reply model must not cost the turn
                 ranked = None
             if ranked:
@@ -941,6 +982,117 @@ class LivePolicy:
                 return ({"type": "move", "cell": int(first.from_cell),
                          "path": path}, True, walk_reason)
         return self._action_for_plan(board, plan), fallback, reason
+
+    # -- held turn plan ------------------------------------------------------
+
+    @staticmethod
+    def _commit_enabled() -> bool:
+        """Whether a selected plan is held for the rest of its turn.
+
+        Measured on the 400-board side-swap gate: the two-ply arm's +1.00 over
+        the solver rides on plan continuations -- 1 of its 17 plan changes
+        altered the plan's first action, and keeping only first-action changes
+        reproduces the shipped chain's +0.01 (module1_hp2_continuation
+        summary.json). The page asks for one action at a time, so a per-action
+        emitter can only express first actions unless the turn's plan is held.
+        Off by default until the paired comparison with it on clears zero;
+        `DOFUS_COMBAT_COMMIT_PLAN=1` turns it on for that measurement.
+        """
+        return str(os.environ.get("DOFUS_COMBAT_COMMIT_PLAN", "0")).strip().lower() \
+            in ("1", "on", "true", "yes")
+
+    @staticmethod
+    def _turn_key(board: Board) -> Optional[Tuple[Any, ...]]:
+        """What makes two decisions the same turn: fight, round, actor.
+
+        None when the payload carries no round: without it a new turn cannot
+        be told from the old one, so no plan is held.
+        """
+        if board.round is None:
+            return None
+        return (board.fight_id, int(board.round), int(board.my_id))
+
+    def _commit_action(self, board: Board
+                       ) -> Optional[Tuple[Dict[str, Any], bool]]:
+        """The next action of this turn's held plan, and whether it consumed one.
+
+        None means no plan is held or it no longer applies and the caller plans
+        afresh. The second value is False for the walk `_emit` sends when the
+        plan's cast starts from another cell: the cast itself is still owed, so
+        the cursor does not move.
+        """
+        plan = getattr(self, "_held_plan", None)
+        key = self._turn_key(board)
+        if plan is None or key is None or key != getattr(self, "_held_key", None):
+            self._held_plan = None
+            return None
+        index = int(getattr(self, "_held_index", 0))
+        if index >= len(plan.actions):
+            self._held_plan = None
+            return None
+        step = plan.actions[index]
+        if step.kind == "cast" and int(step.from_cell) != int(board.my_cell):
+            path = self._path_to(board, board.my_cell, int(step.from_cell))
+            if len(path) <= 1:
+                self._held_plan = None
+                return None
+            return {"type": "move", "cell": int(step.from_cell),
+                    "path": path}, False
+        if not self._action_valid(board, step):
+            self._held_plan = None
+            return None
+        return self._action_for_plan(board, plan, index), True
+
+    def _action_valid(self, board: Board, step: Any) -> bool:
+        """Whether a held plan step can still land on the board as it is now.
+
+        The plan was built on the turn's opening board; after every action the
+        page publishes a new one. Spending AP, killing the target or walking
+        away must drop the remainder of the plan, never send an action the
+        client will refuse.
+        """
+        me = board.me
+        if me is None or not me.alive:
+            return False
+        if step.kind == "move":
+            if step.move_to is None:
+                return False
+            goal = int(step.move_to)
+            if not board.cells.walkable(goal):
+                return False
+            path = self._path_to(board, board.my_cell, goal)
+            return len(path) - 1 <= int(max(0, round(float(board.my_mp))))
+        if step.kind != "cast":
+            return False
+        spell = next((s for s in board.spells
+                      if int(s.id) == int(step.spell_id)), None)
+        if spell is None or spell.castable is False:
+            return False
+        if (int(step.ap_cost) or int(spell.ap_cost)) > int(max(0, board.my_ap)):
+            return False
+        if spell.max_cast_per_turn is not None \
+                and int(spell.casts_this_turn) >= int(spell.max_cast_per_turn):
+            return False
+        target = None
+        if step.target_id is not None:
+            target = next((f for f in board.fighters
+                           if int(f.id) == int(step.target_id)), None)
+            if target is not None and not target.alive:
+                return False
+        cell = step.target_cell
+        if cell is None and target is not None:
+            cell = target.cell
+        if cell is None:
+            return False
+        dist = board.cells.distance(board.my_cell, int(cell))
+        if dist < int(spell.min_range) or dist > int(spell.max_range):
+            return False
+        if spell.requires_los:
+            occupied = frozenset(f.cell for f in board.fighters
+                                 if f.alive and int(f.id) != int(board.my_id))
+            if not board.cells.has_los(board.my_cell, int(cell), occupied):
+                return False
+        return True
 
     # -- request -------------------------------------------------------------
 

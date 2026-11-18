@@ -4740,7 +4740,7 @@ four defects, and one new rule.
   - **§1 bridge port** — `CANDIDATE_PORTS` is `{8893…8899}`, `DEFAULT_PORT = 8893`
     (`agent/bridge.py:22`), and the live `bridge_port.txt` says **8896**; the doc no longer
     implies 8893 is the running port.
-  - **§4 release/blocker** — `setup.exe` **63,502,848<!--f:setup_bytes--> B = 214.0 MiB**, and the real
+  - **§4 release/blocker** — `setup.exe` **65,911,808<!--f:setup_bytes--> B = 62.9 MiB** (rebuilt 2026-11-18), and the real
     `live_ready` verdict instead of a claim of readiness: **FAIL egress** (no
     `127.0.0.1:40000`, `fail_closed=1`), **WARN client** (host not running), **FAIL page
     build** (last client log is `2026-10-29bf`, the build is `2026-10-30b`).

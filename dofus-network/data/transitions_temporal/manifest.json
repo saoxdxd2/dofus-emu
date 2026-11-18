@@ -1,6 +1,6 @@
 {
- "action_move_rate": 33.49,
- "actions": 6325,
+ "action_move_rate": 33.48,
+ "actions": 6326,
  "actions_advance": 79,
  "actions_advance_by_lag": 0,
  "actions_moved": 2118,
@@ -22,9 +22,9 @@
  "claim_rule": "the action's own promise, read from its args and the snapshot it returned: nav.goto at:<map> or a step, fight.join in_fight, quest.advance a talk opens a dialog / a reply moves the dialog to another node or changes quest state / accept activates the quest, tap.interactive an effect, inv.equip an inventory change; reads have no claim",
  "claims_derivable": 6027,
  "claims_met": 1679,
- "context_rows": 10851,
+ "context_rows": 10852,
  "credit_confirmed": 0,
- "credit_unconfirmed": 0,
+ "credit_unconfirmed": 1,
  "days": {
   "2026-10-22": 48,
   "2026-10-23": 280,
@@ -42,11 +42,12 @@
   "2026-11-09": 10,
   "2026-11-10": 4,
   "2026-11-11": 388,
-  "2026-11-12": 58
+  "2026-11-12": 58,
+  "2026-11-18": 1
  },
  "explored_actions": 0,
  "hours": 9.135,
- "instance_days": 38,
+ "instance_days": 39,
  "label_rule": "source-identified actions use their latest evidence revision; unconfirmed outcomes stay unknown; read deltas have no inferred owner",
  "label_version": 4,
  "labeler_sha": "d466fda2aca9",
@@ -148,7 +149,7 @@
   "45": 342,
   "5": 109,
   "6": 1415,
-  "None": 211
+  "None": 212
  },
  "per_tool": {
   "farm.start": {
@@ -218,7 +219,7 @@
    "claim_pct": 0.0,
    "failed_pct": 0.5,
    "moved_pct": 1.5,
-   "n": 195,
+   "n": 196,
    "progress_pct": 1.0,
    "progress_per_hour": 13.44,
    "time_pct": 1.6
@@ -265,21 +266,21 @@
  "reads": 4526,
  "reads_that_saw_a_change": 198,
  "ready_multi_rows": 6226,
- "rows": 10968,
- "rows_built": 10968,
- "segments": 628,
- "span_days": 21,
+ "rows": 10969,
+ "rows_built": 10969,
+ "segments": 629,
+ "span_days": 28,
  "split_actions": {
   "test": 760,
-  "train": 4942,
+  "train": 4943,
   "val": 623
  },
  "split_policy": "temporal",
  "split_rows": {
   "test": 992,
-  "train": 9340,
+  "train": 9341,
   "val": 636
  },
- "with_observation_pair": 10851,
- "x_coverage_pct": 98.1
+ "with_observation_pair": 10852,
+ "x_coverage_pct": 98.0
 }

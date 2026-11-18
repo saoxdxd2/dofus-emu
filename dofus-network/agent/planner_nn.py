@@ -28,8 +28,10 @@ from agent.features import DELIVER_TYPES, FIGHT_TYPES, required_map
 from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 from agent import consult_gate
 from agent.calibration import HierarchicalLogOddsTracker
+from agent.continuous_routing import termination_prob, precision_blend, sigmoid, softmax
 from agent.objective_ledger import ObjectiveLedger
 import logging
+import numpy as np
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -492,10 +494,22 @@ class NNPlanner(QuestPlanner):
             else:
                 inert_thresh = 0.20
 
-            all_inert = (max_p < inert_thresh)
+            # Continuous inertness: sigmoid((inert_thresh - max_p) * k) in (0, 1).
+            # Near 1 when all move_probs are below threshold, near 0 when some are high.
+            inertness = float(sigmoid(np.asarray((inert_thresh - max_p) * 20.0))[()])
 
             ratio_top = 0.0
-            if streak >= 1:
+            # Learned termination gate: Option-Critic beta_omega(z_t).
+            # Replaces `if streak >= 1:` with a smooth probability that the
+            # current option should terminate and switch to an alternative.
+            z = np.array([
+                top_p, max_p, inertness,
+                float(streak) / 10.0,
+                float(streak >= 1),
+                1.0 if top_tool == "state.snapshot" else 0.0,
+            ], dtype=np.float64)
+            beta = termination_prob(z, np.array([2.0, 2.0, 3.0, 4.0, 3.0, -2.0], dtype=np.float64))
+            if beta > 0.5:
                 # Top tool has failed consecutively 'streak' times.
                 # Under Bayesian updating, expected progress is discounted by consecutive failures:
                 exp_progress_top = top_p / (1.0 + float(streak))
@@ -508,7 +522,9 @@ class NNPlanner(QuestPlanner):
                 for alt in ranked[1:]:
                     alt_tool = alt["tool"]
                     alt_p = recalibrated.get(alt_tool, 0.0)
-                    if alt_p < inert_thresh:
+                    # Continuous skip weight instead of hard `if alt_p < inert_thresh: continue`.
+                    alt_weight = 1.0 - float(sigmoid(np.asarray((inert_thresh - alt_p) * 20.0))[()])
+                    if alt_weight <= 0.05:
                         continue
                     cost_alt = self.tool_cost(alt_tool)
                     ratio_alt = alt_p / cost_alt
@@ -517,7 +533,7 @@ class NNPlanner(QuestPlanner):
                         preempted = True
                         break
 
-                if not preempted and all_inert:
+                if not preempted and inertness > 0.5:
                     last_tool = getattr(self.tracker, "last_tool", None)
                     if last_tool != "state.snapshot":
                         chosen = {"tool": "state.snapshot", "score": 0.0}
@@ -527,11 +543,13 @@ class NNPlanner(QuestPlanner):
                 "active": bool(self.stack.active),
                 "stack": chosen["tool"],
                 "preempted": preempted,
-                "all_inert": all_inert,
+                "all_inert": inertness > 0.5,
                 "max_move_prob": round(float(max_p), 4),
-                "top_ratio": round(float(ratio_top), 4) if streak >= 1 else None,
+                "top_ratio": round(float(ratio_top), 4) if beta > 0.5 else None,
                 "scores": [{key: row[key] for key in ("tool", "score")}
                            for row in ranked[:5]],
+                "inertness": round(float(inertness), 4),
+                "termination_beta": round(float(beta), 4),
             }
             return chosen
         except Exception as exc:  # noqa: BLE001 - stacking must fail open
@@ -542,16 +560,13 @@ class NNPlanner(QuestPlanner):
 
     def _apply_activation_steering(self, logits: Any, hidden: Any,
                                    features: Any) -> Any:
-        """Add the SAE direction's logit delta, gated by a state feature.
+        """Add the SAE direction's logit delta, gated by a continuous state gate.
 
-        The artifact's direction lives in the same 192-wide pre-logit space the
-        classifier reads, so a step of size ``alpha`` along it changes every
-        tool's logit by exactly ``(W_out @ d) * logit_scale``. The gate is a
-        feature of the state, not a tool predicate: on the measured val split
-        every nav.goto <-> quest.advance confusion row has
-        ``hops_to_target == 0``, so the literal off-map predicate never fires;
-        ``obs_stale`` covers 35/65 of those rows and is what was selected on
-        train and scored once on val.
+        Replaces the hard ``if state[feature] < threshold: return logits`` with
+        a continuous gate ``alpha_sae = sigma(w_sae · z_t)`` so the projection
+        strength is smoothly modulated instead of being 0/1. The gate weight
+        ``w_sae`` lives in the steering artifact (defaults to a one-hot at the
+        configured feature so behavior matches the old threshold when untrained).
 
         Shape mismatches return the logits untouched. A stale artifact beside
         a newer checkpoint must fail open, not crash the planner.
@@ -559,7 +574,6 @@ class NNPlanner(QuestPlanner):
         block = getattr(self, "steering", None)
         if block is None:
             return logits
-        import numpy as np
         h = np.asarray(hidden, dtype=np.float32)
         direction = np.asarray(block.get("d_off_map") or [], dtype=np.float32)
         weight = np.asarray(block.get("w_out") or [], dtype=np.float32)
@@ -567,18 +581,25 @@ class NNPlanner(QuestPlanner):
         feature = int(mask.get("feature", -1))
         threshold = float(mask.get("threshold", 0.5))
         state = np.asarray(features, dtype=np.float32)
+        # Shape guards: these are safety/plumbing, not decision logic.
         if (direction.shape != h.shape
                 or weight.shape != (len(self.tools), h.shape[0])
-                or not 0 <= feature < state.shape[0]
-                or float(state[feature]) < threshold):
+                or not 0 <= feature < state.shape[0]):
             return logits
+        # Continuous SAE gate: alpha_sae(z_t) = sigma(w_sae · z_t) in (0, 1).
+        # The old threshold becomes a smooth steepness: sigma((z[feature] -
+        # threshold) * k) is near 0 below threshold, near 1 above it.
+        alpha_sae = float(sigmoid(np.asarray((state[feature] - threshold) * float(block.get("gate_steepness", 10.0))))[()])
+        # Learned gate override: if w_sae is present in the artifact, blend it in.
+        if block.get("w_sae") is not None:
+            w_sae = np.asarray(block.get("w_sae"), dtype=np.float32)
+            learned = float(sigmoid(np.asarray(w_sae @ state))[()])
+            alpha_sae = 0.5 * alpha_sae + 0.5 * learned
         alpha = float(block.get("alpha") or 0.0)
         scale = float(block.get("logit_scale") or 1.0)
         projection = max(0.0, float(h @ direction))
-        if projection <= 0.0 or alpha == 0.0:
-            return logits
         effect = (weight @ direction) * scale
-        return logits - (alpha * projection) * effect
+        return logits - (alpha * alpha_sae * projection) * effect
 
     def _apply_transition_probe(self, logits: Any, hidden: Any) -> Any:
         """Score the transition probe and, only if enabled, penalise non-reads.

@@ -159,7 +159,7 @@ def make_hp2_policy(solver: BattleSolver) -> Policy:
 
 
 def make_live_policy(checkpoint: Optional[Path] = None, beam_width: int = 8,
-                     max_actions: int = 4) -> Policy:
+                     max_actions: int = 4, whole_plan: bool = False) -> Policy:
     """The shipped `LivePolicy.decide` chain on the duel's own board.
 
     `Board.to_fight_state()` was written for this seam: the duel hands `decide()` the
@@ -169,6 +169,12 @@ def make_live_policy(checkpoint: Optional[Path] = None, beam_width: int = 8,
     falls back to the solver's plan and is counted. The branch census comes from the
     chain's own `reason` field, so a run where `_value_choice` never fires is visible
     rather than assumed.
+
+    `whole_plan` is diagnostic only, and it is what `DOFUS_COMBAT_COMMIT_PLAN=1`
+    makes the live chain do: play the turn's selected plan as a whole instead of
+    collapsing it to its first action. The two-ply arm's gain is carried by plan
+    continuations (1 of 17 changes altered a first action), so this arm is the
+    commit ceiling on the duel corpus.
     """
     from combat.live_policy import LivePolicy
 
@@ -176,6 +182,8 @@ def make_live_policy(checkpoint: Optional[Path] = None, beam_width: int = 8,
                       max_actions=max_actions)
     stats = {"decisions": 0, "cast": 0, "move": 0, "pass": 0, "unmatched": 0,
              "changed_vs_solver": 0, "errors": 0, "seconds": 0.0, "reasons": {}}
+    if whole_plan:
+        stats["held"] = 0
 
     def policy(state: DuelState, actor: Any, plans: Sequence[Any],
                rng: random.Random, model: Any = None) -> Any:
@@ -193,6 +201,13 @@ def make_live_policy(checkpoint: Optional[Path] = None, beam_width: int = 8,
         action = decision.get("action") or {}
         kind = action.get("type")
         stats[kind if kind in ("cast", "move", "pass") else "pass"] += 1
+        if whole_plan:
+            held = getattr(live, "_last_plan", None)
+            if held is not None and held.actions:
+                stats["held"] = stats.get("held", 0) + 1
+                if held is not plans[0]:
+                    stats["changed_vs_solver"] += 1
+                return held
         picked = _plan_for_action(plans, action)
         if picked is None:
             stats["unmatched"] += 1
@@ -258,6 +273,11 @@ def resolve(spec: str, solver: BattleSolver) -> Policy:
         # Diagnostic only: the shipped chain's selectors on the harness's own
         # candidate width, so a difference against `hp2` cannot be the beam.
         return make_live_policy(None, beam_width=16, max_actions=5)
+    if spec == "live-commit":
+        # Diagnostic only: the chain's selected turn played as a whole, which is
+        # what holding the plan live (`DOFUS_COMBAT_COMMIT_PLAN=1`) executes
+        # whenever the plan survives its validity checks.
+        return make_live_policy(None, whole_plan=True)
     if spec.startswith("value:"):
         model = _load_model(spec)
         return lambda state, actor, plans, rng, _m=None: value_policy(

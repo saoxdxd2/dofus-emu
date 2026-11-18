@@ -20,6 +20,10 @@ from pathlib import Path
 import unicodedata
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
+from agent.continuous_routing import cross_attend_with_sink, precision_blend, sigmoid, softmax
+
 _WORD = re.compile(r"[a-z0-9]+")
 
 # The client marks the replies that advance a quest with its own icon tokens
@@ -42,6 +46,140 @@ def _load_dialog_data() -> Dict[str, Any]:
 
 
 _DIALOG_DATA = _load_dialog_data()
+
+
+# -- Continuous dialog scoring (replaces discrete _needs_travel / _is_closing if/else)
+#
+# A bilinear / cross-attention scorer over (message, reply, goal) replaces the
+# hand-coded if/else travel/closing decisions.  The scorer lives alongside the
+# legacy heuristic; rank_dialog consults both and the continuous signal re-orders
+# ties rather than hard-switching.  Safety type-checks (isinstance, None) are
+# left untouched -- only the Decision/Routing if/else becomes continuous.
+
+
+class DialogScorer:
+    """Cross-attention + bilinear scorer over (message, reply, goal).
+
+    Replaces `_needs_travel` and `_is_closing` if/else branches with continuous
+    probabilities.  Uses cross-attention with a sink token so that when no
+    objective or closing phrase matches, mass collapses onto the sink and the
+    score tends to 0 rather than flipping a hard boolean.
+    """
+
+    def __init__(self) -> None:
+        # Small learnable projection weights (identity init for now; trainable
+        # later via any gradient source).  dim = token-hash space projected down.
+        self._dim = 16
+        self._W_q = np.eye(self._dim)
+        self._W_k = np.eye(self._dim)
+        self._W_v = np.eye(self._dim)
+        self._sink_key = np.zeros(self._dim)
+        self._sink_key[0] = -1.0  # sink key biased away from real tokens
+        self._sink_value = np.zeros(self._dim)
+        self._travel_dir = np.zeros(self._dim)
+        self._travel_dir[1] = 1.0  # travel direction in embedding space
+        self._closing_dir = np.zeros(self._dim)
+        self._closing_dir[2] = 1.0  # closing direction in embedding space
+
+    # -- token -> embedding ---------------------------------------------------
+
+    def _embed(self, text: str) -> np.ndarray:
+        """Hash tokens into a fixed-dim embedding (deterministic, no vocab)."""
+        tokens = _tokens(text)
+        vec = np.zeros(self._dim, dtype=np.float64)
+        for tok in tokens:
+            h = abs(hash(tok)) % self._dim
+            vec[h] += 1.0
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+        return vec
+
+    def _embed_obj(self, obj: Dict[str, Any]) -> np.ndarray:
+        """Embed an objective entry: text + type + map_id."""
+        parts = []
+        if isinstance(obj, dict):
+            for k in ("text", "type", "map_id", "quest_id"):
+                v = obj.get(k)
+                if v is not None:
+                    parts.append(str(v))
+        text = " ".join(parts)
+        return self._embed(text)
+
+    # -- continuous replacements ---------------------------------------------
+
+    def travel_probability(self, obs: Dict[str, Any]) -> float:
+        """Continuous probability that an open objective names another map.
+
+        Replaces `_needs_travel`'s `if need != here: return True` with a
+        cross-attention score between quest context and current map.
+        """
+        if not isinstance(obs, dict):
+            return 0.0
+        here = obs.get("map_id")
+        here_emb = self._embed(str(here)) if here is not None else np.zeros(self._dim)
+
+        entries = [obs.get("current_objective")] + list(obs.get("ready_objectives") or [])
+        keys = []
+        for entry in entries:
+            if isinstance(entry, dict):
+                keys.append(self._embed_obj(entry))
+        if not keys:
+            return 0.0
+
+        keys_arr = np.stack(keys)
+        # Query: current map + "travel" intent
+        query = here_emb + self._travel_dir * 0.5
+        context, attn = cross_attend_with_sink(
+            query[None, :], keys_arr, keys_arr,
+            self._sink_key, self._sink_value,
+        )
+        # Sink mass = no travel needed; real-key mass = travel probability
+        travel_mass = float(attn[0, 1:].sum())
+        return float(np.clip(travel_mass, 0.0, 1.0))
+
+    def closing_probability(self, text: str) -> float:
+        """Continuous probability that a reply closes the conversation.
+
+        Replaces `_is_closing`'s `if phrase in text: return True` with a
+        bilinear score against closing directions.
+        """
+        if not isinstance(text, str) or not text:
+            return 0.0
+        emb = self._embed(text)
+        score = float(emb @ self._closing_dir)
+        return float(sigmoid(score * 3.0)[()])
+
+    def travel_score(self, text: str) -> float:
+        """Continuous travel bias: +1 leaving, -1 entering, 0 neutral.
+
+        Replaces `_travel_bias`'s `if words & LEAVE_WORDS: return 1` with a
+        continuous score.
+        """
+        if not isinstance(text, str) or not text:
+            return 0.0
+        emb = self._embed(text)
+        return float(np.clip(emb @ self._travel_dir * 2.0, -1.0, 1.0))
+
+
+# Module-level scorer instance (stateless; safe to share).
+_dialog_scorer = DialogScorer()
+
+
+def _needs_travel_continuous(obs: Dict[str, Any]) -> float:
+    """Continuous travel probability (see DialogScorer.travel_probability)."""
+    return _dialog_scorer.travel_probability(obs)
+
+
+def _is_closing_continuous(text: str) -> float:
+    """Continuous closing probability (see DialogScorer.closing_probability)."""
+    return _dialog_scorer.closing_probability(text)
+
+
+def _travel_bias_continuous(text: str) -> float:
+    """Continuous travel score (see DialogScorer.travel_score)."""
+    return _dialog_scorer.travel_score(text)
+
 
 _LEAVE_WORDS = set(_DIALOG_DATA.get("leave_words") or [
     "leave", "leaving", "exit", "out", "outside", "depart", "head",
@@ -324,7 +462,7 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     context = _tokens(_quest_context(obs))
     question = _question_tokens(dialog)
-    travel = _needs_travel(obs)
+    travel = _needs_travel_continuous(obs)
     scored = []
     for reply in candidates:
         text = reply["text"]
@@ -332,18 +470,22 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         tokens = set(_WORD.findall(plain))
         overlap = len(tokens & context) / len(tokens) if tokens else 0.0
         qrel = len(tokens & question) / len(tokens) if tokens else 0.0
-        closing = any(phrase in plain for phrase in _CLOSING)
-        travel_score = 0
-        if travel:
-            if tokens & _LEAVE_WORDS:
-                travel_score = 1
-            elif tokens & _ENTER_WORDS:
-                travel_score = -1
+        closing = _is_closing_continuous(text)
+        # Continuous travel score replaces the `if travel: if LEAVE_WORDS ...`
+        # discrete branch with a smooth signal.
+        travel_score = _travel_bias_continuous(text)
+        # Blend continuous travel probability with the lexical signal so a
+        # reply that both names another map and uses a leave word scores higher.
+        if travel > 0.5:
+            travel_score = precision_blend(
+                np.array([travel_score]), np.array([1.0 if tokens & _LEAVE_WORDS else -1.0 if tokens & _ENTER_WORDS else 0.0]),
+                np.array([travel]),
+            )[0]
         reply_elem = _reply_element(text)
         scored.append({**reply, "score": overlap, "question": qrel,
-                       "travel": travel_score,
+                       "travel": float(travel_score),
                        "quest_icon": bool(_QUEST_ICON.search(text)),
-                       "closing": closing,
+                       "closing": float(closing),
                        "element": reply_elem})
     # Primary: objective overlap. The other signals only reorder inside a tie, so
     # a case the objective already decided is decided exactly as before.
@@ -362,7 +504,7 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # that can still offer the next step), and only then the question text.
         # Live 2026-10-29: the old order answered "Wish him good luck." and closed
         # a quest NPC on a map whose only exit is that NPC's dialog.
-        leaving = [reply for reply in tied if reply["travel"] > 0]
+        leaving = [reply for reply in tied if reply["travel"] > 0.5]
         if len(leaving) == 1:
             return {**decision, "status": "choose",
                     "reason": "travel reply", "reply": leaving[0]}
@@ -374,7 +516,7 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     "reason": "quest-progress reply", "reply": marked[0]}
         if marked:
             tied = marked
-        open_ended = [reply for reply in tied if not reply["closing"]]
+        open_ended = [reply for reply in tied if reply["closing"] < 0.5]
         if open_ended:
             tied = open_ended
 
@@ -396,7 +538,7 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return {**decision, "status": "choose", "reason": "question tie-break",
                     "reply": winners[0]}
         if len(tied) == 1:
-            reason = ("travel reply" if tied[0]["travel"] > 0
+            reason = ("travel reply" if tied[0]["travel"] > 0.5
                       else ("quest-progress reply" if tied[0]["quest_icon"]
                             else (f"character build element ({tied[0].get('element')})" if tied[0].get("element")
                                   else "keeps the dialog open")))

@@ -110,14 +110,14 @@ def flatten(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(obs, dict):
         return {}
 
-    # Fast path: already flat — map_id and level at top level, and inventory is
-    # not in the snapshot (items-list) format. Nothing to lift, so just copy.
-    if obs.get("map_id") is not None and obs.get("level") is not None:
-        inventory = obs.get("inventory")
-        if not (isinstance(inventory, dict) and isinstance(inventory.get("items"), list)):
-            return dict(obs)
-
     out = dict(obs)
+
+    # Fast path: already flat — map_id and level at top level, and inventory is
+    # not in the snapshot (items-list) format. Nothing to lift.
+    if (out.get("map_id") is not None and out.get("level") is not None
+            and not (isinstance(out.get("inventory"), dict)
+                     and isinstance(out["inventory"].get("items"), list))):
+        return out
 
     # Position: the snapshot nests it, the planner and the verifier do not.
     if out.get("map_id") is None:

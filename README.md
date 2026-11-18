@@ -52,7 +52,7 @@ Edge renders it, and a shim makes the browser look like an Android phone.
 
 ### Install (end user)
 
-1. Run `setup.exe` (63,502,848<!--f:setup_bytes--> B, measured 2026-11-12). It unpacks the
+1. Run `setup.exe` (65,911,808<!--f:setup_bytes--> B, measured 2026-11-18). It unpacks the
    runtime, the client bundle, the relay, the proxy binaries, a standalone Edge
    WebView2 payload and the Python agent into the install folder.
    The pip step installs `requirements.txt` only -- numpy and requests, ~32 MB installed. It does
@@ -135,7 +135,7 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 /
 ├─ DofusFarm.exe              host (built)
 ├─ dofus-net-proxy.exe        relay (built from scripts/dofus-net-proxy.go)
-├─ setup.exe                  installer (63,502,848<!--f:setup_bytes--> B, measured 2026-11-12)
+├─ setup.exe                  installer (65,911,808<!--f:setup_bytes--> B, measured 2026-11-18)
 ├─ uninstall.exe
 ├─ compile.bat                one-click build
 ├─ network.ini                egress configuration (see §13)
@@ -862,9 +862,9 @@ created — because the policy has to learn from play, not from descriptions of 
 
 **Payload** — read out of the built artifact with `python tools/payload_audit.py setup.exe`, which
 parses the central directory of the zip embedded in the binary rather than trusting the staging
-source: `setup.exe` = 63,502,848<!--f:setup_bytes--> B, all but the self-extractor stub being
-archive payload: 659<!--f:payload_files--> files and 189,965,324<!--f:payload_unpacked--> B unpacked, measured
-2026-11-12 -- all three tags are re-read from the binary, because the previous sentence carried a
+source: `setup.exe` = 65,911,808<!--f:setup_bytes--> B, all but the self-extractor stub being
+archive payload: 698<!--f:payload_files--> files and 193,357,653<!--f:payload_unpacked--> B unpacked, measured
+2026-11-18 -- all three tags are re-read from the binary, because the previous sentence carried a
 hand-typed file count that had drifted by 110. Largest contributors: `dofus-network/models` 47.5 MB
 (two INT8 graphs + the lexical policy), `dofus-network/data` 21.2 MB (knowledge sqlite 10.9 +
 `data/cache` 8.8), `runtimes/python` 12.2 MB (the bare interpreter: site-packages never crosses the installer,

@@ -192,7 +192,8 @@ copied per branch. Earlier combined shipped timings were variable (including 21.
 eight subsequent samples were below 20 ms. A slotted-state toy showed no median advantage
 and was not adopted. No small-loop result establishes full-decision p95. The first slice
 has cleared regression; full decide p95/RAM, >=400-pair outcomes, remaining Module 1
-fidelity/planning, live verification and installer rebuild/audit remain due. The active
+fidelity/planning and live verification remain due; the installer was rebuilt and audited
+2026-11-18 (65,911,808 B / 698 entries, `payload_audit --gate` PASS). The active
 toolkit mirror is absent in this
 checkout; no archived mirror was recreated.
 
@@ -252,6 +253,63 @@ outcome gate stays unmet: no positive paired gain, no promotion, no live-win cla
 Artifacts: `module1_side_swap_summary.json`, `module1_controls_summary.json` and the
 per-comparison JSONs under `Documents/dofus-evidence`.
 
+**Where the two-ply gain lives: a control ladder (2026-11-18).** Same 400 boards, 800
+same-seed side-swapped games per arm, shipped interpreter, reply table off
+(`DOFUS_COMBAT_TWO_PLY_TABLE=0`):
+
+| arm | damage/turn vs solver | 95% CI | plan changes / decisions |
+|---|---|---|---|
+| two-ply arm (`hp2`) | +1.00 | [0.149, 2.119] | 15 / 2,829 |
+| chain, two-ply asked first (`DOFUS_COMBAT_HP_FIRST=1`) | +0.01 | [0.0, 0.037] | 16 / 2,800 asks |
+| chain, reply table off | +0.01 | [0.0, 0.037] | 16 / 2,800 asks |
+| chain at the harness's width (beam 16/5) | +0.01 | [0.0, 0.037] | 21 / 2,800 asks |
+| chain fed the harness's own plan set (`solver` rebound, `plan_k=6`) | +0.01 | [0.0, 0.037] | 17 / 2,818 |
+| chain vs two-ply arm, every width above | -0.99 | [-2.106, -0.136] | 0 / 14 boards |
+| two-ply changes kept only when the first action changes | +0.01 | [0.0, 0.037] | 1 / 17 kept |
+
+The last row is the decomposition. Of the two-ply arm's 17 plan changes, **exactly one
+alters the plan's first action**; the arm that keeps only first-action changes reproduces
+the chain's +0.01, and the unmodified arm reproduces +1.00 in the same run. The seam arm
+shows why: it ranks the harness's exact plans and still gains nothing, because
+`_plan_for_action` maps the emitted first action back to the *first* plan that starts
+with it -- 16 of 17 changes were rewritten to a plan with the same first action, and
+2,802 of 2,818 decisions played the turn the chain selected (the 16 that did not are
+exactly the changes). So the gap is not the critic, not the reply table, not the beam,
+and not the candidate set: the live chain emits **one action per `decide`**, the page
+executes it and asks again, and a per-action emitter can only express first-action
+changes. The `+1.00` is carried by plan continuations. Reaching it live needs the chain
+to commit to a plan for the turn and execute its actions in order, with a validity
+re-check before each action -- that is the next build, not a selector setting.
+Artifacts: `module1_hpfirst_summary.json`, `module1_two_ply_table_summary.json`,
+`module1_seam_summary.json`, `module1_hp2_continuation_summary.json` and their
+per-comparison JSONs.
+
+**Held turn plan: the commit ceiling reached (2026-11-18).** `DOFUS_COMBAT_COMMIT_PLAN=1`
+makes the chain hold the plan it selected for the turn and emit its actions in order,
+re-checking each step against the fresh board before sending it (AP cost, casts this
+turn, target alive, range, line of sight, MP path length); any failed check drops the
+remainder and replans, and a walk prefix emitted because a cast starts elsewhere does
+not consume the cast's cursor position. Default off. On the same 400 boards
+(hp-first on, reply table off) the diagnostic `live-commit` arm -- the chain selecting
+the plan and the whole turn played, which is what commit executes whenever every step
+survives -- measures **+0.98 damage/turn vs the solver**, CI [0.121, 2.068], 13 boards
+for / 1 against, 410/390 wins, and **-0.03 vs the two-ply arm**, CI [-0.88, 0.828]:
+the chain now reproduces the arm's gain instead of tying the solver. Witnesses:
+`combat/test_live_policy.py::CommitPlanTests` (6 tests); two targeted mutations --
+the commit path disabled, and the validity check made unconditional -- each fail
+exactly their two witnesses and `live_policy.py` restored byte-identical
+(`908084765ed57d387d33d79090e4771b193adb28`). Limit: the duel harness plays a turn as a
+whole, so how often a held plan is invalidated mid-turn is not measurable on it; that
+needs a live client (blocked on the user), and until then the commit number is a
+ceiling, not a live win. Artifacts: `module1_commit_summary.json` and the two
+per-comparison JSONs. Verification: the combat gate passed 30 of 32 (the advisory
+inventories the rest) in 160.5 s on the second run; the first run's only failure was
+`CloneAndLatencyTests.test_no_deepcopy_and_1000_steps_under_20ms`, a timing gate this
+change does not touch (25.7 ms, then 21.7 and 20.3 ms standalone, passing on the third
+try) -- recorded as a marginal-threshold flake on this box, not silently repaired.
+
+
+
 **Reply ledger: initiative order, target choice, state changes (2026-11-18).**
 `evaluate_two_ply` no longer sums independent worst-case hits on the player. Replies are
 applied in initiative order to a per-ally HP/shield ledger; each enemy picks the target
@@ -305,13 +363,44 @@ budget gives decide p50 2.9-3.0 / p95 5.7-6.2 ms under the same three-instance l
 runs longer than the budget and the shallow plan wins the re-ranking; single-instance the
 same budget measures p50 2.8 / p95 5.5. Longer budgets stop buying anything and stop being
 reproducible: 3 ms yields 17-21 casts depending on load, 4 ms 14 and 10 ms ~13 (cold-start
-calls still exceed it). No setting reaches 5 ms under load, and no outcome data ranks the
-two mixes, so the
-default stays off until a bound can be paid for with evidence. The remaining p95 floor is
-the fixed per-decide work outside the solver: a single-instance profile puts board
-construction at ~1.4 ms, slot binding ~0.6 ms, plan-value rows ~0.5 ms and the actor call
-~0.6 ms per decide, against the solver's own unbound p50 ~2.8 ms -- bounding the search
-cannot move that floor, so the next lever is the fixed overhead. `tools/brain_ram_probe.py`
+calls still exceed it). No setting reaches 5 ms under load. **The mixes are now ranked
+(2026-11-18):** on the 400-board gate, with a loop arm that replays the chain's live
+behaviour inside one harness turn (plan, play the plan, plan again with the leftover AP),
+the unbounded control reproduces the commit arm exactly (+0.98 [0.121, 2.068], 13/1
+boards -- the loop machinery is validated), while the 1.5 ms bound measures **-11.75
+damage/turn, CI [-14.682, -9.089], 3 boards for / 76 against**, i.e. it costs 12.7
+damage/turn against the unbounded chain. So the bound cannot be paid for and the default
+stays off. A one-plan-per-turn version of the same arm measured -400.23 and is kept only
+as the artifact that shows why the loop exists: the harness played the shallow plan and
+discarded the turn's remaining AP (`module1_commitbounded_*`). Even the 1.5 ms bound only
+reaches p95 5.5-6.2, so meeting 5 ms would need both a bound that pays and a cut of the
+fixed overhead below.
+
+**The fixed overhead, attributed (2026-11-18): the gate cannot be bought with it.**
+Wrapping every function the shipped `decide` calls and replaying 480 own-turn decises
+(160 boards x 3 passes) single-instance on the shipped interpreter: board construction
+p50 0.72 / p95 1.09 ms, slot binding 0.16 / 0.31, live view 0.07, target binding 0.01, the
+two-ply `_hp_choice` 0.39 / 1.09 on the 56% of decises that ask it, emit and the position
+report under 0.02 each, and the actor arm (`board_encounter` 0.15 + `_bundle` 1.61) on the
+27% of decises the solver cannot answer -- the largest fixed item on the turns it touches.
+The search is `plan_candidates` p50 0.81 / p95 7.54 per call at 1.12 calls per decide, and
+the whole decide p50 3.08 / p95 10.34. Summing the fixed phases' p95s gives ~2.3 ms, so
+even removing every one of them leaves ~8 ms of search tail against the 5 ms ceiling: the
+gate needs the search halved, not the overhead shaved, and the only halving bound measured
+on the 400-board gate costs 12.7 damage/turn. Inside board construction the spell-cache key
+is about half the phase (blake2b over a `repr` per spell: 0.095 s of the 0.193 s profiled
+over 160 boards); the parse behind it is already cached by content and the key cannot be
+built from only the fields the parser reads without silently returning a stale parse when
+a new field appears, so that ~0.36 ms is not removable at this exactness. So the 5 ms p95
+gate is **refused on this arithmetic rather than deferred**: on this policy the gate and a
+paying search cannot both hold, and what sets the tail is the proposal set (Module 2).
+The earlier single-instance breakdown (1.4 / 0.6 / 0.5 / 0.6) was a different session on a
+loaded box and is superseded by this table; the recorder overhead is inside the wrapped
+phases and not the decide total. A cold first decision on a new map also carries a one-time
+map-field load (264 ms, `lru_cache`d in `map_field.field_for`), which is why cold-start
+calls exceed every budget. Artifacts: `module1_decide_phase_profile.py`, its `.json` and
+three cProfile dumps, plus `module1_lat3_*.txt` under `Documents/dofus-evidence`.
+`tools/brain_ram_probe.py`
 reported final resident 44.2 MB, peak 166.9 MB, commit 292.4 MB over 800 streamed decides
 (4.935 ms each; interpreter 3.11.9) -- the 45 MB brain ceiling is met at 44.2 MB with
 0.8 MB of margin. Neither number is a release claim.
@@ -350,6 +439,38 @@ boards). An HP-swap ablation (each enemy's `hp` exchanged with another enemy's, 
 held) leaves 64/83 picks identical, 12 follow HP, and flips kill status on 11 of 11 --
 the probe can see the signal it is looking for. Artifacts:
 `module2_target_leverage.py`, `module2_kill_pricing_ab.py` under `Documents/dofus-evidence`.
+
+**Party reservations, priced against the identical independent arm (2026-11-18).** The plan's
+last party item asked whether reservations beat the same party deciding alone. The scoring
+API shares one attention vector across allies, so a reservation is enforced as a capacity
+rule: after each ally's independent pick, a target aimed at by more than `cap` allies
+publishes its surplus as attention, and everyone re-decides with that surplus penalised at
+`w` median best-vs-next-best score gaps, so under-capacity targets get no push. Controls:
+`cap >= n_actors` reproduces the independent arm on every opening decision (0 mismatches),
+and reach is measured on the independent trajectory rather than inferred from the win
+column -- `cap 2, w 1` moves 57 of 1,339 player decision slots (4.3%), `cap 1, w 2` moves 624
+(46.6%). The first run passed the weight in raw score units instead of gap multiples, which
+is inert by arithmetic -- the same scale error XI.5 recorded for the bid -- so those
+artifacts (`*_party.json`, `*_hard.json`) are kept only as that error and the priced arms
+are the `*_v2` ones.
+
+| delta vs independent, 256 boards x 3 seeds | base | cap 1, w 1 | cap 1, w 2 | cap 2, w 1 | cap 2, w 2 |
+|---|---|---|---|---|---|
+| party | 0.9141 | -0.0039 [-0.0242, 0.0164] | **-0.0195** [-0.0424, 0.0034] | 0.0000 [-0.0108, 0.0108] | -0.0078 [-0.0231, 0.0075] |
+| party hard | 0.8125 | +0.0039 [-0.0277, 0.0355] | +0.0234 [-0.0140, 0.0609] | -0.0039 [-0.0242, 0.0164] | 0.0000 [-0.0217, 0.0217] |
+
+No cell clears zero in the positive direction, and the arm that moves nearly half the
+decisions (`cap 1, w 2`) is negative where the base is saturated and positive-but-null
+where it is not. The mechanism explains both ends: the independent rule already puts 2.7 of
+4 allies on the busiest target, the surplus penalty shaves that only to 2.6 because the
+allies it can move are the ones with the smallest score gap, and iterating the capacity
+propagation is the same fixed point as one hop -- after the surplus moves, no target
+exceeds capacity. A party does not lack a joint allocation; the scripted rule already
+approximates one, and pushing it further costs wins. That closes the party-coordination
+direction with two instruments, XI.5's bid channel and this arm. Artifacts:
+`module2_party_reservation.py`, `module2_reservation_reach.py` and their JSON under
+`Documents/dofus-evidence`. Scope as XI.5: synthetic composition, no live party, and an
+environment with no states or summons.
 
 **The missing max_hp collapsed the kill price; it is now learned (2026-11-18).**
 `KILL_BONUS` prices a kill at 0.35 x max_hp, and a board without `max_hp` caps it at 1,
@@ -394,15 +515,35 @@ admitted-but-unproposed spells 87 -> 68, and no plan's actions violate AP order 
 dead-target legality on replay (331 plans, 324 distinct successors, 7 equivalent-collapse
 duplicates). The live chain changes by exactly one emitted action on the 160 own turns
 (13 -> 14 casts, 85 -> 84 moves, 41 passes, 21 none); the latency comparison was taken while
-another session was editing the tree and is not quoted as a cost. Unmodelled effects remain
-the protection gap: Barricade (effect ids 265/406/792/950), Reinforced Protection, Feca
-Shield and Feca Exaltation all parse as kind "other", so protection proposals stay at zero
-until shield effect ids are derived and verified from the client table rather than typed.
+another session was editing the tree and is not quoted as a cost.
 Artifacts: `module2_proposal_coverage.py/.json`, `module2_glyph_replay_on.log` and
 `module2_glyph_replay_off.log` under `Documents/dofus-evidence`. Witnesses:
 `combat/test_battle_solver.py::GlyphProposalTests` (a glyph plan exists and is classified
 setup; the same spell with an unmodelled effect id produces no plan); the placement branch
 removed makes the first test fail with one assertion and the tree restored.
+
+**Protection vocabulary from the client tables (2026-11-18).** Protection used to fall to
+kind "other": Barricade and Rampart (effect 265), Reinforced Protection, Feca Shield and Feca
+Exaltation. The vocabulary is now read from `effects_fr.json` rather than typed -- 1040 is
+flat "Bouclier" points, 1039 is "% des PV en bouclier", 2849/2850 are "% du niveau en
+bouclier" -- and a survey of every spell level agrees with those units: 1039 rows run 3-30,
+1040 rows run 100-600 points with one 5000 outlier. `_templates` now offers a priced shield on
+the caster and on allies inside the ring, valued like healing (`HEAL_WEIGHT`) because a shield
+absorbs before HP, and `evaluate_two_ply` carries it into the per-ally shield ledger instead
+of pricing the caster alone. Damage reductions (105/164/265/1163) are classified but **not**
+planned: one id carries 8 on Rampart and 5000 on Barricade, so stacking a guessed unit on it
+would enter the menu at an unknown magnitude; the coverage audit reports those spells as
+`unpriced_protection`, which returns admitted-but-unproposed to 68 over 162 admitted spells
+instead of counting them as admitted-and-missing. Live reach of the priced branch is zero and
+recorded as such: 126 of the 160 own turns list Ataraxia (spell 16, 1040 = 5000, 3 AP, range
+3) with a four-turn interval, but its payload says `castable: false` on all 126, so no
+template is generated (0 of 126) and no plan casts protection (0 of the 81 boards with
+plans) -- the client-locked spell, not a generation gap. Artifacts:
+`module2_protection_plans.py` (template-to-plan survival per board) alongside the coverage
+JSON under `Documents/dofus-evidence`. Witnesses: `ProtectionProposalTests` (caster and
+in-range ally are offered; an unpriced reduction is classified but not planned; a
+non-protection buff is not offered); disabling the branch fails two of them and the tree was
+restored.
 
 **Fixed per-decide overhead: the spellbook parse is cached (2026-11-18).** A cProfile
 of `decide` over the 160 own turns (shipped interpreter) put 4,317 `_spell` calls at 21%
@@ -439,7 +580,9 @@ within it. The tree was unmodified for the run; the leverage probes ran only aft
 finished.
 
 Verification after the kill-pricing and glyph slices (2026-11-18): all combat suites pass
-through the gate (30 of 32, the two advisory inventories the rest, 141.7 s). A full gate
+through the gate (30 of 32, the two advisory inventories the rest, 141.7 s), and the
+protection slice re-ran the same set green (30 of 32, 159.6 s) with
+`tools/doc_facts.py --check` reporting every tagged number matches its measurement. A full gate
 was attempted but `agent.regression` reported 12 failures from a *concurrent*, in-flight
 edit to `agent/autopilot.py`, `agent/planner_utils.py` and the new `agent/scheduler.py`
 (an unterminated read mid-write, missing mutation anchors, brain-start checks), none of
@@ -450,15 +593,27 @@ executed it, which the witness ratchet correctly reported as `not_run` -- is fix
 calling the test in `agent/regression.py run()`. Rerun the full gate once the concurrent
 edit settles; do not edit the tree during its runs.
 
-No component is promoted and no in-game intelligence gain is claimed. Module 1 remains in
-progress (full decide p95 against the fixed per-decide overhead, the remaining fidelity
-items above, live verification and the installer rebuild/audit); its decision-leverage
+No component is promoted and no in-game intelligence gain is claimed. Module 1's outcome
+gate now has a positive paired gain behind two off-by-default switches -- hp-first plus
+commit: +0.98 damage/turn, CI [0.121, 2.068] vs the solver and -0.03 vs the two-ply arm --
+but the mid-turn invalidation rate of a held plan is not measurable without a client, so
+it stays a harness ceiling until a live session prices it. Module 1's full-decide p95 gate
+is now refused against the attributed fixed overhead -- removing every fixed phase still
+leaves ~8 ms of search tail against 5 ms, and the only measured bound costs 12.7
+damage/turn -- so what remains in Module 1 is the remaining fidelity items above and live
+verification, with the installer rebuilt and audited on 2026-11-18 (65,911,808 B / 698
+entries, `payload_audit --gate` PASS, manifest root `a807a8d1`; the earlier failure was a
+stale tracked `builder/Build.exe`, fixed by running `compile.bat`, which recompiles it);
+its decision-leverage
 item is now measured, and the measurement points at proposal expressiveness rather than
 more search. Module 2 now has its target-leverage and kill-pricing measurements, the
 rank-16 head's representability and leverage results, and a measured proposal-coverage
-audit with the glyph gap closed; its remaining items are the protection vocabulary
-(shield effect ids unverified), the bounded inter-turn tree (leverage measured at 3.1% of
-pair-decided states), the 8-actor unblinding and the party-reservation arm. Modules 3-5,
+audit with the glyph gap closed and a client-derived protection vocabulary whose live reach
+is measured at zero; its party-reservation arm is now priced (no arm clears zero against the
+identical independent arm, with reach measured and the scale-error run labelled), so what
+remains there is the bounded inter-turn tree (leverage measured at 3.1% of pair-decided
+states), the 8-actor unblinding and the unpriced unit of the damage-reduction ids, which the
+coverage audit reports as `unpriced_protection` rather than planning. Modules 3-5,
 complete quest gains, live verification and final release gates remain pending.
 
 **User direction (2026-10-27).** The pipeline is tools and harness; the intelligence must be

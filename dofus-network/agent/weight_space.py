@@ -476,6 +476,7 @@ def metrics_from_logits(logits, rows: Sequence[Dict[str, Any]],
     if return_correct:
         out["_correct"] = correct.tolist()
         out["_optimal_correct"] = optimal_arr.tolist()
+        out["_predictions"] = pred.tolist()
     return out
 
 
@@ -1018,7 +1019,9 @@ def _onnx_logits(onnx_path: Path, rows: Sequence[Dict[str, Any]],
     return session.run(["logits"], {name: X})[0]
 
 
-def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any]:
+def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL, *,
+                      reference_onnx: Optional[Path] = None,
+                      include_details: bool = False) -> Dict[str, Any]:
     """Score a separately trained artifact and decide, without printing.
 
     `_replay_candidate` is the CLI around this; `promote` is the install step. Both
@@ -1030,17 +1033,25 @@ def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any
     except (OSError, ValueError):
         return {"error": "no provenance pin; run `pin` first",
                 "pin": str(PROVENANCE_PATH)}
-    base_metrics = pin.get("metrics") or {}
-    if not base_metrics:
-        return {"error": "pin carries no metrics"}
+    if sha256_file(BASE_ONNX) != (pin.get("base") or {}).get("onnx_sha256"):
+        return {"error": "base model sha256 differs from provenance pin"}
+    if Path(val).resolve() == DEFAULT_VAL.resolve():
+        checked = check_pin()
+        if not checked["match"]:
+            return {"error": "corpus differs from provenance pin", "pin": checked}
+    reference = Path(reference_onnx) if reference_onnx is not None else BASE_ONNX
+    reference_sidecar = reference.with_suffix(".json")
+    if not reference_sidecar.is_file():
+        reference_sidecar = BASE_SIDECAR
+    reference_manifest = export_manifest(reference, reference_sidecar)
 
     sidecar = cand_onnx.with_suffix(".json")
     if not sidecar.is_file():
         sidecar = BASE_SIDECAR
     manifest = export_manifest(cand_onnx, sidecar)
     tools = list(manifest["base"]["tools"])
-    base_tools = list(export_manifest()["base"]["tools"])
-    if set(tools) != set(base_tools):
+    base_tools = list(reference_manifest["base"]["tools"])
+    if tools != base_tools:
         return {"error": "candidate tool set differs from the baseline",
                 "only_candidate": sorted(set(tools) - set(base_tools)),
                 "only_base": sorted(set(base_tools) - set(tools))}
@@ -1051,8 +1062,10 @@ def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any
     cand_eval = score_artifact(manifest, rows, Path(cand_onnx),
                                corpus_sha256=corpus.get("sha256"),
                                return_correct=True)
-    base_eval = score_artifact(export_manifest(), rows, BASE_ONNX,
+    base_eval = score_artifact(reference_manifest, rows, reference,
+                               corpus_sha256=corpus.get("sha256"),
                                return_correct=True)
+    base_metrics = base_eval
     paired = paired_bootstrap(base_eval["_correct"], cand_eval["_correct"])
     paired_optimal = paired_bootstrap(base_eval.get("_optimal_correct") or [],
                                       cand_eval.get("_optimal_correct") or [])
@@ -1062,6 +1075,8 @@ def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any
     cand_reach = set(cand_eval["reachable_tools"])
     return {
         "candidate": str(cand_onnx),
+        "reference": str(reference),
+        "reference_sha256": reference_manifest["base"]["sha256"],
         "candidate_sha256": manifest["base"]["sha256"],
         "arch": arch,
         "params": manifest["base"].get("params"),
@@ -1079,6 +1094,8 @@ def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any
                       "gained": sorted(cand_reach - base_reach),
                       "lost": sorted(base_reach - cand_reach)},
         "gate": gate,
+        **({"_base_eval": base_eval, "_candidate_eval": cand_eval}
+           if include_details else {}),
     }
 
 

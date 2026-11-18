@@ -20,11 +20,62 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
+
 from agent.awareness import scene_key
+from agent.continuous_routing import EntityRouter, termination_prob, softmax
 from agent.dialog_policy import rank_dialog
 from agent.features import declares_monster_target
 from agent.observe import flatten
 from agent.planner import QuestPlanner
+
+# Termination weight vector for Option-Critic gating.
+# beta_omega(z_t) = sigma(w_beta^T * [z_t || e_option]) in (0, 1)
+# Replaces stateful `if streak >= 3: replan` counters with a continuous
+# termination probability.  Initialised near zero so the thinking layer
+# continues by default; trained later to terminate when expected value drops.
+_TERMINATION_OMEGA = np.zeros(12, dtype=np.float64)
+_TERMINATION_OMEGA[-1] = -1.0  # bias: terminate only when evidence accumulates
+
+
+def _state_vector(obs: Dict[str, Any], steps: Sequence[Any],
+                  decision: Any) -> np.ndarray:
+    """Build a fixed-dim state representation z_t for the termination gate.
+
+    Combines: map_id (bucketed), level, in_fight, in_dialog, tutorial active,
+    recent-failure count, last tool type (one-hot-ish), decision cause hash.
+    No safety-critical logic here -- only a continuous signal for termination.
+    """
+    z = np.zeros(12, dtype=np.float64)
+    try:
+        z[0] = float(int(obs.get("map_id") or 0) % 97) / 97.0
+    except (TypeError, ValueError):
+        z[0] = 0.0
+    try:
+        z[1] = float(obs.get("level") or 0) / 200.0
+    except (TypeError, ValueError):
+        z[1] = 0.0
+    z[2] = 1.0 if obs.get("in_fight") else 0.0
+    z[3] = 1.0 if obs.get("in_dialog") else 0.0
+    tutorial = obs.get("tutorial")
+    z[4] = 1.0 if isinstance(tutorial, dict) and tutorial.get("active") else 0.0
+    # Recent failure streak (capped).
+    streak = 0
+    for step in list(steps)[-5:]:
+        tool = str(getattr(step, "tool", "") or "")
+        if tool:
+            streak += 1
+    z[5] = min(streak, 5) / 5.0
+    # Last tool type (one-hot slots 6-9).
+    last_tool = str(getattr(steps[-1], "tool", "") or "") if steps else ""
+    for i, name in enumerate(("nav.goto", "quest.advance", "fight.join", "state.snapshot")):
+        if last_tool == name:
+            z[6 + i] = 1.0
+    # Decision cause signal (slot 10-11): hashed to [0,1].
+    cause = str(getattr(decision, "cause", "") or "")
+    z[10] = float(abs(hash(cause)) % 100) / 100.0
+    z[11] = 1.0 if cause else 0.0
+    return z
 
 
 @dataclass
@@ -157,14 +208,94 @@ class ThinkingLayer:
         obs = flatten(observation)
         tried, _scene = self._tried(goal, obs, steps)
         diagnosis = self._diagnose(obs, steps, decision)
-        for thought in self._candidates(obs, diagnosis):
+        # Continuous termination gate: Option-Critic beta_omega(z_t).
+        # Replaces `if streak >= 3: replan` with a smooth probability.
+        # When termination is high, stop proposing and let the caller fall back.
+        z = _state_vector(obs, steps, decision)
+        beta = termination_prob(z, _TERMINATION_OMEGA)
+        if beta > 0.5:
+            return None
+
+        # Collect all candidate thoughts, then re-rank by continuous
+        # Entity Cross-Attention + Sink Token routing instead of returning
+        # the first untried candidate in heuristic order.
+        candidates = list(self._candidates(obs, diagnosis))
+        if not candidates:
+            return None
+
+        # Extract map entities (NPCs, exits, groups) for cross-attention.
+        entities: List[Dict[str, Any]] = []
+        for npc in _npcs(obs):  # _npcs returns [npc_id, ...]
+            entities.append({"npc_id": npc, "type": "npc"})
+        block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
+        for entry in block.get("exits") or obs.get("exits") or []:
+            if isinstance(entry, dict):
+                entities.append({
+                    "direction": entry.get("direction"),
+                    "map_id": entry.get("map_id"),
+                    "blocked": entry.get("blocked"),
+                    "type": "exit",
+                })
+        groups = obs.get("groups") or block.get("groups") or []
+        for entry in groups:
+            if isinstance(entry, dict):
+                entities.append({
+                    "group_id": entry.get("group_id"),
+                    "monster_ids": entry.get("monster_ids"),
+                    "cell": entry.get("cell"),
+                    "type": "group",
+                })
+
+        # State query: current objective type + diagnosis + last tool.
+        obj = obs.get("current_objective")
+        obj = obj if isinstance(obj, dict) else {}
+        query_parts = [
+            str(obj.get("type_id", "")),
+            str(obj.get("parameter0", "")),
+            diagnosis,
+            str(getattr(steps[-1], "tool", "") or "") if steps else "",
+        ]
+        state_query = self._embed_query(" ".join(query_parts))
+
+        router = EntityRouter(dim=16)
+        scored: List[Tuple[float, Thought]] = []
+        for thought in candidates:
+            action_logits, attn = router.route(state_query, entities)
+            # Confidence in the thought's tool category.
+            names = ["fight.join", "farm.start", "quest.advance", "nav.goto", "state.snapshot"]
+            if thought.tool in names:
+                tool_conf = float(softmax(action_logits, tau=1.0)[names.index(thought.tool)])
+            else:
+                tool_conf = 0.0
+            # Blend tool confidence with sink mass (low sink mass = good match).
+            sink_mass = float(attn[0]) if len(attn) > 0 else 1.0
+            score = tool_conf * (1.0 - sink_mass)
+            scored.append((score, thought))
+
+        # Sort by score descending, return first untried.
+        scored.sort(key=lambda x: -x[0])
+        for _score, thought in scored:
             if thought.signature() in tried:
                 continue
             tried.add(thought.signature())
             return thought
         return None
 
+    def _embed_query(self, text: str) -> np.ndarray:
+        """Hash query text into a fixed-dim vector for EntityRouter."""
+        vec = np.zeros(16, dtype=np.float64)
+        import re as _re, unicodedata as _ud
+        plain = _ud.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+        for tok in _re.compile(r"[a-z0-9]+").findall(plain.casefold()):
+            h = abs(hash(tok)) % 16
+            vec[h] += 1.0
+        n = np.linalg.norm(vec)
+        if n > 0:
+            vec /= n
+        return vec
+
     # -- diagnosis -----------------------------------------------------------
+
 
     def _diagnose(self, obs: Dict[str, Any], steps: Sequence[Any],
                   decision: Any) -> str:

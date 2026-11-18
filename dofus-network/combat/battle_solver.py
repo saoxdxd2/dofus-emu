@@ -3359,7 +3359,13 @@ class BattleSolver:
                 # turns and Barricade on 5 more, and the solver proposed neither.
                 # The recipient is the caster (range 0) or an ally inside the
                 # ring; points are priced like healed HP because a shield
-                # absorbs before HP does.
+                # absorbs before HP does. The unit comes from effects_fr.json:
+                # 1040 is flat "Bouclier" points, 1039 is "% des PV en bouclier".
+                # Live reach is still zero -- the one priced shield in the
+                # recorded corpus (Ataraxia, 1040 = 5000) is client-locked
+                # (`castable: false` on all 126 boards that list it) -- so this
+                # branch is exercised by ProtectionProposalTests until a board
+                # carries a castable shield.
                 #
                 # Only a priced shield is planned. A damage reduction whose
                 # magnitude the tables leave open (265 carries 8 on Rampart and

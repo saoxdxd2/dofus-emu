@@ -31,6 +31,8 @@ import random
 
 import re
 
+import numpy as np
+
 import sys
 
 import threading
@@ -41,6 +43,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from agent.observe import flatten, map_id_of
+from agent.continuous_routing import EntityRouter, precision_blend, softmax
 from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
@@ -137,6 +140,12 @@ class QuestPlanner:
         # scratch every step, and a child must not pop because a read answered.
         self.plan_stack = PlanStack()
         self._order: Optional[List[int]] = None
+        # Entity Cross-Attention + Sink Token router for objective -> action
+        # routing. Replaces the discrete `if t in MAP_TYPES / TALK_TYPES /
+        # KILL_TYPES / DELIVER_TYPES / CRAFT_TYPES` branches with a continuous
+        # gating distribution over action categories. The sink token drives
+        # abstain/state.snapshot when no entity matches the query.
+        self._entity_router = EntityRouter(dim=16)
         # Monotone memory of what the observation ever said was finished. The
         # planner is otherwise a pure function of the observation, which is correct
         # only while the observation is complete — and it is not: the client pages
@@ -2724,7 +2733,9 @@ class QuestPlanner:
             # This is the tutorial's "Découvrir une carte" shape, and it is also
             # the only honest action when `parameter0` is a text id.
             explore = self._explore_with_memory(obj, obs, key=travel_key)
-            return [explore] if explore is not None else []
+            calls = [explore] if explore is not None else []
+            calls, _conf, _sink = self._router_verdict(obj, obs, calls)
+            return calls
 
         if t in TALK_TYPES:
             npc = p.get("parameter0")
@@ -2756,6 +2767,7 @@ class QuestPlanner:
             calls.append({"tool": "quest.advance",
                           "args": {"quest_id": int(quest["id"]), "npc_id": int(npc)},
                           "why": "objective %d: talk" % t})
+            calls, _conf, _sink = self._router_verdict(obj, obs, calls)
             return calls
 
         if t in KILL_TYPES:
@@ -2847,7 +2859,8 @@ class QuestPlanner:
                         obj, obs, avoid=self._prev_map, key=travel_key)
                     if explore is not None:
                         return [explore]
-                return list(travel)
+                calls, _conf, _sink = self._router_verdict(obj, obs, list(travel))
+                return calls
             monster = p.get("parameter0")
             calls = list(travel)
             visible = self._visible_target(obs, monster)
@@ -2913,6 +2926,7 @@ class QuestPlanner:
             calls.append({"tool": "fight.join",
                           "args": {"monster": monster} if monster else {},
                           "why": "objective %d: fight" % t})
+            calls, _conf, _sink = self._router_verdict(obj, obs, calls)
             return calls
 
         if t in DELIVER_TYPES:
@@ -2964,18 +2978,201 @@ class QuestPlanner:
                 calls.append({"tool": "quest.advance",
                               "args": {"quest_id": int(quest["id"]), "npc_id": int(npc)},
                               "why": "objective %d: deliver" % t})
+            calls, _conf, _sink = self._router_verdict(obj, obs, calls)
             return calls
 
         if t in CRAFT_TYPES:
             # Crafting needs a recipe and materials model the simulator does not
             # have. Returning inv.list here looked harmless and cost 213 steps: a
             # read is not progress, and repeating one is a loop with a good excuse.
-            return []
+            calls, _conf, _sink = self._router_verdict(obj, obs, [])
+            return calls
 
         # Area objectives need the area -> map graph, which the KB does not expose
         # here. Refreshing the state is honest: it costs a step and keeps the loop
         # from inventing a destination.
         return []
+
+    # -- Entity Cross-Attention + Sink Token routing ---------------------------
+
+    def _objective_query_vector(self, obj: Dict[str, Any],
+                                obs: Dict[str, Any]) -> np.ndarray:
+        """Encode the current objective + world state as a query vector.
+
+        The query is what the EntityRouter cross-attends against available
+        entities (NPCs, exits, groups). No safety logic here -- only a
+        continuous signal for action-category routing.
+        """
+        vec = np.zeros(16, dtype=np.float64)
+        t = obj.get("type_id") if isinstance(obj, dict) else None
+        try:
+            vec[0] = float(int(t or 0)) / 20.0
+        except (TypeError, ValueError):
+            vec[0] = 0.0
+        p = _params(obj) if isinstance(obj, dict) else {}
+        # parameter0 (monster/npc id) and parameter1 (item id) as features.
+        for i, key in enumerate(("parameter0", "parameter1")):
+            v = p.get(key)
+            if v is not None:
+                try:
+                    vec[1 + i] = float(int(v)) / 100000.0
+                except (TypeError, ValueError):
+                    vec[1 + i] = abs(hash(str(v))) % 16 / 16.0
+        # Map context: here vs objective's map.
+        here = map_id_of(obs) if isinstance(obs, dict) else None
+        need = obj.get("map_id") if isinstance(obj, dict) else None
+        try:
+            vec[3] = float(int(here or 0) % 97) / 97.0
+        except (TypeError, ValueError):
+            vec[3] = 0.0
+        try:
+            vec[4] = float(int(need or 0) % 97) / 97.0
+        except (TypeError, ValueError):
+            vec[4] = 0.0
+        vec[5] = 1.0 if here is not None and need is not None \
+            and int(here) == int(need) else 0.0
+        # In-fight / in-dialog flags.
+        vec[6] = 1.0 if isinstance(obs, dict) and obs.get("in_fight") else 0.0
+        vec[7] = 1.0 if isinstance(obs, dict) and obs.get("in_dialog") else 0.0
+        # Normalise.
+        n = np.linalg.norm(vec)
+        if n > 0:
+            vec /= n
+        return vec
+
+    def _encode_entities(self, obs: Dict[str, Any]
+                         ) -> List[Dict[str, Any]]:
+        """Collect map entities (NPCs, exits, groups) for cross-attention."""
+        entities: List[Dict[str, Any]] = []
+        if not isinstance(obs, dict):
+            return entities
+        block = obs.get("map")
+        if isinstance(block, dict):
+            for entry in block.get("exits") or []:
+                if isinstance(entry, dict):
+                    entities.append({
+                        "direction": entry.get("direction"),
+                        "map_id": entry.get("map_id"),
+                        "blocked": entry.get("blocked"),
+                        "type": "exit",
+                    })
+            for entry in block.get("npcs") or []:
+                if isinstance(entry, dict):
+                    entities.append({
+                        "npc_id": entry.get("npc_id", entry.get("templateId")),
+                        "cell": entry.get("cell"),
+                        "type": "npc",
+                    })
+            for entry in block.get("groups") or []:
+                if isinstance(entry, dict):
+                    entities.append({
+                        "group_id": entry.get("group_id"),
+                        "monster_ids": entry.get("monster_ids"),
+                        "cell": entry.get("cell"),
+                        "type": "group",
+                    })
+        for entry in obs.get("exits") or []:
+            if isinstance(entry, dict):
+                entities.append({
+                    "direction": entry.get("direction"),
+                    "map_id": entry.get("map_id"),
+                    "blocked": entry.get("blocked"),
+                    "type": "exit",
+                })
+        for entry in obs.get("npcs") or []:
+            if isinstance(entry, dict):
+                entities.append({
+                    "npc_id": entry.get("npc_id", entry.get("templateId")),
+                    "cell": entry.get("cell"),
+                    "type": "npc",
+                })
+        for entry in obs.get("groups") or []:
+            if isinstance(entry, dict):
+                entities.append({
+                    "group_id": entry.get("group_id"),
+                    "monster_ids": entry.get("monster_ids"),
+                    "cell": entry.get("cell"),
+                    "type": "group",
+                })
+        return entities
+
+    def _router_verdict(self, obj: Dict[str, Any], obs: Dict[str, Any],
+                        heuristic_calls: List[Dict[str, Any]]
+                        ) -> Tuple[List[Dict[str, Any]], float, float]:
+        """Blend the EntityRouter's continuous routing with the heuristic result.
+
+        Returns ``(calls, confidence, sink_mass)``. The heuristic calls are
+        returned unchanged unless the router's sink token dominates (nothing
+        matches → abort) or the router strongly prefers a different action
+        category than the heuristic's first call.
+
+        The sink token represents "no entity matches / abstain". When its
+        attention mass exceeds the threshold, the objective has nothing to do
+        here and the planner returns an empty list.
+        """
+        if not heuristic_calls:
+            # No heuristic answer: ask the router whether any entity matches.
+            query = self._objective_query_vector(obj, obs)
+            entities = self._encode_entities(obs)
+            if not entities:
+                return [], 0.0, 1.0
+            _, attn = self._entity_router.route(query, entities)
+            sink_mass = float(attn[0]) if len(attn) > 0 else 1.0
+            if sink_mass > 0.75:
+                return [], 0.0, sink_mass
+            # Router found a match but the heuristic produced nothing: keep
+            # empty (the heuristic knows its own domain better than a guess).
+            return [], 0.0, sink_mass
+
+        query = self._objective_query_vector(obj, obs)
+        entities = self._encode_entities(obs)
+        if not entities:
+            return heuristic_calls, 1.0, 0.0
+
+        action_logits, attn = self._entity_router.route(query, entities)
+        sink_mass = float(attn[0]) if len(attn) > 0 else 0.0
+
+        # If the sink dominates, nothing here is actionable.
+        if sink_mass > 0.80:
+            return [], 0.0, sink_mass
+
+        # Heuristic's first call tool.
+        heuristic_tool = heuristic_calls[0].get("tool", "")
+        router_names = ["fight.join", "farm.start", "quest.advance",
+                        "nav.goto", "state.snapshot"]
+        probs = softmax(action_logits, tau=1.0)
+        best_idx = int(np.argmax(action_logits))
+        router_tool = router_names[best_idx]
+        router_conf = float(probs[best_idx])
+
+        # Blend: when the router is confident and disagrees with the heuristic,
+        # trust the router for the action category but keep the heuristic's
+        # args (the router only chooses *what*, not *how*).
+        if router_conf > 0.6 and router_tool != heuristic_tool \
+                and router_tool in ("fight.join", "quest.advance", "nav.goto",
+                                    "farm.start"):
+            # Precision-weighted blend between heuristic (one-hot) and router.
+            rho = router_conf
+            blended = precision_blend(
+                np.array([1.0 if heuristic_tool == n else 0.0
+                          for n in router_names]),
+                probs,
+                np.array([rho] * len(router_names)),
+            )
+            best_blend_idx = int(np.argmax(blended))
+            blended_tool = router_names[best_blend_idx]
+            if blended_tool != heuristic_tool:
+                # Re-tool the first call's tool but keep its args where
+                # schema-compatible; otherwise fall back to heuristic.
+                first = dict(heuristic_calls[0])
+                if blended_tool == "state.snapshot":
+                    return [{"tool": "state.snapshot", "args": {},
+                             "why": "router: no entity matched; observe"}], \
+                        float(blended[best_blend_idx]), sink_mass
+                first["tool"] = blended_tool
+                return [first], float(blended[best_blend_idx]), sink_mass
+
+        return heuristic_calls, router_conf, sink_mass
 
     def _focus_order(self, level: int) -> List[int]:
         """Quests that contain the focused objective type, cheapest first."""
@@ -3355,6 +3552,7 @@ class QuestPlanner:
         twin._plan_none = dict(getattr(self, "_plan_none", {}))
         twin._tutorial_step_seen = getattr(self, "_tutorial_step_seen", None)
         twin._rule_policy = getattr(self, "_rule_policy", None)
+        twin._entity_router = EntityRouter(dim=16)
         # Fork pending sales and feedback state, but reuse read-only model/index
         # artifacts so counterfactual outcomes cannot consume the real plan.
         resolver = getattr(self, "_goal_resolver", None)
