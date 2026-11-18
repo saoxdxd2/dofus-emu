@@ -1,6 +1,6 @@
 {
  "manifest": {
-  "checked_at": "2026-11-18T18:27:55",
+  "checked_at": "2026-11-18T19:32:36",
   "conflicts": {},
   "fields": {
    "map_id": {
@@ -42,9 +42,9 @@
     "size": 67134173
    },
    {
-    "mtime": 1794444946,
+    "mtime": 1795026701,
     "name": "dofus-01.jsonl",
-    "size": 43904466
+    "size": 43912742
    },
    {
     "mtime": 1793261963,
