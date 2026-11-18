@@ -144,6 +144,12 @@ if (navBody && fightBody && directiveBody) {
         _cmSend: function (name, data) { packets.push([name, data]); return { ok: true }; }
     };
     sandbox.window = sandbox;
+    sandbox.__agentObservationEpoch = 'page';
+    sandbox.__agentEvidenceSequence = 0;
+    const evidenceBody = block('const _agentInstallEvidence = function () {');
+    check('the actual source-stamping installer is extractable', !!evidenceBody);
+    if (!evidenceBody) process.exit(1);
+    vm.runInNewContext('(function()' + evidenceBody + ')', sandbox)();
     sandbox.isoEngine = {
         actorManager: { actors: { 9: { actorId: 9, cellId: 42 } }, userActor: { cellId: 1 } },
         _movePlayerOnMap: function (cell, adjacent, cb) { callbacks.push(cb); return cell; }
@@ -179,6 +185,18 @@ if (navBody && fightBody && directiveBody) {
     callbacks[4](null, 45);
     check('a walk ending on the wrong cell is not a confirmed arrival',
           sandbox.__agentLastNav.action_id === 'E' && sandbox.__agentLastNav.stage === 'walk_stopped_short');
+    const history = sandbox.__agentEvidenceLog;
+    check('an overwritten callback remains in the evidence ring',
+          history.some(e => e.action_id === 'A' && e.stage === 'walk_failed')
+          && history.some(e => e.action_id === 'B' && e.stage === 'walk_confirmed'));
+    check('source evidence gets independent monotonic identities',
+          history.every((e, i) => e.source_epoch === 'page'
+              && (i === 0 || history[i-1].source_sequence < e.source_sequence)));
+    const retained = history[0];
+    const retainedValue = JSON.stringify(retained);
+    for (let i=0; i<80; i++) sandbox.__agentLastNav = {action_id:'bounded',stage:'walking'};
+    check('the client history stays at its fixed retention bound', sandbox.__agentEvidenceLog.length === 64);
+    check('future assignments cannot mutate retained event records', JSON.stringify(retained) === retainedValue);
 }
 
 console.log(pass + ' passed, ' + fail + ' failed');

@@ -225,10 +225,19 @@ def test_objective_parameter_table() -> None:
     nn_src = inspect.getsource(nn_module)
     check("the learned planner drops a call whose target the client denies",
           'not args and tool in ("quest.advance", "fight.join", "farm.start")' in nn_src)
-    planner_src = inspect.getsource(planner_module)
+    # The four declaration guards live in the modules the planner was split into
+    # (`agent/planner.py` keeps the planning route, `agent/planner_utils.py` the
+    # argument builder, `agent/objective_utils.py` the objective readers), so the
+    # count is taken over all three. It is the same four sites the check was
+    # written against, before the split moved three of them.
+    from agent import objective_utils as objective_module
+    from agent import planner_utils as planner_utils_module
+    monster_src = (inspect.getsource(planner_module)
+                   + inspect.getsource(planner_utils_module)
+                   + inspect.getsource(objective_module))
     check("both monster routes consult the declaration",
-          planner_src.count("declares_monster_target(obj) is False") == 4,
-          planner_src.count("declares_monster_target(obj) is False"))
+          monster_src.count("declares_monster_target(obj) is False") == 4,
+          monster_src.count("declares_monster_target(obj) is False"))
 
 
 def test_stuck_objective_retired() -> None:
@@ -669,10 +678,10 @@ def test_live_transitions() -> None:
                   step(2001, "lag", "state.snapshot", here, there)]})
     check("a read that sees a move does not claim it",
           lagged[1]["moved"] is False and lagged[1]["moved_observed"] is True, lagged[1])
-    check("the acting step owns the effect the next read revealed",
-          lagged[0]["moved"] is True and lagged[0].get("moved_lag") == 1, lagged[0])
-    check("the credited keys are the ones the read observed",
-          lagged[0]["moved_keys"] == ["cell"], lagged[0]["moved_keys"])
+    check("an unidentified late effect is not assigned to the preceding action",
+          lagged[0]["moved"] is False and lagged[0].get("moved_lag") is None, lagged[0])
+    check("the revealed keys remain on the observation instead of invented credit",
+          lagged[0]["moved_keys"] == [] and lagged[1]["moved_keys"] == ["cell"], lagged[1]["moved_keys"])
 
     # Time is charged to the step that caused the wait, not to the one after it.
     # `latency_ms` is only the directive round trip; the decision cadence is the

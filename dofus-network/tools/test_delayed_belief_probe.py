@@ -188,10 +188,10 @@ class FixedLagBeliefTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def test_existing_builder_failure_is_measured_not_reimplemented(self):
+    def test_builder_abstains_without_inventing_causal_ownership(self):
         report = attribution_controls()
-        self.assertEqual(report["clean_credited"], ["A"])
-        self.assertEqual(report["delayed_credited"], ["B"])
+        self.assertEqual(report["clean_credited"], [])
+        self.assertEqual(report["delayed_credited"], [])
         self.assertIsNone(report["causal_owner_from_belief_replay"])
 
     def test_probe_beats_a_control_that_ignores_source_time(self):

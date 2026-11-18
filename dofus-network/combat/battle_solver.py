@@ -30,7 +30,9 @@ and re-plan on disagreement.
 
 from __future__ import annotations
 
+import hashlib
 import math
+import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from functools import cached_property, lru_cache
@@ -75,12 +77,35 @@ ELEMENT_BY_EFFECT: Dict[int, Tuple[str, str]] = {
     143: ("heal", "HEAL"),
 }
 HEAL_EFFECT_IDS = frozenset({81, 108, 143})
+# Protection effect ids, typed from the client's own effect table (2026-11-18,
+# `effects_fr.json` description sentences), never from spell names:
+#   105/164/265  "Dommages réduits de ..." -> damage_reduction
+#   1163         "Dommages subis x#1%"     -> damage_reduction
+#   1039/1040    "... en bouclier"         -> shield
+#   2849/2850    "% du niveau en bouclier" -> shield
+# A protection plan is priced only where the payload carries the magnitude
+# without a unit guess: a shield's points (1040) and a life-scaled shield's
+# fraction (1039). Effect 265 carries 8 on Rampart and 5000 on Barricade under
+# one id and its sentence has no percent sign, so its unit is not resolvable
+# from the tables; those casts are generated and priced at zero, not guessed.
+# 2849/2850 scale with the caster's level, which a fight board does not carry.
+PROTECTION_EFFECT_KINDS: Dict[int, str] = {
+    105: "damage_reduction",
+    164: "damage_reduction",
+    265: "damage_reduction",
+    1163: "damage_reduction",
+    1039: "shield",
+    1040: "shield",
+    2849: "shield",
+    2850: "shield",
+}
 # Verified against the client's ACTION_* table (2026-10-25): a spell effect's
 # effectId is that table's action id, and the live payload carries ids, not
 # text. These are the tactical mechanics the one-turn damage planner does not
 # execute yet; classifying them keeps them out of "unknown effects" and gives
 # the solver and duel a generic vocabulary instead of per-spell handling.
 UTILITY_EFFECT_KINDS = {
+    **PROTECTION_EFFECT_KINDS,
     4: "teleport",
     5: "push",
     6: "pull",
@@ -114,6 +139,7 @@ UTILITY_EFFECT_KINDS = {
 PLANNED_MECHANIC_KINDS = frozenset({
     "teleport", "push", "pull", "ap_loss", "ap_steal",
     "mp_loss", "ap_gain", "mp_gain", "trap", "glyph", "summon",
+    "shield", "damage_reduction",
 })
 
 #: The strategic buckets a candidate list is diversified over, in the order the
@@ -549,6 +575,27 @@ class LiveEffect:
 
 
 @dataclass(frozen=True)
+class ProtectionProfile:
+    """What a protection cast adds, in the units the client payload carries.
+
+    ``flat_shield`` is shield points; ``life_shield`` is a fraction of the
+    recipient's max HP. Damage reduction has no priced field on purpose: its
+    magnitude is not resolvable from the tables (see PROTECTION_EFFECT_KINDS),
+    and an unpriced protection cast is still a legal turn.
+    """
+
+    flat_shield: int = 0
+    life_shield: float = 0.0
+
+    @property
+    def is_priced(self) -> bool:
+        return self.flat_shield > 0 or self.life_shield > 0.0
+
+    def points(self, max_hp: int) -> float:
+        return float(self.flat_shield) + self.life_shield * float(max(1, max_hp))
+
+
+@dataclass(frozen=True)
 class LiveSpell:
     id: int
     name: str
@@ -621,6 +668,31 @@ class LiveSpell:
     @cached_property
     def is_teleport(self) -> bool:
         return any(e.kind == "teleport" for e in self.effects)
+
+    @cached_property
+    def has_protection(self) -> bool:
+        return any(e.kind in ("shield", "damage_reduction") for e in self.effects)
+
+    @cached_property
+    def protection(self) -> Optional[ProtectionProfile]:
+        """Priced protection lines; None when the spell carries none.
+
+        Same grade-dedup as damage lines: the client lists one row per grade,
+        and only one of them applies.
+        """
+        if not self.has_protection:
+            return None
+        flat = 0
+        life = 0.0
+        for effect in self._effect_lines(("shield",)):
+            low = max(0, effect.min_roll)
+            high = max(low, effect.max_roll)
+            roll = int(round((low + high) / 2.0))
+            if effect.effect_id == 1040:
+                flat += roll
+            elif effect.effect_id == 1039:
+                life += roll / 100.0
+        return ProtectionProfile(flat_shield=flat, life_shield=life)
 
     @cached_property
     def mechanic_rolls(self) -> Tuple[int, int, int, int, int, int]:
@@ -887,6 +959,23 @@ class BoardMarks:
 
     def without_marks(self, mark_ids: FrozenSet[int]) -> "BoardMarks":
         return BoardMarks(tuple(m for m in self.marks if m.mark_id not in mark_ids))
+
+
+# The client re-sends the whole spellbook in every payload, so one fight parses
+# the same spells on every frame. Measured on the 160 own-turn recorded boards:
+# 4,317 `_spell` calls, about 700 distinct spell payloads (45 distinct own
+# spellbooks, 11 enemy ones), and the parse was 21% of a profiled decide.
+# `LiveSpell` is frozen, so parsed instances can be shared. The key is a 16-byte
+# digest of the raw payload's repr and a hit is only ever returned for identical
+# content -- the per-turn fields (`casts_this_turn`, `castable`, `castable_error`)
+# are part of that content, so a stale turn cannot ride a cache hit.
+_SPELL_CACHE: Dict[bytes, LiveSpell] = {}
+_SPELL_CACHE_LIMIT = 512
+
+
+def _spell_key(raw: Dict[str, Any]) -> bytes:
+    return hashlib.blake2b(repr(raw).encode("utf-8", "replace"),
+                           digest_size=16).digest()
 
 
 @dataclass
@@ -1163,6 +1252,18 @@ class Board:
 
     @staticmethod
     def _spell(raw: Dict[str, Any]) -> LiveSpell:
+        key = _spell_key(raw)
+        cached = _SPELL_CACHE.get(key)
+        if cached is not None:
+            return cached
+        spell = Board._spell_parse(raw)
+        if len(_SPELL_CACHE) >= _SPELL_CACHE_LIMIT:
+            _SPELL_CACHE.clear()
+        _SPELL_CACHE[key] = spell
+        return spell
+
+    @staticmethod
+    def _spell_parse(raw: Dict[str, Any]) -> LiveSpell:
         effects = _effects(raw.get("effects"))
         raw_is_summon = bool(raw.get("is_summon")) or any(
             e.effect_id in (180, 181, 1008, 1011, 405) or e.kind == "summon"
@@ -1201,6 +1302,23 @@ class Board:
             is_summon=raw_is_summon,
             summon_type=summon_type,
         )
+
+    def after_plan(self, plan: "TurnPlan") -> "Board":
+        """Project recorded HP/cell/resource outcomes, not unrepresented mechanics."""
+        moved_cells = {action.target_id: int(action.moved_target)
+                       for action in plan.actions
+                       if action.target_id is not None and action.moved_target is not None}
+        fighters = []
+        for fighter in self.fighters:
+            hp = max(0, min(fighter.max_hp, plan.final_hp.get(fighter.id, fighter.hp)))
+            at = plan.final_cell if fighter.id == self.my_id else moved_cells.get(fighter.id, fighter.cell)
+            ap = plan.remaining_ap if fighter.id == self.my_id else fighter.ap
+            mp = plan.remaining_mp if fighter.id == self.my_id else fighter.mp
+            fighters.append(replace(fighter, hp=hp, alive=fighter.alive and hp > 0,
+                                    cell=int(at), ap=ap, mp=mp))
+        return replace(self, fighters=fighters, spells=list(self.spells),
+                       my_stats=dict(self.my_stats), my_cell=int(plan.final_cell),
+                       my_ap=plan.remaining_ap, my_mp=plan.remaining_mp)
 
     @property
     def me(self) -> Optional[Fighter]:
@@ -1570,6 +1688,9 @@ class BattleSolver:
         # whether the beam actually explored setup/displacement/boss plans or
         # collapsed onto direct damage.
         self.last_buckets: Dict[str, int] = {}
+        # Learned max_hp per monster name, snapshot once per search; see
+        # `_learn_max_hp` for why kill pricing needs it.
+        self._hp_memory: Dict[str, float] = {}
 
     def _table(self) -> Optional[Any]:
         """The learned table for this turn, or None for the level prior."""
@@ -1579,6 +1700,46 @@ class BattleSolver:
             return self.memory() if callable(self.memory) else self.memory
         except Exception:  # noqa: BLE001 - an unreadable table is the prior
             return None
+
+    def _learn_max_hp(self, board: Board) -> None:
+        """Snapshot learned max_hp per name for kill pricing.
+
+        The payload omits `max_hp` for most enemy rows (measured 2026-11-18: 922
+        of 1,396 rows, and every row of the level-5 pack the recorded fights
+        were against), so `KILL_BONUS * max_hp` collapses to 0.35 and a standing
+        kill loses to a bigger hit: the recorded top plan double-casts the
+        200-HP leader while a 4-HP monster is killable. Given the real max_hp,
+        4 of 139 recorded own-turn boards switch to a finishing blow and none
+        loses one (`module2_kill_pricing_ab.py`). The board's own fighters are
+        taught first, so a value published on any earlier board is reused; with
+        no memory the pricing is exactly what it was.
+        """
+        self._hp_memory = {}
+        table = self._table()
+        if table is None:
+            return
+        for fighter in board.fighters:
+            max_hp = getattr(fighter, "max_hp", 0) or 0
+            if max_hp <= 0:
+                continue
+            try:
+                table.record_hp(getattr(fighter, "name", ""), max_hp)
+            except Exception:  # noqa: BLE001 - pricing help must not cost a turn
+                continue
+        rows = getattr(table, "monsters", None)
+        if isinstance(rows, dict):
+            for name, row in rows.items():
+                value = row.get("max_hp") if isinstance(row, dict) else None
+                if value:
+                    self._hp_memory[str(name).strip()] = float(value)
+
+    def _priced_max_hp(self, fighter: Any) -> float:
+        """max_hp for kill pricing: the payload's, else the learned one, else 1."""
+        value = getattr(fighter, "max_hp", 0) or 0
+        if value > 0:
+            return float(value)
+        learned = self._hp_memory.get(str(getattr(fighter, "name", "") or "").strip())
+        return float(learned) if learned else 1.0
 
     def _turn_price(self, board: Board) -> Optional[float]:
         """The measured cost of one enemy turn here, or None to keep the prior.
@@ -1627,11 +1788,24 @@ class BattleSolver:
         each candidate the post-plan board is read off the search's own
         projection (`final_hp`, `final_cell`), the plan's casts are walked for
         AP/MP denial, displacement and shield gain, and every surviving enemy
-        answers with its strongest legal reply from the cells it can still
-        reach with the MP it has left. The reply damage comes from the enemy's
-        published spellbook first, the observed-damage table second, and the
-        level prior last -- the same ladder `combat.threat` uses, so the two
-        halves cannot disagree about a monster.
+        answers in initiative order with its strongest legal reply from the
+        cells it can still reach with the MP it has left. The reply damage
+        comes from the enemy's published spellbook first, the observed-damage
+        table second, and the level prior last -- the same ladder
+        `combat.threat` uses, so the two halves cannot disagree about a
+        monster.
+
+        Each reply picks the target that costs the most ally HP share, not
+        just the player, and is applied to a live HP/shield ledger: an ally
+        killed by an earlier reply is no longer a target, and its freed cell
+        no longer blocks line of sight. That is what makes the sum order-
+        dependent and the value a state differential rather than a damage
+        tally.
+
+        Still approximate, and deliberately so: movement is folded into the
+        origin ring (an enemy is not chased cell by cell), zone spells price
+        a single target, and summon/support/timed-state replies are not
+        modelled.
 
         Returns (plan, value) pairs, best first. Value is the 2-ply HP
         differential: ally share after the reply minus enemy share, both in
@@ -1648,24 +1822,20 @@ class BattleSolver:
         ally_max = float(sum(max(1, f.max_hp) for f in allies)) or 1.0
         enemies0 = board.enemies
         enemy_max = float(sum(max(1, e.max_hp) for e in enemies0)) or 1.0
-        occupied0 = frozenset(f.cell for f in board.fighters
-                              if f.alive and f.id != me.id)
-
         out: List[Tuple[TurnPlan, float]] = []
         for plan in plans:
-            ally_hp = float(sum(max(0, plan.final_hp.get(f.id, f.hp)) for f in allies))
-            enemy_hp = 0.0
-            survivors: List[Fighter] = []
-            for enemy in enemies0:
-                hp = max(0, plan.final_hp.get(enemy.id, enemy.hp))
-                enemy_hp += hp
-                if hp > 0:
-                    survivors.append(enemy)
+            successor = board.after_plan(plan)
+            ally_max_hp = {f.id: max(1, f.max_hp) for f in board.fighters
+                           if f.team == me.team}
+            survivors = successor.enemies
+            enemy_hp = float(sum(f.hp for f in survivors))
 
             ap_lost: Dict[int, int] = {}
             mp_lost: Dict[int, int] = {}
-            pushed_cell: Dict[int, int] = {}
-            shield_gained = 0
+            # Shield gain per ally id, priced from the same two effect ids the
+            # client couples to shield points, for any recipient -- a
+            # self-cast and an ally cast are the same mechanic.
+            shield_gain: Dict[int, int] = {}
             for action in plan.actions:
                 if action.kind != "cast":
                     continue
@@ -1673,40 +1843,49 @@ class BattleSolver:
                 if spell is None:
                     continue
                 tid = action.target_id
-                if tid == me.id:
+                if tid is not None and tid in ally_max_hp:
                     for effect in spell.effects:
                         roll = int(round((max(0, effect.min_roll)
                                           + max(0, effect.max_roll)) / 2.0))
                         if effect.effect_id == 1040:
-                            shield_gained += roll
+                            shield_gain[tid] = shield_gain.get(tid, 0) + roll
                         elif effect.effect_id == 1039:
-                            shield_gained += int(me.max_hp * roll / 100.0)
+                            shield_gain[tid] = shield_gain.get(tid, 0) + int(
+                                ally_max_hp[tid] * roll / 100.0)
                     continue
                 if tid is None:
                     continue
-                _ap_gain, _mp_gain, ap_loss, mp_loss, push, pull = spell.mechanic_rolls
+                _ap_gain, _mp_gain, ap_loss, mp_loss, _push, _pull = spell.mechanic_rolls
                 if ap_loss:
                     ap_lost[tid] = ap_lost.get(tid, 0) + ap_loss
                 if mp_loss:
                     mp_lost[tid] = mp_lost.get(tid, 0) + mp_loss
-                if push or pull:
-                    victim = next((f for f in board.fighters if f.id == tid), None)
-                    if victim is not None:
-                        origin = int(action.from_cell)
-                        target_cell = int(action.target_cell
-                                          if action.target_cell is not None
-                                          else victim.cell)
-                        distance = push if push else pull
-                        pushed_cell[tid] = cells.slide(
-                            origin, target_cell, distance, occupied0,
-                            toward=bool(pull))
-            shield_ally = me.shield + shield_gained
-            player_cell = int(plan.final_cell)
-            occupied = occupied0 | {player_cell}
-
-            total_reply = 0.0
-            for enemy in survivors:
-                e_cell = pushed_cell.get(enemy.id, enemy.cell)
+            # Reply ledger: HP and shield per living ally, applied in
+            # initiative order. Choosing the target that costs the most share
+            # and applying each hit before the next enemy acts is what makes
+            # the sum order-dependent: a kill by an earlier enemy removes
+            # that target (and its cell's cover) from later replies.
+            living_allies = [f for f in successor.fighters
+                             if f.alive and f.team == me.team]
+            shields: Dict[int, float] = {f.id: float(f.shield)
+                                         for f in living_allies}
+            hp_live: Dict[int, float] = {f.id: float(f.hp) for f in living_allies}
+            cells_of: Dict[int, int] = {f.id: int(f.cell) for f in living_allies}
+            for fid, gained in shield_gain.items():
+                if fid in shields:
+                    shields[fid] += float(gained)
+            ordered = sorted(survivors,
+                             key=lambda e: (-int(e.initiative), int(e.id)))
+            for enemy in ordered:
+                living = [f for f in living_allies if hp_live[f.id] > 0.0]
+                if not living:
+                    break
+                dead = frozenset(fid for fid, hp_left in hp_live.items()
+                                 if hp_left <= 0.0)
+                occupied = frozenset(f.cell for f in successor.fighters
+                                     if f.alive and f.id != enemy.id
+                                     and f.id not in dead)
+                e_cell = enemy.cell
                 # The enemy answers on ITS turn, when AP/MP refill: the board
                 # mid-our-turn carries the opponent at 0 (the duel harness
                 # zeroes it in advance_turn), and pricing the reply from that
@@ -1719,11 +1898,26 @@ class BattleSolver:
                 reach = cells.reachable(e_cell, float(mp_eff), occupied)
                 if not reach:
                     reach = {e_cell: 0.0}
-                total_reply += self._enemy_reply(
-                    board, enemy, me, reach, player_cell, ap_eff, mp_eff,
-                    live_table, occupied)
-            net = max(0.0, total_reply - float(shield_ally))
-            value = (ally_hp - net) / ally_max - enemy_hp / enemy_max
+                best_share = 0.0
+                best_hit: Optional[Tuple[int, float]] = None
+                for ally in living:
+                    damage = self._enemy_reply(
+                        successor, enemy, ally, reach, cells_of[ally.id],
+                        ap_eff, mp_eff, live_table, occupied)
+                    if damage <= 0.0:
+                        continue
+                    share = damage / float(max(1, ally.max_hp))
+                    if share > best_share:
+                        best_share = share
+                        best_hit = (ally.id, damage)
+                if best_hit is None:
+                    continue
+                fid, damage = best_hit
+                absorbed = min(shields.get(fid, 0.0), damage)
+                shields[fid] = shields.get(fid, 0.0) - absorbed
+                hp_live[fid] = max(0.0, hp_live[fid] - (damage - absorbed))
+            ally_hp = float(sum(hp_live.values()))
+            value = ally_hp / ally_max - enemy_hp / enemy_max
             out.append((plan, value))
         out.sort(key=lambda pair: -pair[1])
         return out
@@ -1797,7 +1991,8 @@ class BattleSolver:
                 return damage
         return 0.0
 
-    def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
+    def plan_candidates(self, board: Board, k: int = 5,
+                        deadline: Optional[float] = None) -> List[TurnPlan]:
         """The top-k distinct turn plans from the last search, pass included.
 
         ``plan_turn`` still returns the single best plan; this exposes the
@@ -1810,7 +2005,7 @@ class BattleSolver:
         the caller's only options are "pass" or whatever fallback it keeps -- which is
         how 114 of 152 captured turns left the solver's hands entirely.
         """
-        self.plan_turn(board)
+        self.plan_turn(board, deadline)
         plans = self.last_candidates
         pass_plan = next(
             (plan for plan in plans
@@ -1999,6 +2194,7 @@ class BattleSolver:
         hp = {fighter.id: fighter.hp for fighter in board.fighters if fighter.alive}
         occupied = frozenset(f.cell for f in board.fighters
                              if f.alive and f.id != me.id)
+        self._learn_max_hp(board)
         kind = action.get("type")
 
         if kind == "pass":
@@ -2076,7 +2272,15 @@ class BattleSolver:
         self.last_candidates = [plan]
         return plan
 
-    def plan_turn(self, board: Board) -> TurnPlan:
+    def plan_turn(self, board: Board,
+                  deadline: Optional[float] = None) -> TurnPlan:
+        """Best legal turn plan, with an optional wall-clock deadline.
+
+        `deadline` is a `time.perf_counter()` value. Expansions stop when it
+        passes and the best node found so far is returned: on the recorded
+        corpus the search's p95 was 4.3 ms against a 5 ms decide ceiling, so
+        a bounded search is the difference between a deadline and a stall.
+        """
         self.last_candidates = []
         notes: List[str] = []
         if not board.in_fight or board.in_preparation or not board.is_my_turn:
@@ -2109,6 +2313,7 @@ class BattleSolver:
             notes.append("client could not check these spells: " + "; ".join(unchecked))
 
         occupied = frozenset(f.cell for f in board.fighters if f.alive and f.id != me.id)
+        self._learn_max_hp(board)
         template_cache: Dict[int, List[_CastTemplate]] = {}
         reach_cache: Dict[Tuple[int, int], Dict[int, float]] = {}
         los_cache: Dict[Tuple[int, int], bool] = {}
@@ -2223,6 +2428,9 @@ class BattleSolver:
         seen: Dict[Tuple[Any, ...], float] = {}
         expanded = 0
 
+        def expired() -> bool:
+            return deadline is not None and time.perf_counter() >= deadline
+
         # Damage, AP cost and targets do not depend on the cell a spell is cast
         # from; only the walk cost and the final position do. Expanding every
         # reachable cell multiplied each frontier node by the whole zone, while
@@ -2238,9 +2446,21 @@ class BattleSolver:
         ))
         for _depth in range(self.max_actions):
             candidates: List[_Node] = []
+            timed_out = False
             for node in frontier:
                 if expanded >= self.max_nodes:
                     notes.append("search stopped at the node budget")
+                    break
+                # The budget may not fire before the first expansion: the
+                # per-turn fixed work (threat table, notes) already counts
+                # against it, and under multi-instance load that setup alone
+                # outlasted a 1.5 ms budget on 9-10 of 160 recorded turns,
+                # silently turning casts into passes. The rule the plan asks
+                # for is "return the best validated candidate", so one
+                # expansion always runs and later ones obey the clock.
+                if expanded and expired():
+                    notes.append("search stopped at the wall-clock budget")
+                    timed_out = True
                     break
                 expanded += 1
                 walked = reach(node.cell, node.mp)
@@ -2264,6 +2484,18 @@ class BattleSolver:
                                 # storing once the bucket is full instead of
                                 # building a huge list and slicing it later.
                                 bucket.append((mp_cost, index, cell, template))
+                        # One walk ring on a large open map cannot be built in
+                        # the gap between two node checks; the budget is only
+                        # real if it is read inside the ring too. The check
+                        # sits after a cell so the ring always contributes at
+                        # least one cast position, and the partial ring is
+                        # kept: BFS order means it already holds the cheapest
+                        # positions per cast, which is what ``reps_per_cast``
+                        # would have retained anyway.
+                        if expired():
+                            notes.append("search stopped at the wall-clock budget")
+                            timed_out = True
+                            break
                     representatives = []
                     for bucket in by_cast.values():
                         representatives.extend(
@@ -2278,7 +2510,7 @@ class BattleSolver:
                 # live executor replans after each action, so a teleport is
                 # only searched as the turn opener; expanding it from every
                 # beam node at every depth multiplied the template work.
-                if teleport_spells and node.ap > 1 and _depth == 0:
+                if teleport_spells and node.ap > 1 and _depth == 0 and not timed_out:
                     walked_targets = set()
                     walked_spells = set()
                     for _mp, _idx, _cell, template, _tele in representatives:
@@ -2312,6 +2544,13 @@ class BattleSolver:
                         if extra:
                             representatives = representatives + extra
                 for mp_cost, _index, cell, template, tele in representatives:
+                    # Same rule as the node check: the first expansion and
+                    # this turn's first candidate are never suppressed, so an
+                    # expired budget cannot turn a cast into a pass.
+                    if candidates and expired():
+                        notes.append("search stopped at the wall-clock budget")
+                        timed_out = True
+                        break
                     if template.target_id != 0 and template.target_id in node.moved_targets:
                         continue
                     if template.target_id:
@@ -2407,7 +2646,7 @@ class BattleSolver:
                             t_enemy_hp = node.hp.get(triggered_enemy.id, 0)
                             dealt = min(chain_dmg, t_enemy_hp)
                             kill = chain_dmg >= t_enemy_hp
-                            base_score = dealt + (KILL_BONUS * triggered_enemy.max_hp if kill else 0.0) + template.utility
+                            base_score = dealt + (KILL_BONUS * self._priced_max_hp(triggered_enemy) if kill else 0.0) + template.utility
                             new_hp = dict(node.hp)
                             new_hp[triggered_enemy.id] = max(0, t_enemy_hp - int(round(chain_dmg)))
                             kills = (node.kills + [triggered_enemy.id]) if kill else node.kills
@@ -2609,10 +2848,14 @@ class BattleSolver:
                     candidates.append(candidate)
                     if candidate.score > best.score + _EPS:
                         best = candidate
+            if timed_out:
+                break
             if not candidates:
                 break
             candidates.sort(key=lambda n: (-n.score, n.ap, -n.mp, len(n.actions)))
             frontier = candidates[:self.beam_width]
+            if timed_out:
+                break
 
         if not best.actions:
             return self._pass(board, notes)
@@ -2961,10 +3204,10 @@ class BattleSolver:
             has_damage = spell.has_damage
             has_heal = spell.has_heal
             # `PLANNED_MECHANIC_KINDS` already contains "trap", "glyph" and
-            # "summon", so this gate admits both. (It is stated with the trap and
-            # summon flags too, so a future edit to that set cannot silently
-            # re-close the path below -- the branches it guards were unreachable
-            # once already for this reason.)
+            # "summon", so this gate admits all three. (It is stated with the
+            # trap, glyph and summon flags too, so a future edit to that set
+            # cannot silently re-close the paths below -- the branches they
+            # guard were unreachable once already for this reason.)
             if (not has_damage and not has_heal and not spell.has_mechanic
                     and not spell.is_trap and not spell.is_summon):
                 continue
@@ -2972,9 +3215,18 @@ class BattleSolver:
             # only needs a taken cell cannot be planned with this board.
             if spell.is_teleport:
                 continue
-            if spell.need_free_cell and not (spell.is_trap or spell.is_summon):
+            if spell.need_free_cell and not (spell.is_trap or spell.is_summon
+                                             or spell.is_glyph):
                 continue
-            if spell.is_trap:
+            # A glyph is a zone, not a hit: it has no damage line of its own, so
+            # without this branch it fell through to the per-target loop, failed
+            # both the enemy leg (no damage, no denial) and the ally leg (no
+            # heal), and was never templated. Measured 2026-11-18 on the recorded
+            # corpus: a castable glyph is available on 126 of 160 own turns and
+            # zero glyph plans were ever proposed. It places like a trap and is
+            # priced by the same traffic -- a glyph on a walked corridor is worth
+            # what the corridor carries.
+            if spell.is_trap or spell.is_glyph:
                 in_range = cells.range_cells(
                     cell, spell.min_range, spell.max_range,
                     spell.cast_in_line, spell.cast_in_diagonal)
@@ -3097,6 +3349,52 @@ class BattleSolver:
                              + MP_GAIN_WEIGHT * mp_gain),
                 ))
                 continue
+            profile = spell.protection
+            if profile is not None and profile.is_priced \
+                    and not has_damage and not has_heal:
+                # A protection buff has no hit line, so before this branch it
+                # fell to the per-target loop, failed the enemy leg (no damage,
+                # no denial) and the ally leg (no heal) and was never templated:
+                # measured 2026-11-18, Rampart was castable on 33 of 160 own
+                # turns and Barricade on 5 more, and the solver proposed neither.
+                # The recipient is the caster (range 0) or an ally inside the
+                # ring; points are priced like healed HP because a shield
+                # absorbs before HP does.
+                #
+                # Only a priced shield is planned. A damage reduction whose
+                # magnitude the tables leave open (265 carries 8 on Rampart and
+                # 5000 on Barricade) would enter the menu at zero, and the beam
+                # prunes zero-value casts anyway; admitting one would also strip
+                # the approach plans from exactly the turns where walking is the
+                # only priced option. Those spells are classified and reported,
+                # not planned, until the unit is settled.
+                in_range = cells.range_cells(
+                    cell, spell.min_range, spell.max_range,
+                    spell.cast_in_line, spell.cast_in_diagonal)
+                recipients = [me] + [
+                    t for t in targets
+                    if t.alive and t.id != me.id and t.team == me.team]
+                for target in recipients:
+                    if target.cell not in in_range:
+                        continue
+                    if spell.requires_los:
+                        pair = (cell, target.cell)
+                        visible = los_cache.get(pair) if los_cache is not None else None
+                        if visible is None:
+                            visible = cells.has_los(cell, target.cell, occupied)
+                            if los_cache is not None:
+                                los_cache[pair] = visible
+                        if not visible:
+                            continue
+                    priced_hp = self._priced_max_hp(target)
+                    out.append(_CastTemplate(
+                        spell=spell, target_id=target.id,
+                        target_cell=target.cell,
+                        damage=0.0, healing=0.0, steal_heal=0.0,
+                        target_max_hp=priced_hp, damage_int=0,
+                        utility=HEAL_WEIGHT * profile.points(priced_hp),
+                    ))
+                continue
             enemy_utility = bool(ap_loss or mp_loss or push_roll or pull_roll)
             is_steal = any(e.kind == "steal" for e in spell.damage_effects)
             needs_taken = spell.need_taken_cell
@@ -3216,7 +3514,7 @@ class BattleSolver:
                 out.append(_CastTemplate(
                     spell=spell, target_id=target.id, target_cell=target.cell,
                     damage=damage, healing=healing, steal_heal=steal_heal,
-                    target_max_hp=max(1, target.max_hp),
+                    target_max_hp=self._priced_max_hp(target),
                     damage_int=int(round(damage)),
                     ap_gain=target_ap_gain, mp_gain=target_mp_gain,
                     ap_loss=target_ap_loss, mp_loss=target_mp_loss,

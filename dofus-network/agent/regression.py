@@ -83,11 +83,11 @@ POLICY_UNEMITTABLE = ["hdv.buy", "hdv.prices", "inv.equip", "shop.buy",
                       "tap.interactive", "ui.icons", "ui.tap"]
 
 # Suites the gate hands to another toolchain (node, go, the C# compiler) record
-# themselves here, because a `logger.debug("SKIP: …")` + `return` registers no check: with the
-# tool missing the summary still read "N checks, 0 failed, exit 0" while 40 JS page
-# suites, the relay tests and the host compile were all absent (read at the four call
-# sites on 2026-10-31).
-_DELEGATIONS: List[Dict[str, Any]] = []
+# themselves in the shared list `agent.regression_suites.common` appends to, because a
+# `logger.debug("SKIP: …")` + `return` registers no check: with the tool missing the
+# summary still read "N checks, 0 failed, exit 0" while 40 JS page suites, the relay
+# tests and the host compile were all absent (read at the four call sites on 2026-10-31).
+# A local rebind here would shadow that list and make the audit read an empty one.
 # The host is WinForms + WebView2 + Win32 P/Invoke. There is no Linux build of it
 # to compile, so a Linux checkout has no compiler that could produce one, and
 # `_find_csharp_compiler` correctly returns None there. That is not the silent
@@ -1806,34 +1806,38 @@ def test_go_relay_suites() -> None:
         return
     # Each scripts/*.go is its own package main; the relay test set must be built
     # by naming the relay file plus the test files together (not `go test ./...`,
-    # which collides the many main()s).
-    proc = subprocess.run(["go", "test", relay.name, *test_files],
+    # which collides the many main()s). The relay now reads the generated contract
+    # document, so that file is part of the same package and must be named too;
+    # omitting it made this check fail on a build error, not a test failure.
+    contracts = scripts / "contracts_gen.go"
+    generated = [contracts.name] if contracts.exists() else []
+    proc = subprocess.run(["go", "test", relay.name, *generated, *test_files],
                           cwd=str(scripts), capture_output=True, text=True, timeout=300)
     check("go relay tests pass (%s)" % ", ".join(test_files), proc.returncode == 0,
           (proc.stderr or proc.stdout).strip()[-300:])
     _delegation("go relay tests", True, scripts)
 
-# Swallowed exceptions in the C# host, measured 2026-11-13 over desktop/*.cs: 446 `catch`
-# blocks whose body is empty once comments are stripped. The distribution is the finding:
-# farmengine.cs 113, WebView2ClientForm.cs 78, mainform.cs 56, installer.cs 34, aipanel.cs 32,
-# uninstaller.cs 27. G120 was exactly this failure one layer up -- a diagnostic write that
-# could raise inside business logic -- and the reason it took a session to find is that the
-# host had no way to say "something was swallowed here".
+# Swallowed exceptions in the C# host. Measured 2026-11-13 over desktop/*.cs: 446 `catch`
+# blocks whose body is empty once comments are stripped (farmengine.cs 113,
+# WebView2ClientForm.cs 78, mainform.cs 56, installer.cs 34, aipanel.cs 32,
+# uninstaller.cs 27). Re-measured 2026-11-17 after the host's error handling was made
+# observable: 15, all but one in WebView2ClientForm.cs.
 #
 # The number is a ratchet, not a target: `<=` means cleaning one up is always allowed and
-# never needs this constant edited, while a 447th fails the gate. Turning 446 empty bodies
+# never needs this constant edited, while a sixteenth fails the gate. Turning empty bodies
 # into structured logging is a deliberate pass, not something to do blind in a hot path.
-EMPTY_CATCHES_MAX = 446
+EMPTY_CATCHES_MAX = 15
 def test_csharp_error_swallowing_is_bounded() -> None:
     """The host must not grow more places that hide a failure.
 
-    An outside review counted 445 empty `catch` blocks across `desktop/`; measured here it is
-    446 across 28 files, and the review's per-file split was exact (farmengine 113,
-    WebView2ClientForm 78, mainform 56, installer 34). Nothing stopped a 447th, and the reason
-    G120 cost a session to diagnose is that a swallowed error leaves no trace anywhere.
+    An outside review counted 445 empty `catch` blocks across `desktop/`; measured on
+    2026-11-13 it was 446 across 28 files, with the review's per-file split exact
+    (farmengine 113, WebView2ClientForm 78, mainform 56, installer 34). Measured again on
+    2026-11-17, after the host's error handling was made observable, it is 15 -- 14 in
+    WebView2ClientForm.cs and 1 in mainform.cs.
 
-    This does not ask for 446 rewrites. It makes the debt a number the gate knows, so the
-    next `catch { }` is a decision rather than an accident.
+    This is a ratchet: the ceiling is the measured count, so the next `catch { }` is a
+    decision rather than an accident, and a new file entering the list is named.
     """
     section("C# error swallowing is counted, not discovered")
     sources = sorted((REPO_ROOT.parent / "desktop").glob("*.cs"))
@@ -1844,10 +1848,12 @@ def test_csharp_error_swallowing_is_bounded() -> None:
     check("no new empty catch block was added (measured %d, ceiling %d)"
           % (total, EMPTY_CATCHES_MAX), total <= EMPTY_CATCHES_MAX,
           "worst: " + ", ".join("%s %d" % row for row in per_file[:5]))
-    check("the worst offenders are the files the review named",
-          [name for name, _n in per_file[:3]] == ["farmengine.cs", "WebView2ClientForm.cs",
-                                                  "mainform.cs"],
-          per_file[:3])
+    # The review named the files where this debt was allowed to live. Cleaning one up is
+    # fine; moving the debt into a file nobody reviewed is the silent case this catches.
+    reviewed = {"farmengine.cs", "WebView2ClientForm.cs", "mainform.cs",
+                "installer.cs", "aipanel.cs", "uninstaller.cs"}
+    strays = [name for name, count in per_file if count and name not in reviewed]
+    check("the empty catches stay in the files the review named", not strays, strays[:8])
 
 def test_csharp_compile() -> None:
     """Compile the host the way its own builder does.
@@ -3218,8 +3224,16 @@ def _mutation_sweep_lists() -> Tuple[Dict[str, int], List[str]]:
     # In the order the sweep runs them, not sorted: two of the tests it lists measure what
     # the ones before them did (the duration budget, the delegation registry), so a caller
     # that replays the list has to replay it in this order to see them pass.
+    #
+    # The owner is dropped: the sweep names a delegated suite's test as
+    # `quest.test_live_transitions`, because `agent/regression.py` imports those suites
+    # inside `run()` and `r.test_live_transitions` is not an attribute of the module at
+    # all. The witness instrument records the *function* name (`fn.__name__`), so the
+    # list has to be the bare name too or the two never meet. A parser that matched
+    # `r.` only dropped every delegated entry -- 18 of the sweep's own tests -- from the
+    # coverage ratchet, which then reported the files they witness as unwitnessed.
     order: List[str] = []
-    for name in re.findall(r"r\.(test_[a-z0-9_]+)", snippet):
+    for _owner, name in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\.(test_[a-z0-9_]+)", snippet):
         if name not in order:
             order.append(name)
     return targets, order
@@ -3442,7 +3456,7 @@ def test_equip_slot_from_template() -> None:
         encoding="utf-8", errors="replace"))
     check("the template's own positions are used before giving up",
           "&& ttype && ttype.possiblePositions" in page
-          and "for (var pp = 0; pp < ttype.possiblePositions.length; pp++)" in page
+          and "for (let pp = 0; pp < ttype.possiblePositions.length; pp++)" in page
           and "{ slotPos = posv; break; }" in page,
           "a silent equipItem left every equippable item unequipped")
     # 2026-11-07: the guard gained one exception, and the exception is the point. Live, `equipItem`
@@ -3460,7 +3474,7 @@ def test_equip_slot_from_template() -> None:
     # stayed at position 63). Freeing the slot is the same message with position -1,
     # and the tool had no way to ask for it -- equip had no other half.
     check("an item can be removed, not only equipped",
-          "var removeWanted = args.remove === true || args.unequip === true" in page
+          "const removeWanted = args.remove === true || args.unequip === true" in page
           and "if (removeWanted) slotPos = -1;" in page,
           "without a remove verb a swap needs a second slot that does not exist")
     check("the remove is the client's own position -1 message",
@@ -3499,7 +3513,7 @@ def test_border_exits_without_change_flags() -> None:
     page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
         encoding="utf-8", errors="replace"))
     check("the border set is derived when no cell carries a flag",
-          "var _agentBorderCells = function (dir, cells, isWalkable) {" in page
+          "const _agentBorderCells = function (dir, cells, isWalkable) {" in page
           and "borderCache[d] = _agentBorderCells(d, map.cells, walkTest);" in page,
           "an empty exits list is the difference between travelling and stalling")
     check("a derived exit is labelled as derived",
@@ -3510,7 +3524,7 @@ def test_border_exits_without_change_flags() -> None:
           and "try { ok = !!isWalkable(i); } catch (eW) { ok = false; }" in page,
           "a border cell nobody can stand on cannot be walked to")
     check("a reached border cell that does not transition is not retried forever",
-          "var _agentEdgeTry = {};" in page
+          "const _agentEdgeTry = {};" in page
           and "lastNav.stage === 'change_requested_at_edge'" in page
           and "idx = (idx + 1) % pool.length;" in page,
           "a geometric exit lists several cells and only one of them crosses")
@@ -3598,7 +3612,7 @@ def test_door_cell_memory() -> None:
     page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
         encoding="utf-8", errors="replace"))
     check("door cells persist across reloads",
-          "var _DOOR_STORE = 'dofusFarm.doorCells';" in page
+          "const _DOOR_STORE = 'dofusFarm.doorCells';" in page
           and "localStorage.setItem(_DOOR_STORE, JSON.stringify(_agentDoorMap))" in page,
           "a memory that dies with the page rediscovers the same door every session")
     check("every observed transition teaches a door",
@@ -3627,7 +3641,7 @@ def test_door_cell_memory() -> None:
           and "(door step off then on)" in page,
           "a transition lands you on the door cell; standing there does not trigger it")
     check("nav.goto walks onto a remembered door for a non-neighbour map",
-          "var doorCell = _agentDoorFor(here, wantMap);" in page
+          "const doorCell = _agentDoorFor(here, wantMap);" in page
           and "'isoEngine._movePlayerOnMap (remembered door cell)'" in page,
           "without this an interior map can only be left by hand")
     check("the snapshot publishes the doors and the door flag",
@@ -3995,7 +4009,9 @@ def test_login_cooldown_guard() -> None:
           "setItem('dfGuestTries', '0')" in page,
           "five attempts burned inside a lockout leave none for after it")
     check("a re-rendered login screen is wrapped again",
-          "setInterval(function() { try { _guardLoginScreen(); }" in page,
+          "setInterval(function() {" in page
+          and "try { _guardLoginScreen(); } catch (e) {}" in page
+          and "_popupScan();" in page,
           "a one-shot wrap dies with the screen object")
     # The host auto-starts the AI the moment an instance launches, so `aiRunning`
     # is true while the guest login is still in progress. The keep-alive used to
@@ -4004,7 +4020,7 @@ def test_login_cooldown_guard() -> None:
     # account busy for the next login (measured 2026-10-28, 20:20-21:00).
     check("the keep-alive refuses to run outside the world",
           "_agentInWorld()) return;" in page
-          and "var _agentInWorld = function ()" in page
+          and "const _agentInWorld = function ()" in page
           and "pd.position" in page,
           "an AI-started login screen must not be kept alive")
     check("the blocking alert is recorded and swallowed",
@@ -4206,6 +4222,7 @@ def test_console_guard() -> None:
     # logged "auto started" and the row correctly said AI OFF. The operator's
     # words were "the ai is running while its shows its not running".
     import io
+    import logging
     import sys as _sys
 
     from agent.console_guard import GuardedStream, install, status
@@ -4226,7 +4243,7 @@ def test_console_guard() -> None:
         dead = GuardedStream(_Dead(), "stdout")
         _sys.stdout = dead
         try:
-            logger.debug("[autopilot] policy: nn; stack none")
+            print("[autopilot] policy: nn; stack none", file=_sys.stdout)
             wrote = True
         except OSError:
             wrote = False
@@ -4237,6 +4254,30 @@ def test_console_guard() -> None:
               "tail=%r" % (dead.tail(),))
         check("the stream reports itself broken", dead.broken and dead.swallowed >= 1,
               "broken=%r swallowed=%r" % (dead.broken, dead.swallowed))
+
+        # The incident was a `logger.debug`, not a bare print. The daemon installs
+        # the guard *before* `logging.basicConfig` (`agent/serve.py`), so the root
+        # handler's stream is the guard itself and a diagnostic line reaches the
+        # dead pipe through the handler. Replacing `sys.stdout` after the handler
+        # was built does not move that stream, which is why the probe above used
+        # `print` and this one binds a handler to the guard the way the daemon does.
+        probe = logging.getLogger("console_guard.probe")
+        probe.propagate = False
+        probe.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler(dead)
+        probe.addHandler(handler)
+        try:
+            probe.debug("[autopilot] policy: nn; stack none")
+            logged = True
+        except OSError:
+            logged = False
+        finally:
+            probe.removeHandler(handler)
+        check("a logger writing into the dead pipe does not raise", logged,
+              "the OSError that killed the policy build still escapes")
+        check("and the line it wrote is in the tail too",
+              any("policy" in line for line in dead.tail()),
+              "tail=%r" % (dead.tail(),))
 
         healthy = io.StringIO()
         guard = GuardedStream(healthy, "stdout")
@@ -5521,7 +5562,7 @@ def test_per_instance_ai() -> None:
           "this.setAiState(this.aiRunning, null, this.aiWaiting);" in page,
           "updateHud dropped the pending flag on the next repaint")
     check("a pill press while a start is pending cancels it",
-          "var waiting = !!self.aiWaiting && !running;" in page
+          "const waiting = !!self.aiWaiting && !running;" in page
           and "cancelling" in page,
           "the pending state was invisible to the pill, so its click re-armed the start")
     check("the tick diffs the pending answer per instance",
@@ -6506,7 +6547,7 @@ def test_exhausted_ready_maps() -> None:
     page = (ROOT / "scripts" / "mobile-disguise.js").read_text(
         encoding="utf-8", errors="replace")
     check("the page closes a named window through the client's own manager",
-          "var _agentCloseWindow = function(name) {" in page
+          "const _agentCloseWindow = function(name) {" in page
           and "if (!mgr || typeof mgr.close !== 'function') return false;" in page
           and "mgr.close(name); return true;" in page)
     check("ui.tap closes the windows the caller names before pressing",
@@ -6958,13 +6999,31 @@ def test_check_helper_survives_a_tuple_detail() -> None:
     # reading a run's log, `FAIL a tuple detail is formatted, not fatal` appears in
     # every list of real failures, and 2026-11-10 it was reported as one of 28.
     import io as _io
-    import contextlib as _contextlib
+    import logging as _logging
     printed = _io.StringIO()
+    # `check()` reports through its module logger, not `print`, so redirecting stdout
+    # captured nothing and the probe read as a formatter failure. Attach the handler
+    # to the logger that actually emits the line.
+    handler = _logging.StreamHandler(printed)
+    handler.setLevel(_logging.DEBUG)
+    probe_logger = _common.logger
+    saved_level = probe_logger.level
+    saved_propagate = probe_logger.propagate
+    probe_logger.addHandler(handler)
+    probe_logger.setLevel(_logging.DEBUG)
+    # Nothing else may see the probe's line. The root handler writes to the run
+    # log, and a reader scanning that log for `FAIL ` would take the probe for a
+    # real failure -- which is exactly how it was reported as one of 28 on
+    # 2026-11-10. The capture buffer below is the only reader it needs.
+    probe_logger.propagate = False
     try:
-        with _contextlib.redirect_stdout(printed):
-            check("a tuple detail is formatted, not fatal", False, (1, 2))
+        check("a tuple detail is formatted, not fatal", False, (1, 2))
     except TypeError as exc:
         crashed = exc
+    finally:
+        probe_logger.propagate = saved_propagate
+        probe_logger.removeHandler(handler)
+        probe_logger.setLevel(saved_level)
     # The probe's own failure line is evidence about the formatter, not a gate failure,
     # so it is lifted out before the verdict is recorded. Recording the verdict first and
     # deleting the tail afterwards threw the verdict away with the probe, and the
@@ -7286,12 +7345,21 @@ def test_gate_shadow_reaches_the_trajectory() -> None:
     seen = [m.get("gate") for m in rt.executor.metes if m.get("gate")]
     check("the loop annotates every executed call with the gate's view",
           len(seen) >= 2, [m for m in rt.executor.metes])
+    # The memory veto now refuses the third identical no-op before the gate is asked
+    # (`agent/evidence.py`: two no-ops of one call in one context is a refuted belief),
+    # so the loop sends two repeats and the shadow's streak reaches 1, not 2. The
+    # annotation still has to grow one per repeat actually sent; the bound that stops
+    # the third is asserted separately below.
     check("and the streak the shadow reports grows with the repeats it observes",
-          [s["streak"] for s in seen] == list(range(len(seen)))
-          and seen[-1]["would_veto"] is True,
+          [s["streak"] for s in seen] == list(range(len(seen))) and len(seen) >= 2,
           seen)
     step_rows = [json.loads(line) for line in
                  log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    check("and the repeat the gate would have vetoed is refused by the memory first",
+          len(seen) == 2 and any(row.get("tool") == "nav.goto"
+                                 and row.get("verdict") == "blocked"
+                                 for row in step_rows),
+          [row for row in step_rows if row.get("tool") == "nav.goto"][-2:])
     check("the loop's own step rows carry no meta, so the shadow lives in the "
           "trajectory file (a reader looking in autopilot.jsonl would find nothing)",
           all("meta" not in row for row in step_rows if row.get("kind") == "step"),
@@ -7490,6 +7558,28 @@ def test_move_calibration_semantics() -> None:
         check("with no calibrator the shipped formula is used unchanged",
               (net.calibrator is not None) or abs(float(plain[0]) - 0.5) < 1e-6,
               [float(v) for v in plain])
+
+def test_two_ply_transition_contract() -> None:
+    import io
+    import unittest
+    from combat.test_two_ply_world_model import (InterpreterGateTests,
+                                               PlanProjectionTests, TwoPlyReplyTests)
+
+    section("Reply search and duel replay share the recorded successor")
+    loader = unittest.defaultTestLoader
+    for label, suite, minimum in (
+            ("PlanProjectionTests", loader.loadTestsFromTestCase(PlanProjectionTests), 4),
+            ("TwoPlyReplyTests", loader.loadTestsFromTestCase(TwoPlyReplyTests), 4),
+            ("shipped timing interpreter", loader.loadTestsFromTestCase(InterpreterGateTests), 1),
+            ("immutable bounded buff cache", loader.loadTestsFromName(
+                "combat.test_two_ply_world_model.CloneAndLatencyTests."
+                "test_buff_aging_cache_is_bounded_and_reverts_are_branch_local"), 1)):
+        found = suite.countTestCases()
+        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+        check(label, found >= minimum and result.testsRun == found and result.wasSuccessful(),
+              {"tests": result.testsRun,
+               "failed": [str(t) for t, _ in result.failures + result.errors]})
+
 
 def test_the_battle_solver_reads_what_the_page_writes() -> None:
     """Run the solver's payload suite here, so the sweep can actually see `battle_solver.py`.
@@ -7930,6 +8020,24 @@ def test_doc_facts_self_witness() -> None:
           any("unknown fact" in p for p in problems["unknown fact"]),
           problems["unknown fact"])
 
+    from unittest import mock
+    driver_dir = tmp.parent / "tools"
+    driver_dir.mkdir()
+    driver = driver_dir / "mutate_cause_gate.py"
+    snippet = ("note = 'r.test_decoy'\n"
+               "not_dispatched = r.test_unused\n"
+               "for ignored in (r.test_ignored,):\n    pass\n"
+               "for case in (r.test_one, combat.test_two, quest.test_three):\n"
+               "    r._run_test(case)\n")
+    driver.write_text("SNIPPET = %r\n" % snippet, encoding="utf-8")
+    with mock.patch.object(df, "BRAIN", tmp.parent):
+        count = df.snippet_tests()
+        check("snippet counts dispatched tests across owners, not text references",
+              count == 3, count)
+        driver.write_text("SNIPPET = build_at_runtime()\n", encoding="utf-8")
+        check("a dynamic snippet has no fabricated static test count",
+              df.snippet_tests() is None)
+
 def test_slim_live_observation() -> None:
     """The live path no longer builds the observation nothing reads -- prove nothing was lost.
 
@@ -8270,7 +8378,7 @@ def test_installed_payload_and_dependencies() -> None:
          "        __import__(name)\n"
          "    except Exception as exc:\n"
          "        bad.append(name + ':' + type(exc).__name__)\n"
-         "logger.debug('FAILS:' + ','.join(bad) if bad else 'ALL-IMPORT-OK')\n"
+         "print('FAILS:' + ','.join(bad) if bad else 'ALL-IMPORT-OK')\n"
          % (str(REPO_ROOT), core_roots)],
         capture_output=True, text=True, timeout=600, cwd=str(REPO_ROOT))
     check("every core entry point imports with torch absent (the installed copy's reality)",
@@ -8400,7 +8508,7 @@ def test_installed_payload_and_dependencies() -> None:
             [str(embedded), "-c",
              "import sys; sys.path.insert(0, %r); "
              "import agent.commands, agent.brain_daemon, ai.lexical_policy, ai.onnx_policy, "
-             "combat.grid_infer; logger.debug('imports-ok')" % str(REPO_ROOT)],
+             "combat.grid_infer; print('imports-ok')" % str(REPO_ROOT)],
             capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT))
         check("the shipped interpreter can import the modules the app loads",
               "imports-ok" in probe.stdout, (probe.stderr or probe.stdout)[-300:])
@@ -9505,6 +9613,7 @@ def test_stall_retirement_is_bounded() -> None:
     """
     import contextlib
     import io
+    import logging
     import agent.autopilot as _gm
     from agent.autopilot import Autopilot, RETIRE_REPEAT_LIMIT
     from agent.runtime import ToolCall
@@ -9524,6 +9633,11 @@ def test_stall_retirement_is_bounded() -> None:
 
         def time(self) -> float:
             return 1_700_000_000.0 + self.t
+
+        def strftime(self, fmt: str) -> str:
+            # Log rotation calls this on whatever `autopilot.time` is; a fake clock
+            # without it turns a rotation into an AttributeError.
+            return time.strftime(fmt)
 
     def drive(progresses: bool, can_skip: bool = True, tutorial: bool = False,
               stop_after: int = 60, max_steps: int = 0):
@@ -9599,16 +9713,27 @@ def test_stall_retirement_is_bounded() -> None:
         ap = Autopilot(runtime=rt, goals=["do all the quests"],
                        log_path=tmp / "ap.jsonl", stop_file=tmp / "STOP",
                        max_steps=max_steps, dry_run=False, preflight=False,
-                       minutes=0, interval=0.0, steps_per_goal=max_steps or 8)
+                       minutes=0, interval=0.0, steps_per_goal=max_steps or 8,
+                       settle_s=0.0)
         if not can_skip:
             rt.policy.skip = None      # a policy with no skip cannot name a quest to retire
         ap.controller.state_dir = tmp
         real_time, _gm.time = _gm.time, clock
         buf = io.StringIO()
+        # The stall reason is logged, not printed; capture that logger or every
+        # check below reads an empty stdout and calls a pass a failure.
+        handler = logging.StreamHandler(buf)
+        handler.setLevel(logging.DEBUG)
+        auto_log = logging.getLogger("agent.autopilot")
+        level = auto_log.level
+        auto_log.addHandler(handler)
+        auto_log.setLevel(logging.DEBUG)
         try:
             with contextlib.redirect_stdout(buf):
                 ap._run()
         finally:
+            auto_log.removeHandler(handler)
+            auto_log.setLevel(level)
             _gm.time = real_time
         rows = [json.loads(line) for line in
                 (tmp / "ap.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -9633,7 +9758,7 @@ def test_stall_retirement_is_bounded() -> None:
 
     _, steps3, out3 = drive(progresses=False, can_skip=False)
     check("with nothing to retire, the stall still ends the goal",
-          "no quest to retire" in out3 and len(steps3) <= 80,
+          "no quest could be retired" in out3 and len(steps3) <= 80,
           [len(steps3), out3.splitlines()[-2:]])
 
     # A bounded run is the only kind the host starts (`aipanel.cs` sends `"steps":N`),
@@ -9647,7 +9772,10 @@ def test_stall_retirement_is_bounded() -> None:
           "%r skipped, tail %r" % (policy5.skipped, out5.splitlines()[-2:]))
 
     real_patience = _gm.TUTORIAL_PATIENCE_S
-    _gm.TUTORIAL_PATIENCE_S = 120       # the replay clock only moves when the loop sleeps
+    # Settle is disabled in this fixture (it has no completion predicate), so the
+    # replay clock no longer advances 3 s per step; patience is set to zero to
+    # exercise the expiry branch on the next step rather than after 120 fake seconds.
+    _gm.TUTORIAL_PATIENCE_S = 0.0
     try:
         _, steps4, out4 = drive(progresses=False, tutorial=True, stop_after=400)
     finally:
@@ -9684,6 +9812,7 @@ def test_read_streak_is_bounded() -> None:
     """
     import contextlib
     import io
+    import logging
     import collections
     import agent.autopilot as _gm
     from agent.autopilot import Autopilot, READ_STREAK_LIMIT, READ_ESCALATION_LIMIT
@@ -9792,6 +9921,12 @@ def test_read_streak_is_bounded() -> None:
         def time(self) -> float:
             return 1_700_000_000.0 + self.t
 
+        def strftime(self, fmt: str) -> str:
+            # Log rotation calls this on whatever `autopilot.time` is; a fake clock
+            # without it turns a rotation into an AttributeError that reads as a
+            # read-streak failure.
+            return time.strftime(fmt)
+
     tmp = Path(tempfile.mkdtemp())
     clock = _Clock()
 
@@ -9847,7 +9982,7 @@ def test_read_streak_is_bounded() -> None:
     ap = Autopilot(runtime=rt, goals=["do all the quests"],
                    log_path=tmp / "ap.jsonl", stop_file=tmp / "STOP",
                    max_steps=0, dry_run=False, preflight=False,
-                   minutes=0, interval=0.0)
+                   minutes=0, interval=0.0, settle_s=0.0)
     ap.controller.state_dir = tmp
     ap.thinking = _Think()
     # Enter the regime the live reads came from: past the wait bound the loop stops
@@ -9863,9 +9998,26 @@ def test_read_streak_is_bounded() -> None:
     ap._hold_wait = _wait_then_overflow
     real_time, _gm.time = _gm.time, clock
     buf = io.StringIO()
+
+    def _run_with_logs(run, stream):
+        # The bound announces itself through `agent.autopilot`'s logger, not stdout;
+        # without a handler on that logger the captured output is empty and the
+        # checks below read a pass as a failure.
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.DEBUG)
+        auto_log = logging.getLogger("agent.autopilot")
+        level = auto_log.level
+        auto_log.addHandler(handler)
+        auto_log.setLevel(logging.DEBUG)
+        try:
+            run()
+        finally:
+            auto_log.removeHandler(handler)
+            auto_log.setLevel(level)
+
     try:
         with contextlib.redirect_stdout(buf):
-            ap._run()
+            _run_with_logs(ap._run, buf)
     finally:
         _gm.time = real_time
     out = buf.getvalue()
@@ -9939,14 +10091,14 @@ def test_read_streak_is_bounded() -> None:
     ap2 = Autopilot(runtime=rt2, goals=["do all the quests", "sell all"],
                     log_path=tmp2 / "ap.jsonl", stop_file=tmp2 / "STOP",
                     max_steps=0, dry_run=False, preflight=False,
-                    minutes=0, interval=0.0)
+                    minutes=0, interval=0.0, settle_s=0.0)
     ap2.controller.state_dir = tmp2
     ap2.thinking = _Nothing()
     real_time, _gm.time = _gm.time, clock2
     buf2 = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf2):
-            ap2._run()
+            _run_with_logs(ap2._run, buf2)
     finally:
         _gm.time = real_time
     out2 = buf2.getvalue()
@@ -10088,12 +10240,25 @@ def test_reads_are_not_world_progress() -> None:
         ap.thinking = _Think()
         real_time, _gm.time = _gm.time, clock
         buf = io.StringIO()
+        # The loop reports its own progress through `agent.autopilot`'s logger
+        # (`logger.debug("[autopilot] no progress: ...")`), not stdout, so a
+        # redirected stdout alone captures none of it. Attach a handler to the
+        # logger that actually emits the line and keep both streams in `out`.
+        import logging as _logging
+        handler = _logging.StreamHandler(buf)
+        handler.setLevel(_logging.DEBUG)
+        ap_logger = _gm.logger
+        saved_level = ap_logger.level
+        ap_logger.addHandler(handler)
+        ap_logger.setLevel(_logging.DEBUG)
         try:
             with contextlib.redirect_stdout(buf):
                 ap._run()
             with contextlib.redirect_stdout(io.StringIO()):
                 report = ap.summary("gate")
         finally:
+            ap_logger.removeHandler(handler)
+            ap_logger.setLevel(saved_level)
             _gm.time = real_time
         out = buf.getvalue()
         counts = dict(ap._verdict_counts)
@@ -10771,7 +10936,7 @@ def test_live_ready() -> None:
     # into a red gate that says nothing about the reader. What must hold is that
     # `page_build` reads the marker the file declares.
     page = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
-    declared = re.search(r"var AGENT_BUILD = '([^']+)'",
+    declared = re.search(r"(?:var|let|const)\s+AGENT_BUILD\s*=\s*'([^']+)'",
                          page.read_text(encoding="utf-8", errors="replace"))
     check("the repo page carries the build its own constant declares",
           bool(declared) and ready.page_build(page) == declared.group(1),
@@ -11551,7 +11716,7 @@ def test_repair_credit() -> None:
     src = inspect.getsource(Autopilot)
     check("the loop credits through the read-aware gate only",
           src.count("self._credit_pending(call, v)") == 1
-          and "self.controller.observe_outcome(self._pending, verdict)"
+          and "self.controller.observe_outcome(self._pending, verdict, **credit_options)"
           in inspect.getsource(Autopilot._credit_pending)
           and src.count("controller.observe_outcome") == 1,
           "%d direct credits" % src.count("controller.observe_outcome"))
@@ -14280,10 +14445,19 @@ def test_the_page_s_word_for_a_wall_is_read() -> None:
           "the helper reads bits; the shape guard belongs to its caller, below")
 
     real_walk = map_walk
+    import agent.map_utils as _map_utils
     real_planner_walk = _planner_mod.map_walk
+    real_utils_walk = _map_utils.map_walk
+
+    def _set_walk(fn):
+        # `_sealed_borders` delegates to agent.map_utils, which imported its own
+        # `map_walk`; patching only the planner left the real cache in place.
+        _planner_mod.map_walk = fn
+        _map_utils.map_walk = fn
+
     try:
         sealed = QuestPlanner()
-        _planner_mod.map_walk = lambda mid: wall_ring
+        _set_walk(lambda mid: wall_ring)
         check("a cached wall ring seals the map without asking the server",
               sealed._sealed_borders(HERE, NEAR)
               == {("left", NEAR["left"]), ("right", NEAR["right"]),
@@ -14295,19 +14469,20 @@ def test_the_page_s_word_for_a_wall_is_read() -> None:
         check("and a second objective on the same map is answered the same way, silently",
               ask(sealed, scene(None), key=("q", 2)) is None, "")
 
-        _planner_mod.map_walk = lambda mid: full
+        _set_walk(lambda mid: full)
         check("an open map is not sealed by the same rule",
               QuestPlanner()._sealed_borders(HERE, NEAR) == set()
               and isinstance(ask(QuestPlanner(), scene(None)), dict), "")
-        _planner_mod.map_walk = lambda mid: "101"
+        _set_walk(lambda mid: "101")
         check("a cache entry of the wrong length is not allowed to refuse a border",
               QuestPlanner()._sealed_borders(HERE, NEAR) == set(), "")
-        _planner_mod.map_walk = lambda mid: None
+        _set_walk(lambda mid: None)
         check("and a map the cache does not hold is unknown, not walled",
               QuestPlanner()._sealed_borders(HERE, NEAR) == set()
               and isinstance(ask(QuestPlanner(), scene(None)), dict), "")
     finally:
         _planner_mod.map_walk = real_planner_walk
+        _map_utils.map_walk = real_utils_walk
 
     # The map the live run was standing on, measured 2026-11-12: every border cell
     # `{l: 66}`, every interior cell `{l: 67}`. Its terrain was in the trajectory the
@@ -15650,7 +15825,7 @@ def test_board_replay() -> None:
           original["fighters"][0]["max_ap"] is None
           and original["fighters"][1]["max_hp"] is None, str(original["fighters"]))
     check("the hypothesis is stated in code, not only in a docstring",
-          "upper bound" in module.ASSUMPTION and "my_stats.action_points" in module.ASSUMPTION,
+          "lower bound" in module.ASSUMPTION and "my_stats.action_points" in module.ASSUMPTION,
           module.ASSUMPTION)
 
     def stub_decide(payload):
@@ -15677,6 +15852,26 @@ def test_board_replay() -> None:
     check("the contract state travels with the report, so readiness is visible",
           report["contract"] == {"actionable=True value_ready=False": 3}, str(report))
 
+    def recording_decide(payload):
+        recording_decide.seen.append(payload)
+        return {"reason": "policy_direct", "action": {"type": "cast"},
+                "contract": {"actionable": True, "value_ready": False},
+                "latency_ms": 1.0}
+    recording_decide.seen = []
+    module.replay(rows, recording_decide)
+    check("the default arm asks with the payload exactly as recorded",
+          recording_decide.seen
+          and recording_decide.seen[0]["fighters"][0]["max_hp"] is None
+          and recording_decide.seen[0]["fighters"][0]["max_ap"] is None,
+          str(recording_decide.seen[:1]))
+    recording_decide.seen = []
+    module.replay(rows, recording_decide, fill_missing=True)
+    check("the fill arm is opt-in and asks with the supplied values",
+          recording_decide.seen
+          and recording_decide.seen[0]["fighters"][0]["max_hp"] == 40
+          and recording_decide.seen[0]["fighters"][1]["max_hp"] == 185,
+          str(recording_decide.seen[0]["fighters"]))
+
     def angry(payload):
         raise ZeroDivisionError("no enemies")
     hurt = module.replay(rows[:1], angry)
@@ -15699,10 +15894,13 @@ def test_board_replay() -> None:
         fake = types.ModuleType("combat.live_policy")
 
         class _Policy:
+            seen: list = []
+
             def __init__(self, checkpoint=None, **_kw):
                 self.checkpoint = checkpoint
 
             def decide(self, payload):
+                _Policy.seen.append(payload)
                 return {"reason": "policy_pass", "action": {"type": "pass"},
                         "contract": {"actionable": True, "value_ready": False},
                         "latency_ms": 2.0}
@@ -15719,8 +15917,12 @@ def test_board_replay() -> None:
         with contextlib.redirect_stdout(buf):
             code = module.main([str(log)])
         out = buf.getvalue()
-        check("the replay prints the hypothesis it ran under before its numbers",
-              code == 0 and "fill hypothesis:" in out, out[:300])
+        check("the default run has no imputation arm printed",
+              code == 0 and "fill hypothesis:" not in out and "raw arm" in out, out[:400])
+        check("the default run hands the policy the recorded boards untouched",
+              len(_Policy.seen) == 3
+              and all(row["fighters"][0]["max_hp"] is None for row in _Policy.seen),
+              str(_Policy.seen[:1]))
         check("and prints whether the critic ever picked the realization",
               "value head picks the realization: {'asked': 0, 'fired': 0}" in out,
               out[-200:])
@@ -15728,6 +15930,18 @@ def test_board_replay() -> None:
           "not a live fight, not a win rate" in out, out[-320:])
         check("the as-recorded contract state is printed, so the gap stays visible",
               "as recorded, contract actionable: {'False': 3}" in out, out[:400])
+
+        _Policy.seen = []
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = module.main([str(log), "--fill"])
+        out = buf.getvalue()
+        check("--fill prints the assumption it adds and both arms with distinct labels",
+              code == 0 and "fill hypothesis:" in out and "raw arm" in out
+              and "fill arm" in out, out[:600])
+        check("--fill runs the recorded boards first and the filled copies after",
+              [row["fighters"][0]["max_hp"] for row in _Policy.seen] == [None] * 3 + [40] * 3,
+              str([row["fighters"][0]["max_hp"] for row in _Policy.seen]))
 
         class _NoJax:
             def __init__(self, *a, **kw):
@@ -15915,6 +16129,31 @@ def _host_launch_cases(hc) -> None:
     check("a fetch through a port nobody listens on is False, not an exception",
           ready._fetch_via(ready.LOGIN_ASSET, "http://127.0.0.1:1", timeout=1.0) is False, None)
 
+def test_suite_coverage_uses_execution_records() -> None:
+    import inspect
+    from unittest import mock
+
+    names = {name for name, value in globals().items()
+             if name.startswith("test_") and callable(value)
+             and getattr(value, "__module__", "") == __name__}
+    victim = "test_two_ply_transition_contract"
+    unasked = "test_unasked_coverage_control"
+    for label, executed, extra, missing in (
+            ("all executed suites survive stale source metadata", names, {}, []),
+            ("an unexecuted existing suite is detected", names - {victim}, {}, [victim]),
+            ("a newly declared unasked suite is detected", names,
+             {unasked: lambda: None}, [unasked])):
+        observed = {name: 1 for name in executed}
+        report = mock.Mock()
+        with mock.patch.dict(globals(), dict(extra, CHECK_COUNTS=observed, check=report)), \
+                mock.patch.object(Path, "read_text", return_value=json.dumps({"per_test": observed})), \
+                mock.patch.object(inspect, "getsource", side_effect=AssertionError("source is not execution")):
+            test_no_suite_stops_answering()
+        verdict = next(call.args for call in report.call_args_list
+                       if call.args[0] == "every suite defined in this module is called by the gate runner")
+        check(label, verdict[1] == (not missing) and verdict[2] == missing, verdict[2])
+
+
 def test_no_suite_stops_answering() -> None:
     """A green gate with a smaller total is not the same evidence.
 
@@ -15960,9 +16199,7 @@ def test_no_suite_stops_answering() -> None:
     # unread-field audit's arm, and the battle solver's payload runner -- were all
     # defined, all passed when named on the command line, and none of them was in
     # `run()`. The gate stayed green and 30 checks it was supposed to run never ran.
-    import inspect as _inspect
-    called = set(re.findall(r"_run_test\((test_[a-z0-9_]+)\)",
-                            _inspect.getsource(run)))
+    called = set(CHECK_COUNTS) | {mine}
     defined = {name for name, value in globals().items()
                if name.startswith("test_") and callable(value)
                and getattr(value, "__module__", "") == __name__}
@@ -16035,8 +16272,9 @@ def run() -> Tuple[int, List[str]]:
     from agent import witness
     # Domain-specific test suites moved from regression.py into regression_suites/
     from agent.regression_suites.combat import (
-        test_side_swap, test_move_gate, test_damage_calibration_join,
-        test_damage_calibration_live_evidence, test_combat_suites)
+        test_side_swap, test_move_gate, test_kill_pricing,
+        test_damage_calibration_join, test_damage_calibration_live_evidence,
+        test_combat_suites)
     from agent.regression_suites.nav import (
         test_doorless_map_asks_for_the_neighbour, test_free_form_searches_new_maps,
         test_objective_travel_is_bounded, test_return_bound,
@@ -16119,6 +16357,9 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_check_helper_survives_a_tuple_detail)
     _run_test(test_veto_alternative_priced)
     _run_test(test_gate_shadow_reaches_the_trajectory)
+    # The builder's dev-tier list and the payload gate's FORBIDDEN set are two
+    # implementations of one decision; compare them before the payload itself is read.
+    _run_test(test_dev_tier_staging_parity)
     _run_test(test_installed_payload_and_dependencies)
     _run_test(test_docs_quote_measurements_by_tag)
     _run_test(test_docs_owed_session_names_the_current_build)
@@ -16169,9 +16410,17 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_the_close_fits_the_timeout_that_kills_it)
     _run_test(test_side_swap)
     _run_test(test_move_gate)
+    # The learned max_hp hop prices a standing kill. The sweep lists it as a witness for
+    # `combat/battle_solver.py`; without a call here the ratchet reported it as `not_run`.
+    _run_test(test_kill_pricing)
     _run_test(test_progress_report)
     _run_test(test_artifact_rollback)
     _run_test(test_foresight_net)
+    # The move_prob calibrator the foresight net feeds. The mutation sweep already names
+    # this slice as a witness for `agent/calibration.py`; without a call here the sweep
+    # asked for a test the gate never ran, and `test_mutation_targets_have_witnesses`
+    # reported it as `not_run` instead of a coverage gap.
+    _run_test(test_move_calibration_semantics)
     _run_test(test_counterfactual_factory_alive)
     _run_test(test_repair_credit)
     _run_test(test_reads_are_not_actions)
@@ -16277,6 +16526,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_board_payload_round_trip)
     _run_test(test_live_fight_corpus_is_read_in_process)
     _run_test(test_the_battle_solver_reads_what_the_page_writes)
+    _run_test(test_two_ply_transition_contract)
     _run_test(test_slim_live_observation)
     _run_test(test_encounter_input_tables)
     _run_test(test_combat_decision_log)
@@ -16304,6 +16554,11 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_every_mutation_anchor_still_points_at_code)
     # Last, because it reads the durations every test above recorded.
     _run_test(test_the_mutation_pass_stays_affordable)
+    # The ratchet reads what the suites executed, so every suite the mutation sweep
+    # runs has to have run before it -- including this one, which the sweep added to
+    # its list. Calling it after the ratchet made the ratchet report it as `not_run`
+    # on every run (measured 2026-11-18, runs 6 and 7).
+    _run_test(test_suite_coverage_uses_execution_records)
     # After every suite above -- including the two that only measure the run itself --
     # because it reads what they executed: a target with no witness in the map is either a
     # missing test or a ratchet that ran too early, and the detail names which. Measured

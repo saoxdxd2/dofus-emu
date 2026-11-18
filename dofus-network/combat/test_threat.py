@@ -250,6 +250,18 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(model.enemies[0].reach,
                          threat.PRIOR_RANGE + threat.RANGE_SLACK + 3)
 
+    def test_a_learned_max_hp_rides_along_without_trusting_the_damage_mean(self):
+        memory = threat.ThreatMemory()
+        self.assertTrue(memory.record_hp("Barbakle", 140))
+        self.assertFalse(memory.record_hp("Barbakle", 120),
+                         "the largest published value wins")
+        self.assertFalse(memory.record_hp("Barbakle", 0))
+        self.assertIsNone(memory.profile("Barbakle"),
+                          "no hits yet means no damage profile")
+        self.assertEqual(memory.hp_of("Barbakle"), 140.0)
+        again = threat.ThreatMemory.from_dict(memory.as_dict())
+        self.assertEqual(again.hp_of("Barbakle"), 140.0)
+
     def test_a_monster_of_the_same_name_shares_one_row(self):
         memory = threat.ThreatMemory()
         memory.record("Clobberstone", damage=10.0)

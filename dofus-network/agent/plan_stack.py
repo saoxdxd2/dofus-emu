@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from agent.features import DELIVER_TYPES, FIGHT_TYPES, MAP_TYPES, TALK_TYPES
-from agent.observe import flatten
+from agent.observe import map_id_of
 import logging
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def _direction(observation: Dict[str, Any]) -> Optional[str]:
     (`last_nav.from_map` when `to_map` is this map), so the return is known
     without keeping state. A dead end still walks back: leaving is crossing.
     """
-    here = flatten(observation).get("map_id")
+    here = map_id_of(observation)
     try:
         here = int(here) if here is not None else None
     except (TypeError, ValueError):
@@ -205,7 +205,6 @@ def child_for_objective(objective: Optional[Dict[str, Any]],
     """
     if not isinstance(objective, dict) or not isinstance(observation, dict):
         return None
-    flat = flatten(observation)
     params = objective.get("params") if isinstance(objective.get("params"), dict) else {}
     try:
         type_id = int(objective.get("type_id", objective.get("objective_type")))
@@ -231,7 +230,7 @@ def child_for_objective(objective: Optional[Dict[str, Any]],
             return {"kind": "explore", "args": {"direction": direction} if direction else {}}
     if type_id in MAP_TYPES:
         map_id = objective.get("map_id")
-        if map_id not in (None, flat.get("map_id")):
+        if map_id not in (None, map_id_of(observation)):
             return {"kind": "goto_map", "args": {"map_id": map_id}}
     if "equip" in text or "équipe" in text or "equipa" in text:
         preset = _first_preset(observation)

@@ -34,9 +34,9 @@ function block(marker) {
     return null;
 }
 
-const start = page.indexOf('var _LOGIN_BUSY_STORE');
-const fnAt = page.indexOf('var _loginCooldown = function() {');
-const fn = fnAt < 0 ? null : block('var _loginCooldown = function() {');
+const start = page.indexOf('const _LOGIN_BUSY_STORE');
+const fnAt = page.indexOf('const _loginCooldown = function() {');
+const fn = fnAt < 0 ? null : block('const _loginCooldown = function() {');
 check('the cooldown engine is present', start >= 0 && !!fn);
 check('refusals decay after the served backoff',
       /_LOGIN_FAIL_DECAY_MS = 60 \* 60 \* 1000/.test(page)

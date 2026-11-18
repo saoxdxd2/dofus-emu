@@ -36,9 +36,9 @@ function block(marker) {
     return null;
 }
 
-const atVar = page.match(/var _agentLoginBanAt\s*=\s*[^;]+;/);
-const textVar = page.match(/var _agentLoginBanText\s*=\s*[^;]+;/);
-const fn = block('var _agentLoginBan = function() {');
+const atVar = page.match(/(?:var|let|const) _agentLoginBanAt\s*=\s*[^;]+;/);
+const textVar = page.match(/(?:var|let|const) _agentLoginBanText\s*=\s*[^;]+;/);
+const fn = block('const _agentLoginBan = function() {');
 check('the ban matcher is present', !!fn && !!atVar && !!textVar);
 
 let make = null;

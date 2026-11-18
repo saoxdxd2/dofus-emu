@@ -11,9 +11,9 @@
    {
     "feature": 33,
     "flagged": true,
-    "live_mean": 0.8553,
+    "live_mean": 0.8932,
     "name": "err_none",
-    "out_of_range_share": 0.855,
+    "out_of_range_share": 0.893,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -21,9 +21,19 @@
    {
     "feature": 13,
     "flagged": true,
-    "live_mean": 0.0959,
+    "live_mean": 0.2868,
     "name": "type_other",
-    "out_of_range_share": 0.096,
+    "out_of_range_share": 0.287,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 5,
+    "flagged": true,
+    "live_mean": 0.0776,
+    "name": "type_5",
+    "out_of_range_share": 0.078,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -31,9 +41,9 @@
    {
     "feature": 14,
     "flagged": true,
-    "live_mean": 0.9041,
+    "live_mean": 0.9566,
     "name": "has_param0",
-    "out_of_range_share": 0.096,
+    "out_of_range_share": 0.043,
     "ref_mean": 1.0,
     "reference_constant": true,
     "z": null
@@ -41,9 +51,9 @@
    {
     "feature": 34,
     "flagged": true,
-    "live_mean": 0.0031,
+    "live_mean": 0.0014,
     "name": "err_structural",
-    "out_of_range_share": 0.003,
+    "out_of_range_share": 0.001,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -51,22 +61,22 @@
    {
     "feature": 41,
     "flagged": true,
-    "live_mean": 0.009,
+    "live_mean": 0.0214,
     "name": "kamas",
     "out_of_range_share": 1.0,
     "ref_mean": 0.5771,
     "reference_constant": false,
-    "z": -3.5
+    "z": -3.43
    },
    {
     "feature": 37,
     "flagged": true,
-    "live_mean": 0.1415,
+    "live_mean": 0.1053,
     "name": "err_other",
     "out_of_range_share": 0.0,
     "ref_mean": 0.9307,
     "reference_constant": false,
-    "z": -3.11
+    "z": -3.25
    },
    {
     "feature": 19,
@@ -77,42 +87,32 @@
     "ref_mean": 0.1134,
     "reference_constant": false,
     "z": -1.19
-   },
-   {
-    "feature": 16,
-    "flagged": true,
-    "live_mean": 0.348,
-    "name": "n_params",
-    "out_of_range_share": 1.0,
-    "ref_mean": 0.5084,
-    "reference_constant": false,
-    "z": -0.96
    }
   ],
   "in_coverage": false,
-  "max_abs_z": 3.5,
-  "median_abs_z": 0.52,
+  "max_abs_z": 3.43,
+  "median_abs_z": 0.46,
   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3",
   "per_feature": [
    {
     "feature": 0,
     "flagged": false,
-    "live_mean": 0.3789,
+    "live_mean": 0.3623,
     "name": "type_0",
     "out_of_range_share": 0.0,
     "ref_mean": 0.2298,
     "reference_constant": false,
-    "z": 0.35
+    "z": 0.32
    },
    {
     "feature": 1,
     "flagged": false,
-    "live_mean": 0.1604,
+    "live_mean": 0.1068,
     "name": "type_1",
     "out_of_range_share": 0.0,
     "ref_mean": 0.1356,
     "reference_constant": false,
-    "z": 0.07
+    "z": -0.08
    },
    {
     "feature": 2,
@@ -137,19 +137,19 @@
    {
     "feature": 4,
     "flagged": false,
-    "live_mean": 0.2248,
+    "live_mean": 0.1032,
     "name": "type_4",
     "out_of_range_share": 0.0,
     "ref_mean": 0.0605,
     "reference_constant": false,
-    "z": 0.69
+    "z": 0.18
    },
    {
     "feature": 5,
-    "flagged": false,
-    "live_mean": 0.0,
+    "flagged": true,
+    "live_mean": 0.0776,
     "name": "type_5",
-    "out_of_range_share": 0.0,
+    "out_of_range_share": 0.078,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -157,12 +157,12 @@
    {
     "feature": 6,
     "flagged": false,
-    "live_mean": 0.1399,
+    "live_mean": 0.0633,
     "name": "type_6",
     "out_of_range_share": 0.0,
     "ref_mean": 0.0623,
     "reference_constant": false,
-    "z": 0.32
+    "z": 0.0
    },
    {
     "feature": 7,
@@ -227,9 +227,9 @@
    {
     "feature": 13,
     "flagged": true,
-    "live_mean": 0.0959,
+    "live_mean": 0.2868,
     "name": "type_other",
-    "out_of_range_share": 0.096,
+    "out_of_range_share": 0.287,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -237,9 +237,9 @@
    {
     "feature": 14,
     "flagged": true,
-    "live_mean": 0.9041,
+    "live_mean": 0.9566,
     "name": "has_param0",
-    "out_of_range_share": 0.096,
+    "out_of_range_share": 0.043,
     "ref_mean": 1.0,
     "reference_constant": true,
     "z": null
@@ -247,32 +247,32 @@
    {
     "feature": 15,
     "flagged": false,
-    "live_mean": 0.1399,
+    "live_mean": 0.0633,
     "name": "has_param1",
     "out_of_range_share": 0.0,
     "ref_mean": 0.5253,
     "reference_constant": false,
-    "z": -0.77
+    "z": -0.93
    },
    {
     "feature": 16,
     "flagged": true,
-    "live_mean": 0.348,
+    "live_mean": 0.34,
     "name": "n_params",
     "out_of_range_share": 1.0,
     "ref_mean": 0.5084,
     "reference_constant": false,
-    "z": -0.96
+    "z": -1.01
    },
    {
     "feature": 17,
     "flagged": false,
-    "live_mean": 0.4481,
+    "live_mean": 0.6726,
     "name": "obj_map",
     "out_of_range_share": 0.0,
     "ref_mean": 0.7791,
     "reference_constant": false,
-    "z": -0.8
+    "z": -0.26
    },
    {
     "feature": 18,
@@ -307,12 +307,12 @@
    {
     "feature": 21,
     "flagged": false,
-    "live_mean": 0.6479,
+    "live_mean": 0.8406,
     "name": "inv_stacks",
     "out_of_range_share": 0.0,
     "ref_mean": 0.0976,
     "reference_constant": false,
-    "z": 2.08
+    "z": 2.8
    },
    {
     "feature": 22,
@@ -327,22 +327,22 @@
    {
     "feature": 23,
     "flagged": false,
-    "live_mean": 0.2013,
+    "live_mean": 0.1843,
     "name": "on_target",
     "out_of_range_share": 0.0,
     "ref_mean": 0.5384,
     "reference_constant": false,
-    "z": -0.68
+    "z": -0.71
    },
    {
     "feature": 24,
     "flagged": false,
-    "live_mean": 0.4308,
+    "live_mean": 0.5974,
     "name": "hops_to_target",
     "out_of_range_share": 0.0,
     "ref_mean": 0.2277,
     "reference_constant": false,
-    "z": 0.69
+    "z": 1.25
    },
    {
     "feature": 25,
@@ -357,12 +357,12 @@
    {
     "feature": 26,
     "flagged": false,
-    "live_mean": 0.0367,
+    "live_mean": 0.0521,
     "name": "level",
     "out_of_range_share": 0.0,
     "ref_mean": 0.2152,
     "reference_constant": false,
-    "z": -1.06
+    "z": -0.97
    },
    {
     "feature": 27,
@@ -387,17 +387,17 @@
    {
     "feature": 29,
     "flagged": false,
-    "live_mean": 0.2557,
+    "live_mean": 0.3966,
     "name": "active_count",
     "out_of_range_share": 0.0,
     "ref_mean": 0.7564,
     "reference_constant": false,
-    "z": -1.74
+    "z": -1.25
    },
    {
     "feature": 30,
     "flagged": false,
-    "live_mean": 0.0006,
+    "live_mean": 0.0003,
     "name": "fail_streak",
     "out_of_range_share": 0.0,
     "ref_mean": 0.0978,
@@ -407,7 +407,7 @@
    {
     "feature": 31,
     "flagged": false,
-    "live_mean": 0.9984,
+    "live_mean": 0.9993,
     "name": "last_ok",
     "out_of_range_share": 0.0,
     "ref_mean": 0.7862,
@@ -417,19 +417,19 @@
    {
     "feature": 32,
     "flagged": false,
-    "live_mean": 0.2478,
+    "live_mean": 0.2179,
     "name": "last_tool",
-    "out_of_range_share": 0.358,
+    "out_of_range_share": 0.254,
     "ref_mean": 0.2554,
     "reference_constant": false,
-    "z": -0.06
+    "z": -0.31
    },
    {
     "feature": 33,
     "flagged": true,
-    "live_mean": 0.8553,
+    "live_mean": 0.8932,
     "name": "err_none",
-    "out_of_range_share": 0.855,
+    "out_of_range_share": 0.893,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -437,9 +437,9 @@
    {
     "feature": 34,
     "flagged": true,
-    "live_mean": 0.0031,
+    "live_mean": 0.0014,
     "name": "err_structural",
-    "out_of_range_share": 0.003,
+    "out_of_range_share": 0.001,
     "ref_mean": 0.0,
     "reference_constant": true,
     "z": null
@@ -467,12 +467,12 @@
    {
     "feature": 37,
     "flagged": true,
-    "live_mean": 0.1415,
+    "live_mean": 0.1053,
     "name": "err_other",
     "out_of_range_share": 0.0,
     "ref_mean": 0.9307,
     "reference_constant": false,
-    "z": -3.11
+    "z": -3.25
    },
    {
     "feature": 38,
@@ -507,33 +507,33 @@
    {
     "feature": 41,
     "flagged": true,
-    "live_mean": 0.009,
+    "live_mean": 0.0214,
     "name": "kamas",
     "out_of_range_share": 1.0,
     "ref_mean": 0.5771,
     "reference_constant": false,
-    "z": -3.5
+    "z": -3.43
    }
   ],
   "rows": 19686,
   "status": "compared"
  },
- "generated_at": "2026-11-07T05:28:18Z",
+ "generated_at": "2026-11-17T22:14:17Z",
  "kept": {
-  "actions": 504,
-  "actions_advance": 8,
-  "actions_moved": 224,
-  "paired": 636,
-  "reads": 132,
-  "test": 112,
-  "total": 636,
-  "train": 385,
-  "val": 139,
-  "with_features": 636
+  "actions": 1045,
+  "actions_advance": 17,
+  "actions_moved": 478,
+  "paired": 1405,
+  "reads": 360,
+  "test": 554,
+  "total": 1405,
+  "train": 615,
+  "val": 236,
+  "with_features": 1405
  },
- "label_rule": "a change observed in a run of reads is credited to the last acting step; reads never claim a change; a directive the page refused before sending is always a miss (G65)",
+ "label_rule": "source-identified actions use their latest evidence revision; unconfirmed outcomes stay unknown; read deltas have no inferred owner",
  "label_version": 3,
- "labeler_sha": "cbd39ce2dd57",
+ "labeler_sha": "d466fda2aca9",
  "leaks": {
   "detail": {},
   "segments": 0
@@ -547,10 +547,10 @@
   "breeds": {
    "1": 411,
    "12": 60,
-   "4": 165
+   "4": 934
   },
   "characters": {
-   "4404438": 112,
+   "4404438": 881,
    "4422236": 53,
    "4425019": 298,
    "4434090": 60,
@@ -563,18 +563,23 @@
    "2026-10-28": 60,
    "2026-10-29": 113,
    "2026-11-04": 104,
-   "2026-11-05": 8
+   "2026-11-05": 8,
+   "2026-11-07": 24,
+   "2026-11-08": 462,
+   "2026-11-09": 10,
+   "2026-11-11": 216,
+   "2026-11-12": 57
   },
-  "days_n": 6,
+  "days_n": 11,
   "goals": {
-   "do all the quests": 254,
+   "do all the quests": 993,
    "join the fight": 2,
    "plz do all the quests": 318,
    "recover the last page of the aqueduct blueprints": 1
   },
   "instances": {
    "default": 352,
-   "dofus-01": 114,
+   "dofus-01": 883,
    "dofus-02": 2,
    "dofus-03": 55,
    "dofus-05": 113
@@ -582,27 +587,31 @@
   "levels": {
    "1": 137,
    "10": 10,
-   "11": 198,
-   "12": 7,
+   "11": 286,
+   "12": 415,
    "13": 65,
+   "15": 273,
    "18": 50,
    "2": 161,
    "22": 3,
    "8": 5
   },
-  "levels_n": 9,
+  "levels_n": 10,
   "objective_types": {
    "-1": 61,
-   "0": 241,
-   "1": 102,
-   "4": 143,
+   "0": 509,
+   "1": 150,
+   "4": 145,
+   "45": 342,
+   "5": 109,
    "6": 89
   },
-  "sessions": 9,
+  "sessions": 15,
   "sources": {
    "default.20261026-074102-070180.jsonl": 351,
    "default.jsonl": 1,
-   "dofus-01.jsonl": 114,
+   "dofus-01.20261108-205337-063447.jsonl": 290,
+   "dofus-01.jsonl": 593,
    "dofus-02.20261029-022349-419629.jsonl": 2,
    "dofus-03.jsonl": 55,
    "dofus-05.jsonl": 113
@@ -610,19 +619,11 @@
  },
  "quarantine": {
   "by_reason": {
-   "no_features": 308,
-   "tutorial": 9067,
-   "unpaired": 113
+   "no_features": 324,
+   "tutorial": 9235,
+   "unpaired": 117
   },
   "examples": [
-   {
-    "id": "baf7187f77ced859#0",
-    "reasons": [
-     "no_features"
-    ],
-    "split": "train",
-    "tool": "quest.advance"
-   },
    {
     "id": "fea456505087f024#0",
     "reasons": [
@@ -632,7 +633,7 @@
     "tool": "state.snapshot"
    },
    {
-    "id": "42a0432c6f3b285a#0",
+    "id": "5882296cb839e943#0",
     "reasons": [
      "no_features"
     ],
@@ -640,23 +641,32 @@
     "tool": "state.snapshot"
    },
    {
-    "id": "42a0432c6f3b285a#1",
+    "id": "42c02f6344dc0867#0",
+    "reasons": [
+     "unpaired",
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "safe.stop"
+   },
+   {
+    "id": "3418878344e509b3#0",
     "reasons": [
      "no_features"
     ],
     "split": "train",
-    "tool": "quest.advance"
+    "tool": "state.snapshot"
    },
    {
-    "id": "42a0432c6f3b285a#2",
+    "id": "1e07ea476a348fec#0",
     "reasons": [
      "no_features"
     ],
     "split": "train",
-    "tool": "quest.advance"
+    "tool": "state.snapshot"
    },
    {
-    "id": "42a0432c6f3b285a#3",
+    "id": "441c63e51915c7ea#0",
     "reasons": [
      "no_features"
     ],
@@ -664,34 +674,34 @@
     "tool": "state.snapshot"
    }
   ],
-  "total": 9379
+  "total": 9563
  },
  "reference": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3",
  "rows": {
-  "test": 314,
-  "total": 10015,
-  "train": 8298,
-  "val": 1403
+  "test": 1384,
+  "total": 10968,
+  "train": 8238,
+  "val": 1346
  },
  "schema": {
   "fatal": [],
   "label_version": 3,
   "stale_rows": 0,
-  "v3_rows": 10015,
+  "v3_rows": 10968,
   "warnings": [
    "multi_character: 5 character(s) in one corpus"
   ]
  },
  "source_manifest": {
-  "label_version": 3,
-  "rows": 10015,
-  "split_policy": "temporal",
-  "x_coverage_pct": 98.0
+  "label_version": 4,
+  "rows": 10968,
+  "split_policy": "hash",
+  "x_coverage_pct": 98.1
  },
  "version": 1,
  "written": {
-  "test": 112,
-  "train": 385,
-  "val": 139
+  "test": 554,
+  "train": 615,
+  "val": 236
  }
 }

@@ -110,24 +110,30 @@ def map_interactives(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     A free-form objective is performed through one of these; the element list is
     what the client's own renderer reports, not a table the planner invents.
+    The row is copied whole: `tap.interactive` needs `skill_uid` and
+    `enabled_skills`, and the page publishes the element under `elem_id`.
     """
     if not isinstance(obs, dict):
         return []
     block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
-    raw = obs.get("interactives") or block.get("interactives") or []
+    raw = obs.get("interactives")
+    if not isinstance(raw, list):
+        raw = block.get("interactives")
     out: List[Dict[str, Any]] = []
-    for entry in raw:
+    for entry in raw or []:
         if not isinstance(entry, dict):
             continue
-        elem_id = entry.get("id", entry.get("elementId"))
+        elem_id = entry.get("elem_id", entry.get("element_id",
+                          entry.get("elemId", entry.get("id", entry.get("elementId")))))
         try:
             elem_id = int(elem_id)
         except (TypeError, ValueError):
             continue
         if elem_id <= 0:
             continue
-        out.append({"element_id": elem_id, "cell": entry.get("cell"),
-                    "type": entry.get("type", entry.get("elemType"))})
+        row = dict(entry)
+        row["elem_id"] = elem_id
+        out.append(row)
     return out
 
 

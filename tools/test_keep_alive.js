@@ -29,7 +29,7 @@ function extractHelper() {
     // The capture, the walk and the marker are one unit: the marker is only as good
     // as the object the capture found, and the capture's whole job is to not accept
     // something that cannot mark.
-    const rawAt = src.indexOf('var rawSetInterval = window.setInterval;');
+    const rawAt = src.indexOf('const rawSetInterval = window.setInterval;');
     const start = rawAt < 0 ? -1 : src.lastIndexOf('(function () {', rawAt);
     const mark = src.indexOf('window.__agentMarkActivity = function');
     if (start < 0 || mark < start) return null;
@@ -195,7 +195,7 @@ check('the observation publishes the keep-alive witness',
     && /last_source:/.test(kaBlock) && /idle_ms:/.test(kaBlock), kaBlock.slice(0, 80));
 
 // Disconnect must stop the timer so a crashed/closed loop never keeps pinging.
-const wrappedStart = src.indexOf('var wrapped = function');
+const wrappedStart = src.indexOf('const wrapped = function');
 const disconnectWrap = src.indexOf("wrap('disconnect')");
 const wrapRegion = (wrappedStart >= 0 && disconnectWrap > wrappedStart)
     ? src.slice(wrappedStart, disconnectWrap) : '';

@@ -28,10 +28,10 @@ function extract(marker) {
     return src.slice(src.indexOf('function', start), end + 1);
 }
 
-const targetFnSrc = extract('var _agentClientTarget = function(name)');
-const openWindowSrc = extract('var _agentOpenWindowObject = function(name)');
+const targetFnSrc = extract('const _agentClientTarget = function(name)');
+const openWindowSrc = extract('const _agentOpenWindowObject = function(name)');
 const tapFnSrc = extract("'ui.tap': function(args) {");
-const dragFnSrc = extract('var _agentUiDrag = function(src, dst)');
+const dragFnSrc = extract('const _agentUiDrag = function(src, dst)');
 check('the page declares the client-target resolver', !!targetFnSrc);
 check('the page declares the open-window helper', !!openWindowSrc);
 check('the page declares the drag sequence', !!dragFnSrc);

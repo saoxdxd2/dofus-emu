@@ -642,9 +642,8 @@ def test_the_memory_vetoes_what_the_context_refuted() -> None:
             summary = ap._run()
         finally:
             _am.time.sleep = real_sleep
-        rows = [json.loads(line) for line in
-                (tmp / "autopilot.jsonl").read_text(encoding="utf-8").splitlines()
-                if line.strip()]
+        from agent import jsonio
+        rows = list(jsonio.iter_rows(tmp / "autopilot.jsonl"))
         return ap, summary, rows, rt
 
     try:

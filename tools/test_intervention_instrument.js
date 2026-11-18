@@ -25,7 +25,7 @@ const blockStart = src.indexOf('if (!self._userInputInstalled');
 check('instrument installed in bindNetworkHooks', blockStart > 0, 'anchor missing');
 if (blockStart < 0) { console.log('\n' + pass + ' passed, ' + fail + ' failed'); process.exit(1); }
 
-const noteStart = src.indexOf('var noteUserInput = function (ev) {', blockStart);
+const noteStart = src.indexOf('const noteUserInput = function (ev) {', blockStart);
 let depth = 0, i = src.indexOf('{', noteStart), noteEnd = -1;
 for (; i < src.length; i++) {
     if (src[i] === '{') depth++;

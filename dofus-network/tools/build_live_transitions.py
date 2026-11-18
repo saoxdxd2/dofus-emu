@@ -159,7 +159,14 @@ def segments(rows: Iterable[Dict[str, Any]], source: str,
     out: List[Dict[str, Any]] = []
     current: Optional[Dict[str, Any]] = None
     last_ts = 0.0
+    evidence = {}
     for row in rows:
+        if row.get("kind") == "action_evidence" and isinstance(row.get("action_id"), str):
+            key = (str(row.get("instance") or "default"), row["action_id"])
+            prior = evidence.get(key)
+            if (type(row.get("revision")) is int
+                    and (prior is None or row["revision"] > prior["revision"])):
+                evidence[key] = row
         if row.get("kind") != "step" or not row.get("tool"):
             continue
         goal = " ".join(str(row.get("goal") or "").split())
@@ -175,6 +182,14 @@ def segments(rows: Iterable[Dict[str, Any]], source: str,
         current["steps"].append(row)
         if ts:
             last_ts = ts
+    for segment in out:
+        for row in segment["steps"]:
+            result = row.get("result") or {}
+            payload = result.get("directive_payload") if isinstance(result, dict) else None
+            action_id = payload.get("id") if isinstance(payload, dict) else None
+            revision = evidence.get((segment["instance"], action_id))
+            if revision is not None:
+                row["_action_evidence"] = revision
     return [segment for segment in out if segment["steps"]]
 
 
@@ -441,6 +456,17 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
         after = (nxt if isinstance(nxt, dict) and nxt else None) or _after_obs(row) \
             or carried_after
         tool = str(row.get("tool") or "")
+        result = row.get("result") or {}
+        payload = result.get("directive_payload") if isinstance(result, dict) else None
+        action_id = payload.get("id") if isinstance(payload, dict) else None
+        evidence = row.get("_action_evidence")
+        stamped = isinstance((before or {}).get("source_snapshot"), dict)
+        credit_eligible = (isinstance(evidence, dict) and evidence.get("status") == "confirmed"
+                           and evidence.get("verdict") in ("advanced", "failed"))
+        credit_verdict = evidence.get("verdict") if credit_eligible else None
+        if stamped:
+            settled = evidence.get("outcome_observation") if isinstance(evidence, dict) else None
+            after = dict(before or {}, **settled) if isinstance(settled, dict) else (_after_obs(row) or before)
         ok = bool(row.get("ok"))
         # Latency is the directive round trip (6 minutes in total over 9,687 rows);
         # the decision cadence is the time between records, and that is what a
@@ -486,10 +512,10 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
         args = row.get("args") if isinstance(row.get("args"), dict) else {}
         claim, claim_met = _claim_of(tool, args, before, after)
         if refused:
-            # The page answered without sending anything, so any movement in the
-            # after-state belongs to some other cause. A refused call is a miss:
-            # that is also what the retry counters must see.
             claim_met = False
+        elif stamped and tool not in READ_ONLY_TOOLS:
+            claim_met = (False if credit_verdict == "failed" else
+                         claim_met if credit_verdict == "advanced" else None)
         rule = tool + "|" + json.dumps(args, sort_keys=True)
         # The same call minus fields that change between retries of one intent
         # (agent.gate.VOLATILE_ARGS). Kept beside the exact key: `repeat_streak` is
@@ -529,6 +555,13 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
             # The page's own refusal, verbatim enough to tell "not sent" apart
             # from "sent and did nothing". Additive: older readers ignore it.
             "refused": refused,
+            "action_id": action_id,
+            "source_identified": stamped,
+            "credit_eligible": credit_eligible or bool(refused),
+            "credit_verdict": credit_verdict,
+            "completion_status": evidence.get("status") if isinstance(evidence, dict) else "unknown",
+            "evidence_revision": evidence.get("revision") if isinstance(evidence, dict) else None,
+            "attribution": "source_callback" if credit_eligible else "unattributed",
             "latency_ms": row.get("latency_ms"),
             # How old the state behind this decision was. Measured 2026-10-29: 4,153
             # of 4,344 steps acted on a *carried* observation, median 707 ms old,
@@ -598,46 +631,12 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _attribute_lagged(out: List[Dict[str, Any]]) -> None:
-    """Give a revealed effect to the step that acted, not to the read that saw it.
-
-    Measured 2026-10-29 on 9,687 rows: 173 of the 195 reads labelled `moved` sat
-    directly after a `quest.advance`, i.e. the read was credited with the action's
-    effect because the server applies it after the directive returns. Training a
-    value head on that label would teach "reading moves you". A read cannot change
-    the world, so a change first observed in a run of reads belongs to the last
-    acting step before the run; the raw per-step diff stays in `moved_observed` /
-    `progress_observed` so nothing is lost.
-    """
-    last_action: Optional[int] = None
-    for index, row in enumerate(out):
-        row["moved_observed"] = bool(row.get("moved"))
-        row["progress_observed"] = bool(row.get("progress"))
-        row["advance_observed"] = bool(row.get("advance"))
-        if row.get("was_read"):
-            if last_action is not None:
-                action = out[last_action]
-                if row["moved"] and not action["moved"]:
-                    action["moved"] = True
-                    action["moved_lag"] = index - last_action
-                    action["moved_keys"] = sorted(set(action["moved_keys"])
-                                                  | set(row["moved_keys"]))
-                if row["progress"] and not action["progress"]:
-                    action["progress"] = True
-                    action["progress_lag"] = index - last_action
-                    action["progress_keys"] = sorted(set(action["progress_keys"])
-                                                     | set(row["progress_keys"]))
-                if row["advance"] and not action["advance"]:
-                    action["advance"] = True
-                    action["advance_lag"] = index - last_action
-                    action["advance_keys"] = sorted(set(action["advance_keys"])
-                                                    | set(row["advance_keys"]))
-            row["moved"] = False
-            row["progress"] = False
-            row["advance"] = False
-        elif not row.get("refused"):
-            # A refused call sends nothing, so it is not a candidate owner for a
-            # change a later read reveals (G65).
-            last_action = index
+    """Keep observed changes without assigning an unidentified effect to the last action."""
+    for row in out:
+        for key in ("moved", "progress", "advance"):
+            row[key + "_observed"] = bool(row.get(key))
+            if row.get("was_read") or row.get("refused"):
+                row[key] = False
 
 
 def segment_key(segment: Dict[str, Any]) -> str:
@@ -860,11 +859,14 @@ def summarise(transitions: List[Dict[str, Any]]) -> Dict[str, Any]:
         return round(hits / t_h, 2) if t_h > 0 else None
     return {
         "rows": len(transitions),
-        "label_version": 3,
+        "label_version": 4,
         "labeler_sha": labeler_sha(),
-        "label_rule": ("a change observed in a run of reads is credited to the last "
-                       "acting step; reads never claim a change; a directive the page "
-                       "refused before sending is always a miss (G65)"),
+        "label_rule": ("source-identified actions use their latest evidence revision; "
+                       "unconfirmed outcomes stay unknown; read deltas have no inferred owner"),
+        "credit_unconfirmed": sum(1 for r in actions if r.get("source_identified")
+                                  and not r.get("credit_eligible")),
+        "credit_confirmed": sum(1 for r in actions if r.get("source_identified")
+                                and r.get("credit_eligible")),
         "reads": sum(1 for r in usable if r["was_read"]),
         "reads_that_saw_a_change": sum(1 for r in usable if r["was_read"]
                                        and r.get("moved_observed")),

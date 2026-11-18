@@ -13,15 +13,22 @@ the first SFT corpus for the 100M model.
 from __future__ import annotations
 
 import logging
+import json
+import os
 import re
+import tempfile
 import time
+from collections import OrderedDict
+from pathlib import Path
+from threading import RLock
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from agent.executor import ToolExecutor, ToolResult
 from agent.observe import redact_packet_secrets
-from agent.recorder import TrajectoryRecorder
+from agent.recorder import TrajectoryRecorder, _redact
 from agent.schema import tool_names
+from agent.evidence import EvidenceMemory
 
 logger = logging.getLogger("dofus.agent.runtime")
 
@@ -396,6 +403,78 @@ class AgentRuntime:
         self.last_observation: Optional[Dict[str, Any]] = None
         self.last_observation_ts: float = 0.0
         self.observations_seen: int = 0
+        self.evidence = EvidenceMemory()
+        self._evidence_lock = RLock()
+        self._evidence_revisions: OrderedDict[str, dict] = OrderedDict()
+        self.evidence_status = "unversioned"
+        path = getattr(self.recorder, "path", None)
+        self.evidence_path = Path(path).with_suffix(".evidence.json") if path else None
+        if self.evidence_path is not None and self.evidence_path.exists():
+            try:
+                if self.evidence_path.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("evidence checkpoint exceeds size limit")
+                self.evidence.load(self.evidence_path.read_text(encoding="utf-8"))
+                self._evidence_revisions.update((row["action_id"], row) for row in self.evidence.actions.values())
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                self.evidence = EvidenceMemory()
+                self._evidence_revisions.clear()
+                logger.warning("evidence checkpoint unavailable: %s", exc)
+
+    def publish_evidence(self, revisions: list[dict]) -> None:
+        for revision in revisions:
+            self.recorder.log("action_evidence", dict(revision, source="live"))
+            self._evidence_revisions[revision["action_id"]] = revision
+        while len(self._evidence_revisions) > self.evidence.action_capacity:
+            self._evidence_revisions.popitem(last=False)
+
+    def register_action(self, action_id: str, tool: str, args: dict, context: tuple) -> None:
+        with self._evidence_lock:
+            self.publish_evidence(self.evidence.register(action_id, tool, args, context))
+
+    def record_action_outcome(self, action_id: str, verdict: Optional[str], observation: Any = None) -> None:
+        with self._evidence_lock:
+            self.publish_evidence(self.evidence.observe_outcome(action_id, verdict, observation))
+
+    def drain_evidence_revisions(self) -> list[dict]:
+        with self._evidence_lock:
+            revisions = list(self._evidence_revisions.values())
+            self._evidence_revisions.clear()
+            return revisions
+
+    def save_evidence(self) -> None:
+        if self.evidence_path is None:
+            return
+        temporary = None
+        try:
+            with self._evidence_lock:
+                document = _redact(json.loads(self.evidence.dumps()))
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False,
+                                             dir=str(self.evidence_path.parent),
+                                             prefix=self.evidence_path.name + ".") as handle:
+                temporary = handle.name
+                json.dump(document, handle)
+            os.replace(temporary, self.evidence_path)
+        except OSError as exc:
+            logger.warning("evidence checkpoint save failed: %s", exc)
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _accept_observation(self, observation: Dict[str, Any]) -> bool:
+        with self._evidence_lock:
+            return self._accept_locked(observation)
+
+    def _accept_locked(self, observation: Dict[str, Any]) -> bool:
+        redact_packet_secrets(observation)
+        update = self.evidence.ingest(observation)
+        self.evidence_status = update.status
+        self.publish_evidence(update.revisions)
+        accepted = update.adopt or (update.status == "unversioned" and self.evidence.epoch is None)
+        if accepted:
+            self.last_observation = observation
+            self.last_observation_ts = time.time()
+            self.observations_seen += 1
+        return accepted
 
     # -- observation stream --------------------------------------------------
 
@@ -406,10 +485,7 @@ class AgentRuntime:
         source: str = "live",
     ) -> Dict[str, Any]:
         """Accept a pushed game-state snapshot and remember it as current."""
-        redact_packet_secrets(observation)
-        self.last_observation = observation
-        self.last_observation_ts = time.time()
-        self.observations_seen += 1
+        self._accept_observation(observation)
         return self.recorder.observation(observation, goal=goal, source=source)
 
     def current_observation(self) -> tuple[Optional[Dict[str, Any]], Optional[float], str]:
@@ -424,7 +500,7 @@ class AgentRuntime:
         age_ms = (time.time() - self.last_observation_ts) * 1000.0
         return self.last_observation, round(age_ms, 1), "carried"
 
-    def note_observation(self, observation: Dict[str, Any]) -> None:
+    def note_observation(self, observation: Dict[str, Any]) -> bool:
         """Adopt a snapshot the bridge returned with a directive response.
 
         The bridge captures it *after* the directive ran, so it is the state the
@@ -432,10 +508,7 @@ class AgentRuntime:
         record: the next step records it as its own ``observation``, which is the
         same pairing and avoids writing every snapshot twice.
         """
-        redact_packet_secrets(observation)
-        self.last_observation = observation
-        self.last_observation_ts = time.time()
-        self.observations_seen += 1
+        return self._accept_observation(observation)
 
     def execute_tool(
         self,

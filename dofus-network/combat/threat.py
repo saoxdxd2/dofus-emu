@@ -309,6 +309,38 @@ class ThreatMemory:
             learned += 1
         return learned
 
+    def record_hp(self, name: str, max_hp: Any) -> bool:
+        """Keep the largest max_hp ever seen for this monster. Returns True if new.
+
+        The payload omits `max_hp` for most enemy rows (measured 2026-11-18: 922
+        of 1,396 rows), and the solver prices a kill as `KILL_BONUS * max_hp`.
+        A value published by any earlier board is the only price available, so
+        it is kept apart from the damage mean, which still needs samples before
+        `profile` will trust it.
+        """
+        key = (name or "").strip()
+        try:
+            value = float(max_hp or 0)
+        except (TypeError, ValueError):
+            return False
+        if not key or value <= 0:
+            return False
+        row = self.monsters.setdefault(
+            key, {"samples": 0.0, "damage": 0.0, "range": 0.0, "hits": 0.0})
+        if value <= row.get("max_hp", 0.0):
+            return False
+        row["max_hp"] = value
+        return True
+
+    def hp_of(self, name: str) -> Optional[float]:
+        """The learned max_hp for a monster, or None when never published."""
+        row = self.monsters.get((name or "").strip())
+        value = row.get("max_hp") if isinstance(row, dict) else None
+        try:
+            return float(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
     def profile(self, name: str) -> Optional[Dict[str, float]]:
         row = self.monsters.get((name or "").strip())
         if not row or row.get("samples", 0.0) <= 0:
@@ -335,6 +367,7 @@ class ThreatMemory:
                 "damage": _num(value.get("damage")),
                 "range": _num(value.get("range")),
                 "hits": _num(value.get("hits"), 1.0),
+                "max_hp": _num(value.get("max_hp")),
             }
         return cls(clean)
 

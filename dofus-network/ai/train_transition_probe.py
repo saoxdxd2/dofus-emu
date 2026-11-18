@@ -88,16 +88,17 @@ def build_split(path: Path) -> Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarra
         window: List[Dict[str, Any]] = []
         for row in rows:
             state = [float(v) for v in row["x"]]
-            X.append(state + history_tokens(window))
-            moved = bool(row.get("moved"))
-            read = bool(row.get("was_read"))
-            Y.append(1 if (moved and not read) else 0)
-            meta["segment"].append(segment)
-            meta["t"].append(float(row.get("t") or 0))
-            meta["tool"].append(str(row.get("tool") or ""))
-            meta["moved"].append(moved)
-            meta["was_read"].append(read)
-            meta["obs_stale"].append(float(state[OBS_STALE]))
+            if not row.get("source_identified") or row.get("credit_eligible"):
+                X.append(state + history_tokens(window))
+                moved = bool(row.get("moved"))
+                read = bool(row.get("was_read"))
+                Y.append(1 if (moved and not read) else 0)
+                meta["segment"].append(segment)
+                meta["t"].append(float(row.get("t") or 0))
+                meta["tool"].append(str(row.get("tool") or ""))
+                meta["moved"].append(moved)
+                meta["was_read"].append(read)
+                meta["obs_stale"].append(float(state[OBS_STALE]))
             window.append({"tool": str(row.get("tool") or ""),
                            "ok": bool(row.get("ok")),
                            "err": _err_slot(row.get("error"))})

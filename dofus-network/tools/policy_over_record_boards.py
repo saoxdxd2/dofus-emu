@@ -1,21 +1,4 @@
-"""What would the trained policy have done with the fights we already recorded?
-
-Replays the page's own captured ``fight.state`` boards through the live policy and reports the
-action mix and latency. It exists because the question "is the learned policy any good on a real
-board?" is otherwise only answerable during a live fight -- and the recorded boards fail the
-observation contract on fields the page does not fill (KNOWN_GAPS G25), so the policy never gets
-asked.
-
-The fill is a HYPOTHESIS, printed as one. `max_hp` for an enemy is set to its current hp (an upper
-bound, true only at the round a fighter is first seen) and the self fighter's max ap/mp come from
-the same payload's `my_stats`. Neither is what the client would send once G25 is fixed; both are
-the minimum needed to make the board actionable so the actor can be measured at all. Read the
-action mix as "what the actor does on real geometry once it is allowed to answer", not as a win
-rate and not as live proof.
-
-    python tools/policy_over_record_boards.py            # needs the brain's jax environment
-    python tools/policy_over_record_boards.py --limit 20 --all-turns
-"""
+"""Replay recorded boards through the live policy; imputation is explicit and diagnostic."""
 
 from __future__ import annotations
 
@@ -26,13 +9,13 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List
 
 REPO_ROOT = Path(__file__).resolve().parent.parent      # .../dofus-network
 DEFAULT_LOG = Path(os.path.expandvars(r"%LOCALAPPDATA%\DofusFarm\fight_boards.jsonl"))
-ASSUMPTION = ("enemy max_hp := its current hp (an upper bound, exact only when first seen); "
-              "self max_ap/max_mp := my_stats.action_points/movement_points; "
-              "self max_hp := current hp")
+ASSUMPTION = ("missing max_hp := current hp (a lower bound, not a confirmed maximum); "
+              "missing self max_ap/max_mp := my_stats.action_points/movement_points "
+              "(unverified budget proxies)")
 
 
 def fill(board: Dict[str, Any]) -> Dict[str, Any]:
@@ -59,7 +42,7 @@ def fill(board: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def replay(rows: List[Dict[str, Any]], decide: Callable[[Dict[str, Any]], Dict[str, Any]],
-           only_my_turn: bool = True) -> Dict[str, Any]:
+           only_my_turn: bool = True, fill_missing: bool = False) -> Dict[str, Any]:
     """Run `decide` over every selected board and count what came back."""
     reasons: collections.Counter = collections.Counter()
     action_types: collections.Counter = collections.Counter()
@@ -73,7 +56,7 @@ def replay(rows: List[Dict[str, Any]], decide: Callable[[Dict[str, Any]], Dict[s
             continue
         used += 1
         try:
-            decision = decide(fill(board))
+            decision = decide(fill(board) if fill_missing else board)
         except Exception as exc:                       # noqa: BLE001 - a harness reports, it cannot fix
             errors["%s: %s" % (type(exc).__name__, str(exc)[:70])] += 1
             continue
@@ -104,6 +87,9 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="only the first N boards")
     parser.add_argument("--all-turns", action="store_true",
                         help="also ask the policy on turns that belong to another fighter")
+    parser.add_argument("--fill", action="store_true",
+                        help="also replay a filled copy of each board (the imputation arm); "
+                             "the default arm is the payload exactly as recorded")
     parser.add_argument("--checkpoint", default=str(REPO_ROOT / "models"
                                                     / "encounter_selfplay.pkl"))
     args = parser.parse_args(argv)
@@ -136,7 +122,6 @@ def main(argv: List[str] = None) -> int:
     raw_ready = collections.Counter(
         str(((r.get("board") or {}).get("contract") or {}).get("actionable")) for r in rows)
     print("as recorded, contract actionable:", dict(raw_ready))
-    print("fill hypothesis:", ASSUMPTION)
 
     t0 = time.perf_counter()
     # Run as `python tools/x.py`, the repo root is not on sys.path -- and this tool exists to
@@ -148,34 +133,57 @@ def main(argv: List[str] = None) -> int:
         policy = LivePolicy(checkpoint=Path(args.checkpoint))
     except Exception as exc:                           # noqa: BLE001 - environment, not behaviour
         print("the live policy could not be loaded here: %s: %s" % (type(exc).__name__, exc))
-        print("Run this with an interpreter that can import jax (see combat/brain_service.py).")
+        print("Run this with the shipped runtime (runtimes/python/python.exe).")
         return 2
     print("policy loaded in %.1fs   checkpoint: %s"
           % (time.perf_counter() - t0, Path(args.checkpoint).name))
 
-    report = replay(rows, policy.decide, only_my_turn=not args.all_turns)
-    print("asked: %d boards%s" % (report["boards"],
-                                  "" if args.all_turns else " (own turn only)"))
-    print("contract after the fill:", report["contract"])
-    print("reasons:", report["reasons"])
+    def _show(label: str, report: Dict[str, Any]) -> None:
+        print("--- %s ---" % label)
+        print("asked: %d boards%s" % (report["boards"],
+                                      "" if args.all_turns else " (own turn only)"))
+        print("contract:", report["contract"])
+        print("reasons:", report["reasons"])
+        print("actions:", report["actions"])
+        print("latency ms: p50=%s p95=%s" % (report["p50_ms"], report["p95_ms"]))
+        if report["errors"]:
+            print("exceptions:", report["errors"])
+
+    # The default arm is the honest baseline: the board as the live page produced it. Any
+    # refusal there is a fact about the payload, and supplying the values is a separate,
+    # labelled experiment rather than a silent repair.
+    report_raw = replay(rows, policy.decide, only_my_turn=not args.all_turns)
+    _show("raw arm: the payload exactly as recorded, nothing supplied", report_raw)
+    report_fill = None
+    if args.fill:
+        print("fill hypothesis:", ASSUMPTION)
+        report_fill = replay(rows, policy.decide, only_my_turn=not args.all_turns,
+                             fill_missing=True)
+        _show("fill arm: the same boards with the missing max values supplied", report_fill)
     # Whether the trained critic ever picked the realization on real boards. `_realize` reaches it
     # only when the chosen cast cannot land from any cell the MP reaches, so a zero here says the
     # value head is not in the shipped path -- which no amount of value-head training changes.
+    # The counter is cumulative on the policy, so it is printed once over every arm above.
     print("value head picks the realization:", policy.value_choice_stats)
-    print("actions:", report["actions"])
-    print("latency ms: p50=%s p95=%s" % (report["p50_ms"], report["p95_ms"]))
-    if report["errors"]:
-        print("exceptions:", report["errors"])
 
-    casts = report["actions"].get("cast", 0)
-    asked = report["boards"]
-    if asked and not report["errors"]:
-        print("\nVERDICT: with the missing max values supplied the boards become actionable and "
-              "the trained actor answers %d of %d turns with a cast (%.1f%%) at p50 %s ms. "
-              "This is a measurement of the policy on real geometry under the fill hypothesis "
-              "above -- not a live fight, not a win rate, and not proof that the client will "
-              "send those fields."
-              % (casts, asked, 100.0 * casts / asked, report["p50_ms"]))
+    asked = report_raw["boards"]
+    if asked and not report_raw["errors"]:
+        print("\nVERDICT: as recorded, the actor answers %d of %d own turns with a cast "
+              "(%.1f%%) at p50 %s ms."
+              % (report_raw["actions"].get("cast", 0), asked,
+                 100.0 * report_raw["actions"].get("cast", 0) / asked,
+                 report_raw["p50_ms"]))
+        if report_fill is not None and not report_fill["errors"]:
+            fill_asked = report_fill["boards"]
+            print("Under the fill hypothesis above it answers %d of %d (%.1f%%) at p50 %s ms."
+                  % (report_fill["actions"].get("cast", 0), fill_asked,
+                     100.0 * report_fill["actions"].get("cast", 0) / max(1, fill_asked),
+                     report_fill["p50_ms"]))
+            print("Both are measurements on recorded geometry -- not a live fight, not a "
+                  "win rate, and no proof that the client will send those fields.")
+        else:
+            print("This is a measurement on recorded geometry -- not a live fight, not a "
+                  "win rate, and no proof that the client will send those fields.")
     return 0
 
 

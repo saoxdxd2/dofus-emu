@@ -14,8 +14,8 @@ fight.plan        fight.estimate           ui.tap        ui.icons    shop.buy
 ```
 
 The authoritative count is `data/capabilities.json`, and `agent/regression.py` asserts it
-in `test_tool_vocabulary` (the checks named "schema declares 28 tools", "capabilities.json
-lists 28 tools" and "features.tool_registry lists the same set as the schema"). Cite the
+in `test_tool_vocabulary` (the checks named "schema declares 28<!--f:tools--> tools", "capabilities.json
+lists 28<!--f:tools--> tools" and "features.tool_registry lists the same set as the schema"). Cite the
 check, not a line number: inserting a check above it moves the number and the claim looks
 wrong even when it is true. `hdv.buy`, `inv.equip`, `hdv.prices` and `tap.interactive` are added by the
 2026-10-27 research unlock. `hdv.prices` is read-only. The shipped 49K tool policy

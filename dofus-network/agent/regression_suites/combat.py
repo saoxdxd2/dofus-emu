@@ -36,6 +36,34 @@ def test_move_gate() -> None:
            "errors": result.errors})
 
 
+def test_kill_pricing() -> None:
+    """The learned max_hp hop: payload -> table -> solver kill bonus.
+
+    The payload omits max_hp on most enemy rows, so a standing kill is priced at
+    0.35 and loses to a bigger hit. Three links have to hold for the fix to be
+    real: the observer stores what the page publishes, the board teaches the
+    table, and the solver reads it back when pricing a kill.
+    """
+    import unittest
+    from combat import test_battle_solver as solver_module
+    from combat import test_live_learn as learn_module
+
+    section("Kill pricing (a learned max_hp restores a standing kill)")
+    suite = unittest.TestSuite([
+        unittest.defaultTestLoader.loadTestsFromName(
+            "KillPricingTests", solver_module),
+        unittest.defaultTestLoader.loadTestsFromName(
+            "ThreatObserverMultiSlotTests."
+            "test_a_published_max_hp_is_kept_without_a_battle_log",
+            learn_module),
+    ])
+    result = unittest.TextTestRunner(verbosity=0).run(suite)
+    check("the kill pricing tests execute and pass",
+          result.testsRun >= 4 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures,
+           "errors": result.errors})
+
+
 def test_damage_calibration_join() -> None:
     section("Damage calibration (the solver's estimate vs the server's own loss)")
     import importlib.util
@@ -168,7 +196,8 @@ def test_damage_calibration_live_evidence() -> None:
 
 def test_combat_suites() -> None:
     section("Combat suites (delegated, so '892 checks' includes them)")
-    for module in ("combat.test_battle_solver", "combat.test_grid_model",
+    for module in ("combat.test_battle_solver", "combat.test_two_ply_world_model",
+                   "combat.test_grid_model",
                    # The encoder itself, which was missing from this list until
                    # 2026-11-11 -- and a dead `0.0` fighter-feature slot survived
                    # there unnoticed for as long as nothing ran its suite. The
@@ -261,7 +290,16 @@ def test_combat_suites() -> None:
                    # and against the property that matters: a 3-case family can win
                    # 3-0 and still fail, because the gate uses r - 2*RD, not r.
                    "ai.test_glicko2"):
-        proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
+        command = [sys.executable, "-m", module]
+        if module == "combat.test_two_ply_world_model":
+            shipped_python = REPO_ROOT.parent / "runtimes" / "python" / "python.exe"
+            check("the mechanics timing suite has the shipped interpreter",
+                  shipped_python.is_file(), str(shipped_python))
+            if not shipped_python.is_file():
+                continue
+            command = [str(shipped_python), "-B",
+                       str(REPO_ROOT / "combat" / "test_two_ply_world_model.py")]
+        proc = subprocess.run(command, cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
         text = (proc.stderr or "") + (proc.stdout or "")
         absent = next((m for m in OPTIONAL_IMPORTS
@@ -286,4 +324,6 @@ def test_combat_suites() -> None:
               "no 'Ran N tests' line: the module collected nothing\n" + text.strip()[-300:])
 
 
-__all__ = ['test_side_swap', 'test_move_gate', 'test_damage_calibration_join', 'test_damage_calibration_live_evidence', 'test_combat_suites']
+__all__ = ['test_side_swap', 'test_move_gate', 'test_kill_pricing',
+           'test_damage_calibration_join', 'test_damage_calibration_live_evidence',
+           'test_combat_suites']

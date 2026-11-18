@@ -64,8 +64,11 @@ from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.executor import payload_of
-from agent.observe import flatten
-from agent.awareness import character_key
+from agent.observe import flatten, map_id_of
+from agent.awareness import character_key, quest_key, scene_key
+from agent.compute_tree import ComputeTree
+from agent.scheduler import DeadlineScheduler, TimeManager
+from agent.planner_utils import client_quest_ids
 from agent.features import DELIVER_TYPES
 from agent.planner import _goal_mode
 from agent.thinking import ThinkingLayer
@@ -192,6 +195,44 @@ def settle_deadline(tool: str, started: float, last_change: float,
         return started + window
     cap = CROSSING_IN_FLIGHT_S if cap_s is None else cap_s
     return min(started + cap, last_change + window)
+
+
+def _pause_owner(owner: Any, seconds: float) -> bool:
+    """Wait through the owner's scheduler when it has one, else plain sleep.
+
+    Module-level so the regression doubles that copy a single wait method keep
+    working: they have no scheduler, and the fake clock they install still
+    advances exactly as it did before.
+    """
+    pause = getattr(owner, "_pause", None)
+    if callable(pause):
+        return bool(pause(seconds))
+    time.sleep(seconds)
+    return True
+
+
+def _activate_observation(owner: Any, observation: Any) -> None:
+    """Ask the owner to activate this observation's compute branches, if any."""
+    activate = getattr(owner, "_schedule_observation_compute", None)
+    if callable(activate):
+        activate(observation)
+
+
+def _rest_owner(owner: Any, name: str, minimum: float,
+                maximum: Optional[float] = None, growth: float = 1.6,
+                changed: bool = False, spent: float = 0.0) -> None:
+    """Wait on the owner's named cadence, falling back to a plain pause.
+
+    The regression doubles copy one wait method and no constructor state; they
+    must keep the exact sleep their test asserts, so the fallback is the same
+    single pause the site used before the manager existed.
+    """
+    rest = getattr(owner, "_rest", None)
+    if callable(rest):
+        rest(name, minimum, maximum, growth, changed, spent)
+        return
+    delay = max(0.0, float(minimum) - max(0.0, float(spent)))
+    _pause_owner(owner, delay)
 
 # How many read-only steps a repair decision may wait for before its outcome is
 # considered unknowable. A recovery's own snapshot is one of them; twelve is roughly
@@ -469,6 +510,7 @@ class Step:
 
 BRAIN_MODULES = ("agent.planner", "agent.plan_stack", "agent.autopilot", "agent.thinking",
                  "agent.controller", "agent.runtime", "agent.verifier", "agent.executor",
+                 "agent.evidence", "agent.persistent_memory", "planning.experience",
                  "combat.live_policy", "ai.lexical_policy")
 _BRAIN_BUILD: Optional[str] = None
 
@@ -711,9 +753,48 @@ class Autopilot:
         self._pending: Optional[Decision] = None
         self._pending_age = 0
         self._inflight: Optional[PendingAction] = None
+        self._outcome_action_id: Optional[str] = None
         self.replan_requested = 0
         self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
         self.interval = interval
+        # Waiting is where the loop spends the time the next decision needs.
+        # The scheduler runs due compute branches first, then sleeps exactly the
+        # remainder, so the measured pacing is unchanged. The sleeper closure
+        # resolves `time.sleep` on every call, which keeps the regression
+        # harness's stubbed sleeps effective.
+        self._scheduler = DeadlineScheduler(
+            clock=time.monotonic, sleeper=lambda seconds: time.sleep(seconds))
+        # One object owns every cadence: the step floor, the fight/farm polls,
+        # the hold window and the recovery polls. Call sites name what they are
+        # waiting for; this decides how long, credits time already spent, and
+        # runs due compute in the window before the sleeper.
+        self._time = TimeManager(self._scheduler, clock=time.monotonic)
+        self._step_mono = 0.0
+        self._compute = ComputeTree(clock=time.monotonic)
+        self._compute_obs: Optional[Dict[str, Any]] = None
+        # The observation-scoped branches. `obs.ready` is the root the waits
+        # activate; its dependencies are the derivations the planner and the
+        # thinking layer ask for on the next step. The awareness memos make a
+        # repeated read of the same carried snapshot a dictionary lookup.
+        self._compute.define("obs.map", lambda tree, ctx: map_id_of(ctx.get("obs")))
+        self._compute.define("obs.scene", lambda tree, ctx: scene_key(ctx.get("obs")))
+        self._compute.define("obs.quest", lambda tree, ctx: quest_key(ctx.get("obs")))
+        self._compute.define(
+            "obs.character", lambda tree, ctx: character_key(ctx.get("obs")))
+        self._compute.define(
+            "obs.quest_ids",
+            lambda tree, ctx: client_quest_ids(ctx.get("obs") or {}))
+        self._compute.define(
+            "obs.ready",
+            lambda tree, ctx: {
+                "map": tree.get("obs.map"),
+                "scene": tree.get("obs.scene"),
+                "quest": tree.get("obs.quest"),
+                "character": tree.get("obs.character"),
+                "quest_ids": tree.get("obs.quest_ids"),
+            },
+            deps=("obs.map", "obs.scene", "obs.quest", "obs.character",
+                  "obs.quest_ids"))
         self.steps_per_goal = steps_per_goal
         self.consecutive_failure_limit = consecutive_failure_limit
         self.dry_run = dry_run
@@ -1233,6 +1314,56 @@ class Autopilot:
         from agent.autopilot_utils import _action_complete as _action_complete_impl
         return _action_complete_impl(call, before, after)
 
+    def _pause(self, seconds: float) -> bool:
+        """Spend a wait: run due compute first, then sleep the requested time.
+
+        With nothing scheduled this is one ``time.sleep`` of the requested
+        length, which is what the pacing tests assert. With a dirty branch it is
+        the same wall-clock wait plus the work the next decision needs. The
+        window is recorded on the manager's ``pause`` channel so the summary can
+        say how much time went to waits and how much to compute.
+        """
+        manager = getattr(self, "_time", None)
+        if manager is not None:
+            return manager.wait_for("pause", seconds)
+        scheduler = getattr(self, "_scheduler", None)
+        if scheduler is None:
+            time.sleep(seconds)
+            return True
+        return scheduler.wait(seconds)
+
+    def _rest(self, name: str, minimum: float,
+              maximum: Optional[float] = None, growth: float = 1.6,
+              changed: bool = False, spent: float = 0.0) -> float:
+        """Wait on a named cadence, crediting time already spent on it.
+
+        A channel's floor is a period between actions, not a sleep appended to
+        every action: ``spent`` is subtracted, so an action slower than the
+        floor needs no extra wait and the request rate never rises above
+        one per ``minimum``. A quiet channel backs off toward ``maximum``; a
+        change snaps it back to ``minimum``.
+        """
+        manager = getattr(self, "_time", None)
+        if manager is None:
+            delay = max(0.0, float(minimum) - max(0.0, float(spent)))
+            _pause_owner(self, delay)
+            return delay
+        return manager.rest(name, minimum, maximum, growth, changed, spent)
+
+    def _schedule_observation_compute(self, observation: Any) -> None:
+        """Activate the observation's dirty compute branches on the next wait."""
+        if not isinstance(observation, dict) or not observation:
+            return
+        compute = getattr(self, "_compute", None)
+        scheduler = getattr(self, "_scheduler", None)
+        if compute is None or scheduler is None:
+            return
+        if observation is not getattr(self, "_compute_obs", None):
+            self._compute_obs = observation
+            compute.set_context(obs=observation)
+            compute.invalidate()
+        compute.activate(scheduler, ("obs.ready",))
+
     def _settle(self, before: Any, after: Any, call: Any = None,
                 step_s: float = 0.4) -> Any:
         """Wait until the action completes, then until the world is quiet.
@@ -1307,7 +1438,8 @@ class Autopilot:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            time.sleep(min(delay, remaining))
+            _activate_observation(self, best)
+            _pause_owner(self, min(delay, remaining))
             if self._should_stop():
                 break
             delay = min(delay * 1.6, max(step_s, 0.8))
@@ -1328,8 +1460,32 @@ class Autopilot:
                 # a log failure must not fail a step
                 logger.warning("[autopilot] observation writer failed: %s", exc)
 
-    @staticmethod
-    def _action_signal(pending: PendingAction, observation: Any) -> Tuple[Optional[str], Optional[str]]:
+    def _sync_evidence_credit(self) -> None:
+        drain = getattr(self.runtime, "drain_evidence_revisions", None)
+        if callable(drain):
+            revisions = drain()
+            for revision in revisions:
+                credit = revision["verdict"] if revision["status"] == "confirmed" else None
+                self.controller.revise_outcome(revision["action_id"], credit)
+                replace = getattr(self._memory, "replace_outcome", None)
+                if callable(replace):
+                    replace(revision)
+                self._revise_experience(revision)
+            if revisions:
+                self.controller.save()
+                self._save_memory()
+
+    def _action_signal(self, pending: PendingAction, observation: Any) -> Tuple[Optional[str], Optional[str]]:
+        self._sync_evidence_credit()
+        memory = getattr(self.runtime, "evidence", None)
+        belief = memory.belief(pending.action_id) if memory is not None else None
+        if belief is not None:
+            if belief["epoch"] != memory.epoch:
+                return None, None
+            if belief["status"] == "confirmed":
+                return ("observed", None) if belief["verdict"] == "advanced" else (
+                    "failed", belief.get("error") or "the client reported an action failure")
+            return None, None
         if not pending.action_id or not isinstance(observation, dict):
             return None, None
         key = {"nav.goto": "last_nav", "quest.advance": "last_talk",
@@ -1359,6 +1515,11 @@ class Autopilot:
         pending = PendingAction(call.tool, dict(call.args), action_id,
                                 time.monotonic(), after)
         self._inflight = pending
+        memory = getattr(self.runtime, "evidence", None)
+        if memory is not None and memory.epoch is not None and action_id:
+            context = context_signature((before or {}).get("current_objective"), before)
+            self.runtime.register_action(action_id, call.tool, call.args, context)
+            self._outcome_action_id = action_id
         self._record_action_state(pending, call.goal)
         polled = False
         polls = 0
@@ -1381,8 +1542,14 @@ class Autopilot:
                     if status is not None:
                         pending.status, pending.error = status, error
                         break
-                    if self._action_complete(call, before, after):
+                    belief = memory.belief(action_id) if memory is not None else None
+                    if (not belief or belief["status"] != "conflicted") and self._action_complete(call, before, after):
                         pending.status = "observed"
+                        break
+                if self._obs_source == "stale" and memory is not None and memory.belief(action_id) is not None:
+                    status, error = self._action_signal(pending, after)
+                    if status is not None:
+                        pending.status, pending.error = status, error
                         break
                 if self.settle_s <= 0:
                     pending.status = "unchecked"
@@ -1391,12 +1558,13 @@ class Autopilot:
                     pending.status = "unconfirmed"
                     self._record_action_state(pending, call.goal)
                 self._waits += 1
+                _activate_observation(self, after)
                 until = time.monotonic() + 1.0
                 while not self._should_stop():
                     remaining = until - time.monotonic()
                     if remaining <= 0:
                         break
-                    time.sleep(min(0.25, remaining))
+                    _pause_owner(self, min(0.25, remaining))
                 if self._should_stop():
                     continue
                 after = self.observe(max_age_ms=-1.0, record=False)
@@ -1466,16 +1634,18 @@ class Autopilot:
                 snap = result.data.get("snapshot") or result.data
         if isinstance(snap, dict) and snap:
             snap = self._prepare_obs(snap)
+            note = getattr(self.runtime, "note_observation", None)
+            if callable(note) and note(snap) is False:
+                self._sync_evidence_credit()
+                current, age_ms, source = self.runtime.current_observation()
+                self._last_obs = current
+                self._obs_age_ms, self._obs_source = age_ms, "stale"
+                return current
+            self._sync_evidence_credit()
             self._last_obs = snap
             self._obs_age_ms, self._obs_source = 0.0, "call"
             if record:
                 self.runtime.observe(snap, source="live")
-            else:
-                # Adopt without writing a full observation row; the settle
-                # loop records the final state once.
-                note = getattr(self.runtime, "note_observation", None)
-                if callable(note):
-                    note(snap)
             return snap
         if isinstance(current, dict) and current:
             # No independent read path (a test double, or a bridge that just
@@ -1839,7 +2009,8 @@ class Autopilot:
         if now - self._fight_board_at >= 2.0:
             self._fight_board_at = now
             self._record_fight_board(goal)
-        time.sleep(1.0)
+        _activate_observation(self, observation)
+        _pause_owner(self, 1.0)
 
     @staticmethod
     @staticmethod
@@ -1880,7 +2051,8 @@ class Autopilot:
             self._farm_objective = observation.get("objectives_completed")
             logger.debug("[autopilot] farm is running; holding the goal and watching progress")
         counters = self._farm_counters(observation)
-        if counters is not None and counters != self._farm_progress:
+        moved = counters is not None and counters != self._farm_progress
+        if moved:
             self._farm_progress = counters
             self._farm_progress_at = now
         progress = observation.get("objectives_completed")
@@ -1906,9 +2078,13 @@ class Autopilot:
                   f"kills={session.get('kills')} kamas={session.get('kamas')} "
                   f"xp={session.get('xp')}")
         # The in-page bot plays the fights; the agent only watches for a stop,
-        # an objective change or a stalled session. A 5 s poll cuts the idle
-        # full-state snapshots by 60% without delaying any action it owns.
-        time.sleep(5.0)
+        # an objective change or a stalled session. A producing farm is polled
+        # at the short end of the channel so a stop is seen within a couple of
+        # seconds; a quiet one backs off to the same 5 s the fixed poll cost.
+        # The wait runs the observation's compute branches first, so the next
+        # plan starts from work already done.
+        _activate_observation(self, observation)
+        _rest_owner(self, "farm", 2.5, 5.0, growth=1.4, changed=moved)
 
     # -- labelling -----------------------------------------------------------
 
@@ -2057,7 +2233,7 @@ class Autopilot:
                 # skipped for reads, which do not need animation time.
                 think = self._think_until - time.monotonic()
                 if think > 0:
-                    time.sleep(min(think, 1.0))
+                    _pause_owner(self, min(think, 1.0))
 
                 # Idle farm polls are adopted, not recorded: an hours-long farm
                 # would otherwise write a trajectory row every few seconds.
@@ -2086,6 +2262,11 @@ class Autopilot:
                         before["already_failed"] = _dead
                     if _solution:
                         before["known_solution"] = _solution
+                    evidence = getattr(self.runtime, "evidence", None)
+                    evidence_text = evidence.describe(_mem_ctx) if evidence is not None else None
+                    if evidence_text:
+                        before = dict(before)
+                        before["evidence_memory"] = evidence_text
                 if isinstance(before, dict) and (before.get("quests_active")
                                                  or before.get("ready_objectives")):
                     self._quest_data_waits = 0
@@ -2174,7 +2355,7 @@ class Autopilot:
                             "reason": "quest data not loaded yet",
                             "consecutive": self._quest_data_waits,
                             "at": time.time()}))
-                        time.sleep(1.5)
+                        _pause_owner(self, 1.5)
                         continue
                     # Say what was in hand when the policy gave up. "nothing in the
                     # policy matched this goal" is a verdict about the policy, and the
@@ -2314,7 +2495,8 @@ class Autopilot:
                     # wrong; this one means only that the memory has an opinion.
                     taken -= 1
                     if self.interval:
-                        time.sleep(self.interval)
+                        _activate_observation(self, before)
+                        _rest_owner(self, "step", self.interval, changed=False)
                     continue
 
                 refusal = self.guard(call)
@@ -2357,7 +2539,8 @@ class Autopilot:
                         self._refusals = [key]
                     if len(self._refusals) < 3:
                         if self.interval:
-                            time.sleep(self.interval)
+                            _activate_observation(self, before)
+                            _rest_owner(self, "step", self.interval, changed=False)
                         continue
                     # The same refused call three times in a row is a dead end:
                     # the report above did not change the plan. Retire the quest
@@ -2395,10 +2578,12 @@ class Autopilot:
                               f"moving on from {goal!r}")
                         break
                     if self.interval:
-                        time.sleep(self.interval)
+                        _activate_observation(self, before)
+                        _rest_owner(self, "step", self.interval, changed=False)
                     continue
 
                 started = time.perf_counter()
+                self._step_mono = time.monotonic()
                 _meta = (call.record_meta() if hasattr(call, "record_meta")
                          else getattr(call, "meta", None))
                 _meta = dict(_meta) if isinstance(_meta, dict) else {}
@@ -2427,11 +2612,15 @@ class Autopilot:
                 if isinstance(snap, dict) and snap:
                     snap = self._prepare_obs(snap)
                     adopt = getattr(self.runtime, "note_observation", None)
-                    if callable(adopt):
-                        adopt(snap)
+                    accepted = adopt(snap) if callable(adopt) else None
+                    if accepted is False:
+                        snap, age, _source = self.runtime.current_observation()
+                        self._obs_age_ms, self._obs_source = age, "stale"
+                    else:
+                        self._obs_age_ms, self._obs_source = 0.0, "carried"
                     self._last_obs = snap
-                    self._obs_age_ms, self._obs_source = 0.0, "carried"
                     after = snap
+                    self._sync_evidence_credit()
                 else:
                     after = self.observe()
                 # One successful press is enough to know which window an icon opens, so learn
@@ -2466,6 +2655,7 @@ class Autopilot:
                 # judging them — otherwise every one of them scores `noop` and the loop
                 # retries an action that is already in flight.
                 completion_error = None
+                self._outcome_action_id = None
                 if step_ok and call.tool in SETTLE_TOOLS:
                     completion = self._await_completion(call, result, before, after)
                     after = completion.observation
@@ -2529,11 +2719,15 @@ class Autopilot:
                                   completion_error=completion_error)
                 verdict = v.verdict
                 self._gate.observe(call.tool, call.args, verdict)
-                self._memory.observe(
-                    context_signature(
-                        before.get('current_objective') if isinstance(before, dict) else None,
-                        before if isinstance(before, dict) else None),
-                    call.tool, call.args, verdict)
+                if self._outcome_action_id is not None:
+                    self.runtime.record_action_outcome(self._outcome_action_id, verdict, after)
+                    self._sync_evidence_credit()
+                else:
+                    self._memory.observe(
+                        context_signature(
+                            before.get('current_objective') if isinstance(before, dict) else None,
+                            before if isinstance(before, dict) else None),
+                        call.tool, call.args, verdict)
                 # Persist what was just learned before the next decision, not only at
                 # exit: this loop is usually stopped by a kill or a stop file, and a
                 # solution that only exists in a dead process is not a memory.
@@ -2702,7 +2896,8 @@ class Autopilot:
                     self._recent.clear()
                     self._action_noops.clear()
                     self._stall_since = self._index
-                    time.sleep(1.0)
+                    _activate_observation(self, after)
+                    _pause_owner(self, 1.0)
                     continue
 
                 # Stall detection on world progress. Repeating the same call is only
@@ -2920,7 +3115,17 @@ class Autopilot:
                 # directives as fast as the client answers, which is not how a person
                 # plays and is a good way to get an account flagged. 0.35 s is still
                 # far faster than a human and invisible to the game.
-                time.sleep(self.interval if self.interval > 0 else 0.35)
+                #
+                # The floor is a period, not a sleep: the time the directive and its
+                # settle already took counts against it, so a slow action adds no
+                # idle wait on top. A step that changed the world stays at the floor;
+                # a run of no-ops backs off toward 1.5 s instead of hammering the
+                # same dead end. Either way the request rate never rises.
+                _activate_observation(self, after)
+                floor = self.interval if self.interval > 0 else 0.35
+                spent = max(0.0, time.monotonic() - getattr(self, "_step_mono", 0.0))
+                _rest_owner(self, "step", floor, max(floor, min(1.5, floor * 3.0)),
+                            changed=(verdict == "advanced"), spent=spent)
 
             # end per-goal loop (bounded in Order mode, unbounded in Auto mode)
         return self._finish(ended_because)
@@ -3126,6 +3331,7 @@ class Autopilot:
         self._world_login = login
         self._world_enter = enter
         while True:
+            pressed = False
             reason = self._should_stop()
             if reason:
                 logger.debug("[autopilot] stopping while waiting for the world: %s (last screen: %s)"
@@ -3195,6 +3401,7 @@ class Autopilot:
             if at_selection and enter["tries"] < enter["max"] and now >= enter["next_at"]:
                 enter["tries"] += 1
                 enter["next_at"] = now + enter["spacing"]
+                pressed = True
                 selected = character.get("id")
                 bound = getattr(self, "_identity", None)
                 if isinstance(bound, dict) and bound.get("id"):
@@ -3218,6 +3425,7 @@ class Autopilot:
             if login["tries"] < login["max"] and now >= login["next_at"] and at_login:
                 login["tries"] += 1
                 login["next_at"] = now + login["spacing"]
+                pressed = True
                 logger.debug("[autopilot] at the login screen; pressing a guarded guest "
                       "login (%d/%d)" % (login["tries"], login["max"]))
                 try:
@@ -3240,7 +3448,11 @@ class Autopilot:
                       % (int(now - waiting_since), self._screen_text(screen),
                          login["tries"], login["max"], enter["tries"], enter["max"]))
                 last_report = now
-            time.sleep(self.world_poll_s)
+            # A press is the one moment the screen is expected to change, so poll
+            # at the short end of the channel right after it; a quiet wait backs
+            # off to `world_poll_s`, which is the cadence this loop had.
+            floor = min(1.0, self.world_poll_s)
+            _rest_owner(self, "world", floor, self.world_poll_s, changed=pressed)
 
     @staticmethod
     def _world_screen(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -3319,7 +3531,7 @@ class Autopilot:
                 logger.debug("[autopilot] still waiting for a client window (%.0f s)"
                       % (now - started))
                 last_report = now
-            time.sleep(1.0)
+            _rest_owner(self, "window", 1.0, 1.0)
 
     def _recover_world(self, reason: Optional[str] = None,
                        trigger: str = "fell_out") -> bool:
@@ -3458,7 +3670,9 @@ class Autopilot:
         if not text or text == self._last_client_error:
             return
         self._last_client_error = text
-        logger.debug("[autopilot] the client reported: %s" % text)
+        # The loop's own log is the desktop host's stdout; `logger.debug` was invisible
+        # to the run's log reader, which is the whole point of reporting the refusal.
+        print("[autopilot] the client reported: %s" % text, flush=True)
 
     def _tutorial_hold(self, key: str, obs: Any) -> bool:
         """True while patience with one scripted step still has time left.
@@ -3745,7 +3959,8 @@ class Autopilot:
         if not self.dry_run:
             # A dry run has no world to wait for, and ten fast passes must not turn
             # into seconds of sleeping on the way to a `--steps 8` smoke test.
-            time.sleep(max(WAIT_POLL_S, self.interval))
+            _activate_observation(self, before)
+            _pause_owner(self, max(WAIT_POLL_S, self.interval))
             self._last_step_at = time.time()
         # A wait can outlive the session it was waiting inside. Without this the loop
         # would keep asking the policy for an action on a page that is back at the
@@ -3918,8 +4133,16 @@ class Autopilot:
                 self._pending = None
                 self._pending_age = 0
             return
-        self.controller.observe_outcome(self._pending, verdict)
-        self._note_experience(self._pending, verdict)
+        outcome_id = getattr(self, "_outcome_action_id", None)
+        credit_options, experience_options = {}, {}
+        if outcome_id is not None:
+            belief = self.runtime.evidence.belief(outcome_id)
+            verdict = belief["verdict"] if belief and belief["status"] == "confirmed" else None
+            credit_options = {"outcome_id": outcome_id}
+            experience_options = {"outcome_id": outcome_id,
+                                  "revision": belief["revision"] if belief else 0}
+        self.controller.observe_outcome(self._pending, verdict, **credit_options)
+        self._note_experience(self._pending, verdict, **experience_options)
         self._pending = None
         self._pending_age = 0
 
@@ -4067,7 +4290,8 @@ class Autopilot:
         tap.observe(call, result, elapsed_ms=latency_ms,
                     observation=observation if isinstance(observation, dict) else {})
 
-    def _note_experience(self, decision: Any, verdict: Any) -> None:
+    def _note_experience(self, decision: Any, verdict: Any,
+                         outcome_id: Optional[str] = None, revision: int = 0) -> None:
         """Record the repair outcome in the conjugate store -- the first caller it has had.
 
         One Beta per (cause, strategy): the label is already computed here, the update is a few
@@ -4083,13 +4307,32 @@ class Autopilot:
             cause = str(getattr(decision, "cause", "") or "unknown")
             strategy = str(getattr(decision, "strategy", "") or getattr(decision, "action", "")
                            or "none")
-            moved = str(getattr(verdict, "verdict", verdict)) == "advanced"
+            label = getattr(verdict, "verdict", verdict)
+            moved = label == "advanced"
+            if outcome_id is not None:
+                self.experience.record_outcome(
+                    "repair:%s:%s" % (cause, strategy), outcome_id,
+                    float(moved) if label in ("advanced", "failed") else None, revision)
+                return
             self.experience.record(Event(
                 kind="beta", key="repair:%s:%s" % (cause, strategy),
                 value=1.0 if moved else 0.0, source="live",
                 context={"action": str(getattr(decision, "action", "") or "")}))
         except Exception as exc:  # noqa: BLE001 - a store fault must not stop the loop
             logger.debug("[autopilot] experience store skipped: %s: %s" % (type(exc).__name__, exc))
+
+    def _revise_experience(self, revision: Dict[str, Any]) -> None:
+        store = getattr(self, "experience", None)
+        credit = self.controller._outcome_credit.get(revision["action_id"])
+        if store is None or credit is None:
+            return
+        label = revision["verdict"] if revision["status"] == "confirmed" else None
+        try:
+            store.record_outcome("repair:" + credit["strategy"], revision["action_id"],
+                                 float(label == "advanced") if label is not None else None,
+                                 revision["revision"])
+        except (OSError, ValueError) as exc:
+            logger.warning("repair evidence revision was not saved: %s", exc)
 
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
@@ -4221,6 +4464,16 @@ class Autopilot:
             # Waits are reported, not counted as work. Before this, 3,010 of them were
             # the majority of "steps" and nearly all of the run's apparent success.
             "waits": self._waits,
+            # The wait path's own accounting: how much of the time spent waiting
+            # was handed to a dirty compute branch instead of to the sleeper.
+            "compute": (getattr(self, "_compute", None).stats()
+                        if getattr(self, "_compute", None) is not None else {}),
+            "wait_scheduler": (getattr(self, "_scheduler", None).stats()
+                               if getattr(self, "_scheduler", None) is not None else {}),
+            # Per-channel cadence: waits, wall time, the interval the manager
+            # settled on, and whether it was reacting to a change or idling.
+            "cadence": (getattr(self, "_time", None).stats()
+                        if getattr(self, "_time", None) is not None else {}),
             "dialogs": self._dialogs,
             "dialog_stalls": self._dialog_stalls,
             # Which combat policy was reachable for this run. A fight count without
@@ -4334,6 +4587,9 @@ class Autopilot:
         if not ok:
             return None
         failures = int(count(context, call.tool, checked) or 0)
+        evidence = getattr(self.runtime, "evidence", None)
+        if evidence is not None and not hasattr(self._memory, "replace_outcome"):
+            failures = evidence.failure_count(context, call.tool, checked, failures)
         if failures < MEM_VETO_MIN_FAILURES:
             return None
         key = "%s|%s" % (call.tool, _mem_sig(call.tool, checked))
@@ -4409,6 +4665,14 @@ class Autopilot:
 
     def _save_memory(self) -> Optional[Path]:
         """Write the durable store. Called on every exit path, not only on success."""
+        evidence_save = getattr(self.runtime, "save_evidence", None)
+        if callable(evidence_save):
+            evidence_save()
+        if self.experience is not None:
+            try:
+                self.experience.save()
+            except OSError as exc:
+                logger.warning("experience checkpoint save failed: %s", exc)
         save = getattr(self._memory, "save", None)
         if save is None:
             return None

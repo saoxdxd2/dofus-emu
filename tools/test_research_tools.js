@@ -48,7 +48,7 @@ check('interactive uses InteractiveUseRequestMessage',
     src.indexOf("InteractiveUseRequestMessage") >= 0
     && src.indexOf('elemId: target.elemId') >= 0);
 check('interactive resolves from the live element list',
-    src.indexOf('var list = _interactives();') >= 0);
+    src.indexOf('const list = _interactives();') >= 0);
 check('interactive reports a missing skill uid',
     src.indexOf("reason: 'skill_uid_required'") >= 0);
 

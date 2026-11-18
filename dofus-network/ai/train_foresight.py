@@ -140,6 +140,8 @@ def load_live(paths: Sequence[Path]) -> Dict[str, Any]:
                 row = json.loads(line)
                 if not row.get("has_pair") or row.get("was_read") or not row.get("x"):
                     continue
+                if row.get("source_identified") and not row.get("credit_eligible"):
+                    continue
                 if row.get("tool") not in TOOL_SLOT:
                     continue
                 rows.append(row)

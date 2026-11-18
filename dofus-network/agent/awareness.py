@@ -14,6 +14,8 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
+from agent.compute_tree import IdentityMemo
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,13 @@ try:
     import orjson as _orjson
 except ImportError:  # pragma: no cover - orjson ships with the runtime
     _orjson = None
+
+# A carried snapshot is the same dict object across consecutive steps, so the
+# second fingerprint of it is pure repeated work. The memo holds the object it
+# cached against, which makes the identity check exact instead of an id guess.
+_SCENE_MEMO = IdentityMemo()
+_QUEST_MEMO = IdentityMemo()
+_CHARACTER_MEMO = IdentityMemo()
 
 
 def _digest(value: Any) -> str:
@@ -177,7 +186,7 @@ def scene_key(obs: Optional[Dict[str, Any]]) -> str:
     """Fingerprint of the world situation a plan was made in."""
     if not isinstance(obs, dict):
         return ""
-    return _digest(_scene_components(obs))
+    return _SCENE_MEMO.get("scene", obs, lambda value: _digest(_scene_components(value)))
 
 
 def quest_key(obs: Optional[Dict[str, Any]]) -> str:
@@ -197,6 +206,10 @@ def quest_key(obs: Optional[Dict[str, Any]]) -> str:
     """
     if not isinstance(obs, dict):
         return ""
+    return _QUEST_MEMO.get("quest", obs, _quest_key_uncached)
+
+
+def _quest_key_uncached(obs: Dict[str, Any]) -> str:
     tutorial = _block(obs, "tutorial")
     active = obs.get("quests_active") or {}
     return _digest({
@@ -231,6 +244,10 @@ def character_key(obs: Optional[Dict[str, Any]]) -> str:
     """Fingerprint of the character facts that change an estimate."""
     if not isinstance(obs, dict):
         return ""
+    return _CHARACTER_MEMO.get("character", obs, _character_key_uncached)
+
+
+def _character_key_uncached(obs: Dict[str, Any]) -> str:
     character = _block(obs, "character")
     hp = _block(obs, "hp")
     spells = obs.get("spells") or obs.get("spell_ids") or []

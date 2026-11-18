@@ -18,7 +18,7 @@ DofusFarm runs **Dofus Touch** (Ankama) on Windows as the *real* Cordova bundle 
 WebView2, served from disk under the virtual origin `https://dofus.local/`, with an injected script
 that disguises the browser as a phone. It is **not** an emulator: no Android, no APK, no QEMU.
 Every packet goes through a local Go relay that owns a pinned egress and an asset cache. A Python
-agent (`dofus-network/`) drives the game through a 28-tool API and is the thing being built; the
+agent (`dofus-network/`) drives the game through a 28<!--f:tools-->-tool API and is the thing being built; the
 host (`DofusFarm.exe`, C# WinForms) is a window manager and log viewer. The operator is one person,
 the output is not redistributed, and the project's own rule is the correct summary: **the harness is
 not an AI — the harness supplies data and tools, the AI makes decisions.**
@@ -56,7 +56,7 @@ facts. Expected output is stated so a mismatch is visible.
 
 ```bash
 cd dofus-network
-python -m agent.regression                      # the gate: 2,448<!--f:gate_checks--> checks, exit 0 = green
+python -m agent.regression                      # the gate: 2,507<!--f:gate_checks--> checks, exit 0 = green
 python scratch/chain_reachability.py            # which rankers are actually reached
 python tools/sync_kaggle_toolkit.py --check     # must report 0 drift/missing; sync count moves as the toolkit grows
 python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200
@@ -69,7 +69,7 @@ teaching the rule an exception.
 
 | # | command | expect |
 |---|---|---|
-| 1 | `python -m agent.regression` | **2,448<!--f:gate_checks--> checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
+| 1 | `python -m agent.regression` | **2,507<!--f:gate_checks--> checks**. Slow — measured **10m10s** on 2026-11-11 (it runs a mutation sweep). Exit 0 = green. |
 | 2 | `python -m unittest combat.test_live_policy` | 36 tests, OK (~0.3 s) |
 | 3 | `python -m unittest combat.test_duel_value combat.test_battle_solver combat.test_side_swap` | 102 tests, OK (~38 s) |
 | 4 | `python scratch/chain_reachability.py` | `hp_choice_stats {'asked': 1}` on the adjacent board — proves the shipped ranker is reached |
@@ -100,7 +100,7 @@ The five failures of the first run, and what each actually was:
 measures*, not the code being wrong. A gate whose failures are stale tests is worse than no gate,
 because it trains the reader to ignore red.
 
-**2,448<!--f:gate_checks--> is a tagged number.** If you change the gate, re-run it and update every
+**2,507<!--f:gate_checks--> is a tagged number.** If you change the gate, re-run it and update every
 `<!--f:gate_checks-->` site; `test_docs_quote_measurements_by_tag` will tell you which ones drifted,
 by file and line. Do not type the number by hand anywhere else.
 
@@ -119,7 +119,7 @@ by file and line. Do not type the number by hand anywhere else.
 | **`boards_differed`** | How many boards the two policies actually disagreed on. **Ties are not evidence**; a p-value over 600 boards of which 121 differed is a statement about 121. | `duel_value.evaluate` |
 | **G-numbers** | Entries in `docs/KNOWN_GAPS.md`. `G98`/`G99`/`G100` are each used **twice**; quote the date with the number. | `KNOWN_GAPS.md` |
 | **§L.x** | Subsections of **section L** in `ARCH_REASSESSMENT.md` (L.1–L.43). `§XI`/`§XII`/`§XIII` are top-level roman sections of the same file. Two numbering schemes, one file. | `ARCH_REASSESSMENT.md` |
-| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,448<!--f:gate_checks-->-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
+| **the gate** | ⚠️ **Ambiguous, always disambiguate.** `agent/regression.py` = the 2,507<!--f:gate_checks-->-check test gate. `agent/gate.py` = a shadow-only repeat-streak veto. Different things. | both |
 | **the ladder** | `agent/hunting.py`'s engagement ladder: `join` → `travel`, gated by a *learned risk budget* (total monster level ÷ own level, raised by wins, lowered by losses). | `hunting.py` |
 | **toolkit mirror** | `kaggle/toolkit/` — a byte-copy of selected files for Kaggle. Editing a mirrored file without re-running the sync leaves the copy stale; `test_kaggle_toolkit_sync` catches it. | `tools/sync_kaggle_toolkit.py` |
 | **`<!--f:name-->`** | A **fact tag**. The number immediately before it is machine-checked against a named measurement, e.g. `2,220<!--f:gate_checks-->` is verified against `data/last_gate_run.json`. ~55 tags exist (`tools`, `gate_checks`, `live_steps`, `fight_head_wins`, …). `test_docs_quote_measurements_by_tag` reports any drift **by file and line**. Never type such a number without its tag, and never edit the number without re-running the measurement. | `agent/regression.py` |
@@ -225,7 +225,7 @@ loop than in the per-turn planner, and the plan says so itself.
 
 ## 8. Non-negotiables (`rules.md`, condensed)
 
-- 28 tools, authoritative in `data/capabilities.json`, asserted by `test_tool_vocabulary`. Never add
+- 28<!--f:tools--> tools, authoritative in `data/capabilities.json`, asserted by `test_tool_vocabulary`. Never add
   `FORBIDDEN_TOOLS`, never delete a capability, never add a "will not do" section or a disclaimer to
   markdown. Measured/unmeasured labels and known-gap evidence are required and are not disclaimers.
 - **Before adding a feature, clean the code you touch** — the stray import, the dead branch, the

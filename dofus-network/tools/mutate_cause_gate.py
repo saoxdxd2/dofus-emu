@@ -55,6 +55,11 @@ AUTO = ROOT / "agent" / "autopilot.py"
 OBSV = ROOT / "agent" / "observe.py"
 BRIDGE = ROOT / "agent" / "bridge.py"
 PLAN = ROOT / "agent" / "planner.py"
+PLAN_UTILS = ROOT / "agent" / "planner_utils.py"
+NAV_UTILS = ROOT / "agent" / "navigation_utils.py"
+AUTO_UTILS = ROOT / "agent" / "autopilot_utils.py"
+OBJ_UTILS = ROOT / "agent" / "objective_utils.py"
+COMMON = ROOT / "agent" / "regression_suites" / "common.py"
 EXEC = ROOT / "agent" / "executor.py"
 # Not REPORT: that name is rebound to session_report.py below, the same
 # shadowing that once silently repointed eight BOARDS anchors (G71).
@@ -64,6 +69,8 @@ BRAIN = ROOT / "combat" / "brain_service.py"
 # The board model and its payload form: `to_fight_state()` is the seam the live policy is
 # measured through offline (§L.19), so a silently dropped key is a wrong measurement.
 BSOLVER = ROOT / "combat" / "battle_solver.py"
+WMODEL = ROOT / "combat" / "world_model.py"
+GCOMBAT = ROOT / "agent" / "regression_suites" / "combat.py"
 # The structure cache the planner reasons through. It spent a while as 184 lines
 # nothing constructed, so the sweep had nothing to mutate; now that `build_schedule_stack`
 # attaches it, its three invalidation rules are load-bearing and each one is silent when
@@ -80,6 +87,10 @@ CALIB = ROOT / "agent" / "calibration.py"
 SCHED = ROOT / "planning" / "schedule.py"
 LTAP = ROOT / "planning" / "live_tap.py"
 LPOL = ROOT / "combat" / "live_policy.py"
+# The learned max_hp a kill is priced with: the observer stores what the page
+# publishes, the solver reads it back when the payload omits it.
+THREAT = ROOT / "combat" / "threat.py"
+CASRV = ROOT / "combat" / "combat_ai_server.py"
 # §L.34 moved the live path onto `contract_from_board` / `board_block` / `live_view`. The decision
 # reads only the contract's two booleans, so a wrong contract is a silently different refusal rate on
 # live boards -- and nothing in the sweep could see this file until it became a target.
@@ -126,7 +137,7 @@ PAGE_TEST = ROOT.parent / "tools" / "test_fight_state_fields.js"
 # which reads like a pass in a wall of CAUGHT lines.
 import re as _re
 
-_PAGE_STAMP = (_re.search(r"var AGENT_BUILD = '([^']+)';",
+_PAGE_STAMP = (_re.search(r"(?:var|let|const) AGENT_BUILD = '([^']+)';",
                           PAGE.read_text(encoding="utf-8")) or (None, ""))[1]
 SCAN = ROOT / "tools" / "group_scan.py"
 PLAN_STACK = ROOT / "agent" / "plan_stack.py"
@@ -222,6 +233,7 @@ REG = ROOT / "agent" / "regression.py"
 WITNESS = ROOT / "agent" / "witness.py"
 
 SNIPPET = ("import agent.regression as r\n"
+           "from agent.regression_suites import proxy, combat, nav, quest, dialog, memory\n"
            # The snippet tells the gate it is inside a sweep: a check that re-derives a
            # corpus from 65 MB of live logs would otherwise pay that cost 539 times, and
            # this host has 7.8 GB. The cheap fixture checks still run and still bite.
@@ -254,10 +266,10 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_command_replay,\n"
            "    r.test_live_evidence,\n"
            "    r.test_command_onnx_decode,\n"
-           "    r.test_egress_preflight,\n"
-           "    r.test_host_launch_guard,\n"
-           "    r.test_auto_live_guards,\n"
-           "    r.test_auto_live_summarise,\n"
+           "    proxy.test_egress_preflight,\n"
+           "    proxy.test_host_launch_guard,\n"
+           "    proxy.test_auto_live_guards,\n"
+           "    proxy.test_auto_live_summarise,\n"
            # The bundle updater and the multi-instance selection are source
            # assertions over desktop/*.cs: nothing else in here watches them, and
            # their only other witness is a launch against the real CDN.
@@ -279,16 +291,16 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_console_guard,\n"
            "    r.test_keep_alive_instrument,\n"
            "    r.test_tutorial_hold,\n"
-           "    r.test_live_transitions,\n"
+           "    quest.test_live_transitions,\n"
            "    r.test_claim_calibration,\n"
            "    r.test_worker_headroom_layer,\n"
            "    r.test_foresight_net,\n"
            "    r.test_counterfactual_factory_alive,\n"
            "    r.test_repair_credit,\n"
            "    r.test_reads_are_not_actions,\n"
-           "    r.test_dialog_labels,\n"
-           "    r.test_dialog_repeat_guard,\n"
-           "    r.test_quest_accept_planner,\n"
+           "    dialog.test_dialog_labels,\n"
+           "    dialog.test_dialog_repeat_guard,\n"
+           "    quest.test_quest_accept_planner,\n"
            "    r.test_observed_quest_catalog,\n"
            "    r.test_observed_quest_ingest,\n"
            "    r.test_brain_autostart,\n"
@@ -309,7 +321,7 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_npc_start_rotation_bound,\n"
            "    r.test_group_refusal_routing,\n"
            "    r.test_combined_objectives,\n"
-           "    r.test_objective_travel_is_bounded,\n"
+           "    nav.test_objective_travel_is_bounded,\n"
            "    r.test_adjacent_crossing_is_bounded_tighter,\n"
            "    r.test_promise_shadow_names_a_bounced_crossing,\n"
            "    r.test_online_learn_gate_needs_transfer_it_did_not_copy,\n"
@@ -329,7 +341,7 @@ SNIPPET = ("import agent.regression as r\n"
            # here instead of going unnoticed for another month.
            "    r.test_live_schedule_tap,\n"
            "    r.test_move_calibration_semantics,\n"
-           "    r.test_the_search_borders_are_bounded,\n"
+           "    nav.test_the_search_borders_are_bounded,\n"
            # The brain has to say which code wrote a row: the page stamp never
            # moved, so a landed fix was invisible in the log (#101).
            "    r.test_the_brain_stamps_its_own_code_identity,\n"
@@ -350,15 +362,18 @@ SNIPPET = ("import agent.regression as r\n"
            # checks: nothing that reads `fork()` ran.
            "    r.test_fork_carries_the_planner_state,\n"
            "    r.test_lexical_seam_fills_only_what_the_sentence_states,\n"
-           "    r.test_search_prefers_fresh_maps,\n"
+           "    nav.test_search_prefers_fresh_maps,\n"
            "    r.test_no_call_is_explained,\n"
            "    r.test_session_report,\n"
            "    r.test_data_janitor,\n"
            "    r.test_session_close,\n"
            "    r.test_session_close_hook,\n"
            "    r.test_the_close_fits_the_timeout_that_kills_it,\n"
-           "    r.test_side_swap,\n"
-           "    r.test_move_gate,\n"
+           "    combat.test_side_swap,\n"
+           "    combat.test_move_gate,\n"
+           # The learned max_hp hop prices a standing kill; `test_combat_suites`
+           # runs the suite in the gate but is too heavy for every mutation.
+           "    combat.test_kill_pricing,\n"
            "    r.test_progress_report,\n"
            "    r.test_artifact_rollback,\n"
            "    r.test_ready_objective_scan,\n"
@@ -368,14 +383,14 @@ SNIPPET = ("import agent.regression as r\n"
            # mutations with no check able to see any of them: measured MISSED on
            # "house map: the cached geometry is ignored" before this line existed.
            "    r.test_the_page_s_word_for_a_wall_is_read,\n"
-           "    r.test_objective_buckets,\n"
-           "    r.test_objective_parameter_table,\n"
+           "    quest.test_objective_buckets,\n"
+           "    quest.test_objective_parameter_table,\n"
            "    r.test_knowledge_identity,\n"
            # The knowledge index's compact stores. Measured 2026-11-03: the snippet listed 88
            # named tests and none of them could see `agent/executor.py::_KnowledgeIndex`, so four
            # mutations written against the projection store reported MISSED with 0 failing checks
            # -- not because the gate is weak there, but because nothing that reads it ran.
-           "    r.test_knowledge_index_storage,\n"
+           "    memory.test_knowledge_index_storage,\n"
            "    r.test_board_payload_round_trip,\n"
            # §L.34's parity claim is the only thing standing between a silent contract change and
            # a shipped one: `combat/observation.py` had no mutation target and no snippet entry
@@ -395,12 +410,13 @@ SNIPPET = ("import agent.regression as r\n"
            # The same reasoning about the measuring tool: `doc_facts` now guards every fight number,
            # and a checker mutated to report no problems is invisible to the gate check that runs it.
            "    r.test_doc_facts_self_witness,\n"
+           "    r.test_suite_coverage_uses_execution_records,\n"
            # §L.21's measurement path: the synthesis that lets the duel engine execute a client
            # action, and the statistics that decide whether a paired delta is a result at all.
            "    r.test_live_action_realization,\n"
            "    r.test_duel_harness_statistics,\n"
            "    r.test_client_confirmed_starts,\n"
-           "    r.test_quest_advance_shapes,\n"
+           "    quest.test_quest_advance_shapes,\n"
            "    r.test_session_report_census,\n"
            "    r.test_gate_shadow_reaches_the_trajectory,\n"
            "    r.test_veto_alternative_priced,\n"
@@ -418,7 +434,7 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_text_io_declares_encoding,\n"
            "    r.test_damage_calibration_sees_the_recorded_fights,\n"
            "    r.test_check_helper_survives_a_tuple_detail,\n"
-           "    r.test_delegated_suites_report_themselves,\n"
+           "    memory.test_delegated_suites_report_themselves,\n"
            "    r.test_one_log_record_per_line,\n"
            "    r.test_tools_scripts_find_the_repo_root,\n"
            # The instrument the coverage ratchet reads. It replaces the old
@@ -447,6 +463,7 @@ SNIPPET = ("import agent.regression as r\n"
            # live-corpus runner above, and everything else in the file was invisible.
            # Measured 2026-11-12: both `castable_error` anchors reported MISSED.
            "    r.test_the_battle_solver_reads_what_the_page_writes,\n"
+           "    r.test_two_ply_transition_contract,\n"
            # Measured 2026-11-12 by `agent/witness.py`: these two are the only tests in the
            # gate that touch `data/capabilities.json` and `agent/test_brain_daemon.py`, and
            # neither was in the snippet -- so the one mutation written against each of them
@@ -460,20 +477,85 @@ SNIPPET = ("import agent.regression as r\n"
 
 
 MUTATIONS = [
+    ("timing: mechanics benchmark uses development Python", GCOMBAT,
+     'command = [str(shipped_python), "-B",',
+     'command = [sys.executable, "-B",'),
+    ("coverage: unexecuted module suites are silently accepted", REG,
+     'defined <= called, sorted(defined - called)[:8])',
+     'True, sorted(defined - called)[:8])'),
+    ("buff-cache: aging history grows without a bound", WMODEL,
+     '@lru_cache(maxsize=256)',
+     '@lru_cache(maxsize=None)'),
+    ("buff-cache: expired stat deltas are discarded", WMODEL,
+     'reverts = dict(expired)',
+     'reverts = {}'),
+    ("checker: dispatched snippet test count drops an entry", DOCFACTS,
+     'return len(loop.iter.elts)',
+     'return len(loop.iter.elts) - 1'),
+    ("successor: a dead fighter still blocks the enemy reply", BSOLVER,
+     'if f.alive and f.id != enemy.id\n',
+     'if f.id != enemy.id\n'),
+    # The reply ledger: an ally killed by an earlier reply must free its cell (or the
+    # later sniper stays blind on a board where the kill opens the line) and every
+    # enemy must be free to pick the ally that costs the most share, not just the player.
+    ("successor: an ally killed during the replies still blocks the line", BSOLVER,
+     'if f.alive and f.id != enemy.id\n                                     and f.id not in dead)',
+     'if f.alive and f.id != enemy.id)'),
+    ("successor: every reply prices the player instead of the best target", BSOLVER,
+     '                for ally in living:\n',
+     '                for ally in [f for f in living if f.id == me.id]:\n'),
+    ("successor: recorded displacement is discarded", BSOLVER,
+     'else moved_cells.get(fighter.id, fighter.cell)',
+     'else fighter.cell'),
+    ("successor: the reply reads the original board", BSOLVER,
+     'successor = board.after_plan(plan)',
+     'successor = board'),
+    # The bounded search: the plan requires that the budget returns the best
+    # validated candidate, so the deadline has to fire, and the shipped default
+    # has to be a real bound rather than the off switch.
+    ("bounded-search: the wall-clock deadline never fires", BSOLVER,
+     'return deadline is not None and time.perf_counter() >= deadline',
+     'return False'),
+    ("bounded-search: the shipped default silently turns the budget on", LPOL,
+     'raw = os.environ.get("DOFUS_COMBAT_PLAN_BUDGET_MS", "0")',
+     'raw = os.environ.get("DOFUS_COMBAT_PLAN_BUDGET_MS", "1.5")'),
+    # The learned max_hp a standing kill is priced with. Each link is silent when
+    # broken: the plan still looks reasonable, it just kills nothing.
+    ("kill pricing: a learned max_hp never prices the kill", BSOLVER,
+     'return float(learned) if learned else 1.0',
+     'return 1.0'),
+    ("kill pricing: the board never teaches the table", BSOLVER,
+     '        self._learn_max_hp(board)\n        template_cache:',
+     '        template_cache:'),
+    ("kill pricing: a learned max_hp is never stored", THREAT,
+     '        if value <= row.get("max_hp", 0.0):\n            return False',
+     '        return False'),
+    ("kill pricing: the observer drops the max_hp hop", CASRV,
+     '        self._learn_hp(payload)\n',
+     '        pass  # mutated: the published max_hp is dropped\n'),
+    # The spell cache is keyed on the payload content; a constant key would hand
+    # every spell the first parsed turn's `casts_this_turn`/rolls back.
+    ("spell cache: any payload hits the first parsed spell", BSOLVER,
+     'return hashlib.blake2b(repr(raw).encode("utf-8", "replace"),\n'
+     '                           digest_size=16).digest()',
+     'return b"spell"'),
+    ("successor: duel replay drops the projected target cell", DUEL,
+     'target.cell = fighter.cell',
+     'target.cell = target.cell'),
     # ---- a learned destination is routed, not handed to the client as a map id
     ("npc-map: the learned map is sent without routing", PLAN,
      '                calls.append(self._travel_call(obj, int(target), obs,\n                                               key=("npc", int(npc))))',
      '                calls.append({"tool": "nav.goto", "args": {"map_id": int(target)},\n                              "why": "travelled (mutated)"})'),
-                ("settle-dialog: a hop waits for the journey's destination", AUTO,
-     '            if bool(after_map) and after_map != before_map:\n                return True\n',
-     '            if False and bool(after_map) and after_map != before_map:\n                return True\n'),
+    ("settle-dialog: a hop waits for the journey's destination", AUTO_UTILS,
+     '        if before_map is not None and after_map is not None and after_map != before_map:\n            return True\n',
+     '        if False and before_map is not None and after_map is not None and after_map != before_map:\n            return True\n'),
     # ---- a reply promises a new dialog page, so the settle can end (2026-10-29)
-    ("settle-dialog: a reply settles only on an objective change", AUTO,
-     '            elif args.get("reply") is not None or args.get("reply_text") is not None:\n',
-     '            elif False:\n'),
-    ("settle-dialog: a dialog tick counts as a new page", AUTO,
-     '        return (bool(dialog.get("open")), dialog.get("npc_id"),\n',
-     '        return (dialog.get("ids_ready"), bool(dialog.get("open")), dialog.get("npc_id"),\n'),
+    ("settle-dialog: a reply settles only on an objective change", AUTO_UTILS,
+     '        elif args.get("reply") is not None or args.get("reply_text") is not None:\n',
+     '        elif False:\n'),
+    ("settle-dialog: a dialog tick counts as a new page", AUTO_UTILS,
+     '    return (\n        bool(dialog.get("open")),\n        dialog.get("npc_id"),\n',
+     '    return (\n        dialog.get("ids_ready"),\n        bool(dialog.get("open")),\n        dialog.get("npc_id"),\n'),
     # ---- the census must not name deaths it has not measured (G79)
     ("census: a page-shaped step row is keyed by the flat key only", SREPORT,
      '    position = _position(row)\n',
@@ -557,18 +639,18 @@ MUTATIONS = [
      "                                        && list[d].via === 'walk') {"),
     # ---- a border cell the character already stands on never transitions (live 2026-10-29)
     ("edge-step-off: the border cell is asked for directly, never stepped off", PAGE,
-     "var offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);",
-     "var offEdge = null;"),
+     "const offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);",
+     "const offEdge = null;"),
     ("edge-step-off: the step off may land on another border cell", PAGE,
      "if (avoid && avoid.indexOf(cand) >= 0) continue;",
      "if (false && avoid && avoid.indexOf(cand) >= 0) continue;"),
     ("edge-step-off: a cell-pinned tutorial is stepped off anyway", PAGE,
-     "var pin = tutorialActive && allowedCells;",
-     "var pin = false;"),
+     "const pin = tutorialActive && allowedCells;",
+     "const pin = false;"),
     ("edge-step-off: the walk back onto the border is never scheduled", PAGE,
-     "                                            iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);\n"
-     "                                            window.__agentLastNav = { at: Date.now(),",
-     "                                            window.__agentLastNav = { at: Date.now(),"),
+     "                            iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);\n"
+     "                            outcome.via = 'isoEngine.gotoNeighbourMap';",
+     "                            outcome.via = 'isoEngine.gotoNeighbourMap';"),
     # ---- a named reply whose dialog page moved on (live 2026-10-30)
     ("reply-fallback: a moved-on page with one reply is refused again", PAGE,
      "                if (count === 1) {", "                if (false) {"),
@@ -631,9 +713,9 @@ MUTATIONS = [
     ("adjacent-border: the refused crossing is asked again by direction", PLAN,
      "                                                    spent=sorted(spent) or None)",
      "                                                    spent=None)"),
-    ("adjacent-border: a spent border still counts as an exit to walk", PLAN,
-     "        exits = cls._observed_exits(obs)\n        if spent:",
-     "        exits = cls._observed_exits(obs)\n        if False:"),
+    ("adjacent-border: a spent border still counts as an exit to walk", NAV_UTILS,
+     "    exits = observed_exits(obs)\n    if spent:",
+     "    exits = observed_exits(obs)\n    if False:"),
     ("adjacent-border: the dead end never names the border that refused", PLAN,
      "                refused = [e[\"direction\"] for e in self._observed_exits(obs)\n"
      "                           if e[\"map_id\"] in spent]",
@@ -1114,8 +1196,8 @@ MUTATIONS = [
      "            self._pending_age += 1\n",
      "            self._pending_age += 0\n"),
     ("the credit is never delivered", AUTO,
-     "        self.controller.observe_outcome(self._pending, verdict)",
-     "        pass"),
+     "        self.controller.observe_outcome(self._pending, verdict, **credit_options)",
+     "        pass  # mutated: the credit is never delivered"),
     # ---- settle window
     ("every tool is treated as having no promise", AUTO,
      "promised = tool in SETTLE_TOOLS",
@@ -1224,7 +1306,7 @@ MUTATIONS = [
      '            "page_after": str(da.get("message") or "")[:120] if da.get("open") else None,',
      '            "page_after": str(db.get("message") or "")[:120] if da.get("open") else None,'),
     # ---- G22: the spent-page guard
-    ("a repeat is never refused (the 87-ask loop returns)", PLAN,
+    ("a repeat is never refused (the 87-ask loop returns)", PLAN_UTILS,
      "DIALOG_ASK_LIMIT = 2", "DIALOG_ASK_LIMIT = 99"),
     ("the spent-page guard declines but still falls through to asking", PLAN,
      '                                             "reason": "reply already left this page unchanged"}\n'
@@ -1353,7 +1435,14 @@ MUTATIONS = [
      '    if not rows:\n        print("VERDICT: nothing recorded',
      '    if False:\n        print("VERDICT: nothing recorded'),
     ("the fill hypothesis is never printed", BOARDS,
-     '    print("fill hypothesis:", ASSUMPTION)\n', ""),
+     '        print("fill hypothesis:", ASSUMPTION)\n', ""),
+    ("the default arm silently replays the filled boards", BOARDS,
+     "    report_raw = replay(rows, policy.decide, only_my_turn=not args.all_turns)",
+     "    report_raw = replay(rows, policy.decide, only_my_turn=not args.all_turns,\n"
+     "                        fill_missing=True)"),
+    ("both arms print under the same label, so the gap is never visible", BOARDS,
+     '        _show("fill arm: the same boards with the missing max values supplied", report_fill)',
+     '        _show("raw arm: the payload exactly as recorded, nothing supplied", report_fill)'),
     # ---- G25: the producer itself, in the live page.
     # These are the shapes that made 156 of 156 recorded boards unusable, written back in
     # one at a time. If the gate stays green with any of them installed, the suite that
@@ -1392,15 +1481,15 @@ MUTATIONS = [
     # in this group" for themselves, and the two that decide whether a fight is reachable matched
     # against the reference-database name. These write each old shape back, one at a time.
     ("membership: the search enumerates the reference database again", PAGE,
-     "                var members = _groupMembers(a);",
-     "                var members = (a.data && a.data.staticInfos\n"
+     "                const members = _groupMembers(a);",
+     "                const members = (a.data && a.data.staticInfos\n"
      "                    && a.data.staticInfos.monsters) || [];"),
     ("membership: farm.start walks the actors itself again", PAGE,
-     "                    var hunt = _findMonsterGroup(wanted);",
-     "                    var hunt = {group: null, groups: 0, monsters: [], path: 'actors'};"),
+     "                    const hunt = _findMonsterGroup(wanted);",
+     "                    const hunt = {group: null, groups: 0, monsters: [], path: 'actors'};"),
     ("membership: fight.join keeps a private group walk", PAGE,
-     "                    var found = _findMonsterGroup(wantMonster);",
-     "                    var found = {group: null, key: null, groups: 0,\n"
+     "                    const found = _findMonsterGroup(wantMonster);",
+     "                    const found = {group: null, key: null, groups: 0,\n"
      "                        monsters: [], path: 'actors'};"),
     ("membership: an unnamed objective no longer takes the first group", PAGE,
      "                if (!out.group && wanted == null) { out.group = a; out.key = k; }\n", ""),
@@ -1412,32 +1501,32 @@ MUTATIONS = [
      "                members = [{creatureGenericId: d.creatureGenericId, level: d.level}];\n"
      "            }\n", ""),
     ("membership: the NPC reader falls back to a name that is not in the bundle", PAGE,
-     "var _listNpcActors = function () {\n"
-     "            var am = window.actorManager\n"
+     "        const _listNpcActors = function () {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && am.actors) || null;",
-     "var _listNpcActors = function () {\n"
-     "            var am = window.actorManager\n"
+     "            const actors = (am && am.actors) || null;",
+     "        const _listNpcActors = function () {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && (am.actors || am.actorList)) || null;"),
+     "            const actors = (am && (am.actors || am.actorList)) || null;"),
     ("membership: the group search falls back to a name that is not in the bundle", PAGE,
-     "var _findMonsterGroup = function (wanted) {\n"
-     "            var am = window.actorManager\n"
+     "        const _findMonsterGroup = function (wanted) {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && am.actors) || null;",
-     "var _findMonsterGroup = function (wanted) {\n"
-     "            var am = window.actorManager\n"
+     "            const actors = (am && am.actors) || null;",
+     "        const _findMonsterGroup = function (wanted) {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && (am.actors || am.actorList)) || null;"),
+     "            const actors = (am && (am.actors || am.actorList)) || null;"),
     ("membership: the group listing falls back to a name that is not in the bundle", PAGE,
-     "var _listMonsterGroups = function () {\n"
-     "            var am = window.actorManager\n"
+     "        const _listMonsterGroups = function () {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && am.actors) || null;",
-     "var _listMonsterGroups = function () {\n"
-     "            var am = window.actorManager\n"
+     "            const actors = (am && am.actors) || null;",
+     "        const _listMonsterGroups = function () {\n"
+     "            const am = window.actorManager\n"
      "                || (window.isoEngine && window.isoEngine.actorManager) || null;\n"
-     "            var actors = (am && (am.actors || am.actorList)) || null;"),
+     "            const actors = (am && (am.actors || am.actorList)) || null;"),
     ("membership: a manager with no collection stops being its own cause", SCAN,
      "    no_collection = [m for m in scanned if m[\"groups_scan\"].get(\"manager\")\n"
      "                     and m[\"groups_scan\"].get(\"path\") in (None, \"none\")]",
@@ -1476,7 +1565,7 @@ MUTATIONS = [
     ("refusal: unread members are routed like an absent mob", PLAN,
      '                self._group_read_broken = outcome == "unread_members"',
      "                self._group_read_broken = False"),
-    ("refusal: an empty map is no longer told apart from an unread one", PLAN,
+    ("refusal: an empty map is no longer told apart from an unread one", PLAN_UTILS,
      '    if seen <= 0:\n        return "empty_map"', '    if seen <= 0:\n        return "unread_members"'),
     ("refusal: a success leaves the broken read latched", PLAN,
      "                self._farm_target_missing = False\n"
@@ -1488,7 +1577,7 @@ MUTATIONS = [
     ("refusal: the run summary stops carrying the refusal census", AUTO,
      '            "group_refusals": dict(getattr(policy, "_group_refusals", {}) or {}),\n',
      ""),
-    ("refusal: the bridge envelope is never unwrapped", PLAN,
+    ("refusal: the bridge envelope is never unwrapped", PLAN_UTILS,
      "    data = refusal_payload(detail)",
      "    data = detail if isinstance(detail, dict) else {}"),
     ("refusal: a broken member read keeps the wrong-target label", CTRL,
@@ -1544,17 +1633,17 @@ MUTATIONS = [
      "const requiredMatch = readiness.match(/^NEVER_APPEARS = \\(([^)]*)\\)/m);"),
     # ---- G7/G17 family: the ready-objective scan. The live log had `objectives_completed` 0 in
     # all 4,286 rows while 4,267 of them carried a second ready objective the loop never read.
-    ("ready: the claim loop is back to one ready entry", PLAN,
+    ("ready: the claim loop is back to one ready entry", PLAN_UTILS,
      "READY_SCAN_LIMIT = 8", "READY_SCAN_LIMIT = 1"),
     ("ready: a detour plan is never deferred", PLAN,
      "                if not names_target(first):\n", "                if False:\n"),
-    ("ready: a read counts as naming the target", PLAN,
+    ("ready: a read counts as naming the target", PLAN_UTILS,
      "    if tool in READ_ONLY_TOOLS:\n        return False",
      "    if tool in READ_ONLY_TOOLS:\n        return True"),
-    ("ready: walking out an exit counts as a destination", PLAN,
+    ("ready: walking out an exit counts as a destination", PLAN_UTILS,
      '    if tool == "nav.goto":\n        return args.get("map_id") is not None',
      '    if tool == "nav.goto":\n        return True'),
-    ("ready: a validation request is no longer recognised as a target", PLAN,
+    ("ready: a validation request is no longer recognised as a target", PLAN_UTILS,
      '    if tool == "quest.advance":\n        return (args.get("npc_id") is not None\n'
      '                or args.get("objective_id") is not None)',
      '    if tool == "quest.advance":\n        return args.get("npc_id") is not None'),
@@ -1593,14 +1682,14 @@ MUTATIONS = [
      "                            if (at > 0) out.index = at;",
      "                            if (at >= 0) out.index = at + 1;"),
     ("progress: the quest's own step table is never consulted", PAGE,
-     "                        var sids = q && q.dbQuest && q.dbQuest.stepIds;",
-     "                        var sids = null;"),
+     "                        const sids = q && q.dbQuest && q.dbQuest.stepIds;",
+     "                        const sids = null;"),
     ("progress: a string step id is compared without coercion", PAGE,
      "                        if (sid != null && !isNaN(Number(sid))) out.step_id = Number(sid);",
      "                        if (sid != null && !isNaN(Number(sid))) out.step_id = sid;"),
     ("progress: a quest object without a step stops the read", PAGE,
-     "                    var out = {index: 0, step_id: 0};\n                    try {",
-     "                    var out = {index: 0, step_id: 0};\n                    if (true) {"),
+     "                    const out = {index: 0, step_id: 0};\n                    try {",
+     "                    const out = {index: 0, step_id: 0};\n                    if (true) {"),
     ("progress: the per-quest value goes back to the field the client never sets", PAGE,
      "                            qs.active[qid] = prog.index;",
      "                            qs.active[qid] = Number(q.finishedCount || 0);"),
@@ -1657,7 +1746,7 @@ MUTATIONS = [
     ("param: the kill branch still hunts a text-only objective", PLAN,
      '        if t in KILL_TYPES:\n            if declares_monster_target(obj) is False:',
      '        if t in KILL_TYPES:\n            if False:'),
-    ("param: fight.join keeps the invented monster", PLAN,
+    ("param: fight.join keeps the invented monster", PLAN_UTILS,
      '        if declares_monster_target(obj) is False:\n'
      '            return {}\n'
      '        monster = p.get("parameter0")\n'
@@ -1665,7 +1754,7 @@ MUTATIONS = [
      '            return {"monster": int(monster)} if monster is not None else {}\n'
      '        except (TypeError, ValueError):\n'
      '            return {}\n'
-     '    return {}',
+     '    if tool == "fight.join":',
      '        if False:\n'
      '            return {}\n'
      '        monster = p.get("parameter0")\n'
@@ -1673,8 +1762,8 @@ MUTATIONS = [
      '            return {"monster": int(monster)} if monster is not None else {}\n'
      '        except (TypeError, ValueError):\n'
      '            return {}\n'
-     '    return {}'),
-    ("param: farm.start keeps the invented monster", PLAN,
+     '    if tool == "fight.join":'),
+    ("param: farm.start keeps the invented monster", PLAN_UTILS,
      '            except (TypeError, ValueError):\n'
      '                return {}\n'
      '        if declares_monster_target(obj) is False:\n'
@@ -1685,7 +1774,7 @@ MUTATIONS = [
      '        if False:\n'
      '            return {}\n'
      '        monster = p.get("parameter0")'),
-    ("param: the gate also blocks the deliver route", PLAN,
+    ("param: the gate also blocks the deliver route", PLAN_UTILS,
      '    if tool == "farm.start":\n        if t in DELIVER_TYPES:',
      '    if tool == "farm.start":\n'
      '        if declares_monster_target(obj) is False:\n'
@@ -1698,10 +1787,10 @@ MUTATIONS = [
     # KB holds no live quest id, so the observation fallback is the only route a real
     # quest takes, and a class name lost there or in the merge makes every check above
     # pass while the loop still hunts an invented monster.
-    ("param: the class name is dropped from the observation fallback", PLAN,
-     '        if isinstance(entry.get("type"), str) and entry.get("type"):\n'
-     '            obj["type"] = entry["type"]',
-     '        if False:\n            obj["type"] = entry["type"]'),
+    ("param: the class name is dropped from the observation fallback", OBJ_UTILS,
+     '    if isinstance(entry.get("type"), str) and entry.get("type"):\n'
+     '        obj["type"] = entry["type"]',
+     '    if False:\n        obj["type"] = entry["type"]'),
     ("param: the knowledge-base merge drops the class name", PLAN,
      '                        for key in ("type_id", "map_id", "type"):',
      '                        for key in ("type_id", "map_id"):'),
@@ -1747,10 +1836,10 @@ MUTATIONS = [
     ("start: the memory is filled from the cached table instead of the client", PLAN,
      '        self._client_quests |= client_quest_ids(obs)',
      '        self._client_quests |= set(self.quests)'),
-    ("start: a tracker or ready entry no longer confirms its quest", PLAN,
+    ("start: a tracker or ready entry no longer confirms its quest", PLAN_UTILS,
      '    sources = [obs.get("current_objective")]',
      '    sources = []'),
-    ("start: a string quest id is kept as a string, so it never matches", PLAN,
+    ("start: a string quest id is kept as a string, so it never matches", PLAN_UTILS,
      '            out.add(int(raw))',
      '            out.add(raw)'),
     ("start: the refusal does not retire the quest, so it is re-derived every step", PLAN,
@@ -1764,8 +1853,8 @@ MUTATIONS = [
      '        twin._client_quests = set()'),
     # ---- G32: the dialog LINK read (a quest offer is an anchor in the NPC's text)
     ("links: the anchor pattern is dropped", PAGE,
-     "var anchor = /<a\\shref=['\"](.*?)['\"]\\s*>(.*?)<\\/a>/gi;",
-     "var anchor = /<a-nomatch-zzz>/gi;"),
+     "const anchor = /<a\\shref=['\"](.*?)['\"]\\s*>(.*?)<\\/a>/gi;",
+     "const anchor = /<a-nomatch-zzz>/gi;"),
     ("links: a quest offer is not recognised", PAGE,
      "if (kind === 'startquest') {",
      "if (kind === 'zzz-startquest') {"),
@@ -1776,8 +1865,8 @@ MUTATIONS = [
      "out.push({kind: kind, world_x: ~~parts[1], world_y: ~~parts[2]});",
      "out.push({kind: kind, world_x: Number(parts[1]), world_y: Number(parts[2])});"),
     ("links: reply text is never scanned for links", PAGE,
-     "for (var i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);",
-     "for (var i = 0; i < 0; i++) collect(texts[i], 'reply', i);"),
+     "for (let i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);",
+     "for (let i = 0; i < 0; i++) collect(texts[i], 'reply', i);"),
     ("links: the raw question text is not kept for the parse", PAGE,
      "raw_msg: (ui && ui.currentMsg != null) ? ui.currentMsg : null,",
      "raw_msg: null,"),
@@ -1788,9 +1877,9 @@ MUTATIONS = [
      "if (info.ui && typeof info.ui._linkHandler === 'function') return 'gui.npcDialogUi';",
      "if (info.ui) return 'gui.npcDialogUi';"),
     ("links: the read starts sending on its own", PAGE,
-     "        var _agentStartQuestOffered = function (links) {",
+     "        const _agentStartQuestOffered = function (links) {",
      "        window.dofus.sendMessage('QuestStartRequestMessage', {questId: 1});\n"
-     "        var _agentStartQuestOffered = function (links) {"),
+     "        const _agentStartQuestOffered = function (links) {"),
 
     # ---- call-shape classifier (G31's number was wrong because one argument decided it)
     ("shape: a talk is counted as an accept", SHAPES,
@@ -1837,8 +1926,8 @@ MUTATIONS = [
      "if (offeredId == null || offeredId !== acceptId) {",
      "if (offeredId == null && acceptId === -1) {"),
     ("accept: the wrong packet is sent", PAGE,
-     "var acceptSend = _cmSend('QuestStartRequestMessage',",
-     "var acceptSend = _cmSend('NpcDialogReplyMessage',"),
+     "const acceptSend = _cmSend('QuestStartRequestMessage',",
+     "const acceptSend = _cmSend('NpcDialogReplyMessage',"),
     ("accept: the repeat guard is disarmed", PAGE,
      "&& Date.now() - Number(acceptPending.at || 0) < 5000) {",
      "&& Date.now() - Number(acceptPending.at || 0) < -1) {"),
@@ -1862,8 +1951,8 @@ MUTATIONS = [
      '"_unused": {\n     "type": "bool",\n     "required": false,'),
     # ---- G29: the live quest catalogue and the observed row that outranks the cache
     ("catalog: the step graph stops listing objectives", PAGE,
-     "var oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];",
-     "var oids = [];"),
+     "const oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];",
+     "const oids = [];"),
     ("catalog: step names are dropped", PAGE,
      "if (ds.nameId != null) step.name = ds.nameId;",
      "if (false) step.name = ds.nameId;"),
@@ -1890,7 +1979,7 @@ MUTATIONS = [
      '            if str(entry.get("id")) == str(oid):',
      '        for entry in []:\n'
      '            if str(entry.get("id")) == str(oid):'),
-    ("catalog: the planner reads every quest's rows", PLAN,
+    ("catalog: the planner reads every quest's rows", PLAN_UTILS,
      '            if int(quest.get("id")) != int(quest_id):\n'
      '                continue',
      '            if False:\n'
@@ -2014,17 +2103,17 @@ MUTATIONS = [
      '            print("  " + line)'),
     # ---- G29 catalogue: one budget for the whole graph
     ("catalog: the snapshot loop passes the shared budget into the builder", PAGE,
-     "                var cat = _agentQuestCatalog(q, qid, prog,\n"
+     "                                    const cat = _agentQuestCatalog(q, qid, prog,\n"
      "                                                                 catalogBudget);",
-     "                var cat = _agentQuestCatalog(q, qid, prog);"),
+     "                                    const cat = _agentQuestCatalog(q, qid, prog);"),
     ("catalog: the shared step budget is ignored", PAGE,
-     "                        var stepCap = Math.min(MAX_STEPS,\n"
+     "                        const stepCap = Math.min(MAX_STEPS,\n"
      "                            Math.max(0, Math.floor(budget.steps)));",
-     "                        var stepCap = MAX_STEPS;"),
+     "                        const stepCap = MAX_STEPS;"),
     ("catalog: the shared objective budget is ignored", PAGE,
-     "                            var objCap = Math.min(MAX_OBJECTIVES,\n"
+     "                            const objCap = Math.min(MAX_OBJECTIVES,\n"
      "                                Math.max(0, Math.floor(budget.objectives)));",
-     "                            var objCap = MAX_OBJECTIVES;"),
+     "                            const objCap = MAX_OBJECTIVES;"),
     ("catalog: a step budget truncation is not reported", PAGE,
      "                        if (sids.length > shownSteps) {\n"
      "                            out.truncated = true;\n"
@@ -2036,8 +2125,8 @@ MUTATIONS = [
      "                        }"),
     # ---- the page build stamp a live run reads first
     ("build: the stamp stays on the old generation", PAGE,
-     "    var AGENT_BUILD = '%s';" % _PAGE_STAMP,
-     "    var AGENT_BUILD = '2026-10-25d';"),
+     "    const AGENT_BUILD = '%s';" % _PAGE_STAMP,
+     "    const AGENT_BUILD = '2026-10-25d';"),
     ("build: the marker is set from a stale literal", PAGE,
      "        window.__agentBuild = (window.buildVersion || (window.Config && window.Config.buildVersion)) ? (AGENT_BUILD + '+' + (window.buildVersion || window.Config.buildVersion)) : AGENT_BUILD;",
      "        window.__agentBuild = '2026-10-25d';"),
@@ -2091,8 +2180,8 @@ MUTATIONS = [
      "if (this._spellReaches(ctx, candidates[s].spell, enemies[e].cell)) {",
      "if (true) {"),
     ("fight: the lowest-HP target is not chosen", PAGE,
-     "var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });",
-     "var enemies = ctx.enemies.slice().sort(function(a, b) { return b.hp - a.hp; });"),
+     "const enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });",
+     "const enemies = ctx.enemies.slice().sort(function(a, b) { return b.hp - a.hp; });"),
     ("fight: an unaffordable spell is still offered", PAGE,
      "if (ctx.ap_source !== 'assumed' && cost > ctx.ap) continue;",
      "if (false) continue;"),
@@ -2150,9 +2239,9 @@ MUTATIONS = [
      "        policy._client_quests |= set(policy._curriculum(args.level))",
      "        pass"),
     # ---- the user-command parser and its dataset
-    ("goal: asking the bot to play is not Full Auto", PLAN,
-     'if _RE_GOAL_AUTO_PLAY.search(text):',
-     'if False:  # _RE_GOAL_AUTO_PLAY.search(text):'),
+    ("goal: asking the bot to play is not Full Auto", PLAN_UTILS,
+     '    if _RE_GOAL_AUTO_PLAY.search(text):',
+     '    if False:  # _RE_GOAL_AUTO_PLAY.search(text):'),
     ("command: the model is never consulted", CMD,
      "    if model is not None:",
      "    if False:"),
@@ -2260,14 +2349,14 @@ MUTATIONS = [
      '                if (inspectOnly) return _agentResult(true, out);',
      '                if (false) return _agentResult(true, out);'),
     ("login: the guest step is picked by button order, not by what is stored", PAGE,
-     "                    var step = saved ? '_continueGuest' : '_createGuest';",
-     "                    var step = '_continueGuest';"),
+     "                    const step = saved ? '_continueGuest' : '_createGuest';",
+     "                    const step = '_continueGuest';"),
     ("login: a press does not look at the screen it caused", PAGE,
      '                    out.after = { in_world: !!(after && after.in_world),',
      '                    out.after = { in_world: null,'),
     ("login: the tool writes credentials itself", PAGE,
-     "                    var g = raw && JSON.parse(raw)['all#guestAccount'];",
-     "                    var g = raw && JSON.parse(raw)['all#guestAccount'];\n                    if (g && g.login) { try { window.dofus.setCredentials(g.login, g.password); } catch (eX) {} }"),
+     "                    const g = raw && JSON.parse(raw)['all#guestAccount'];",
+     "                    const g = raw && JSON.parse(raw)['all#guestAccount'];\n                    if (g && g.login) { try { window.dofus.setCredentials(g.login, g.password); } catch (eX) {} }"),
     ("login: a press is reported even when nothing was pressed", PAGE,
      '                if (!pressed) return _agentResult(false, out,',
      '                if (false) return _agentResult(false, out,'),
@@ -2490,8 +2579,8 @@ MUTATIONS = [
      "            rec.present = false;\n            rec.failed += 1;",
      "            rec.present = true;\n            rec.marks += 1;"),
     ("keep-alive: the tracker is looked for only on connectionManager again", PAGE,
-     "            var found = window.__agentActivityTracker();",
-     "            var found = null;"),
+     "            const found = window.__agentActivityTracker();",
+     "            const found = null;"),
     # ---- the loop side of the same instrument: the page counts, the run reports.
     ("afk: the step row stops folding in the witness", AUTO,
      "                self._note_keep_alive(after)",
@@ -2606,8 +2695,8 @@ MUTATIONS = [
      '        max_hp[index, 0] = float(max(1, player.max_hp))',
      '        max_hp[index, 0] = 1.0'),
     ("log: the challenges a fight started with stop being recorded", CSRV,
-     '            "challenges": payload.get("challenges") or [],',
-     '            "challenges": [],'),
+     '        "challenges": payload.get("challenges") or [],',
+     '        "challenges": [],'),
     # Only assertions proven killable are pinned here. A first draft also carried "drop the tanh"
     # and "misalign the actor slice"; neither is reachable from any check in the fixture, and a
     # MISSED row is coverage debt, not coverage -- those two belong to #18's sweep, not to this list.
@@ -2650,7 +2739,7 @@ MUTATIONS = [
     ("log: the server stops stamping its own latency", CSRV,
      # 2026-11-13: the server now measures once, feeds the latency histogram and
      # stamps the decision from that same value. Re-pin to the new single line.
-     '    decision["server_latency_ms"] = round(elapsed_ms, 2)',
+     '    decision["server_latency_ms"] = round((time.perf_counter() - t_srv) * 1000.0, 2)',
      '    decision["server_latency_ms"] = None'),
     # The checker itself. Neither of these is visible to the gate's own `doc_facts` check -- the
     # mutated tool would report the green answer -- so only the self-witness fixture can see them.
@@ -2948,9 +3037,9 @@ MUTATIONS = [
     ("damage: the merge keeps whichever copy the first ledger names", DAMAGE,
      '            if held is None or (_has_battle_log(row) and not _has_battle_log(held)):',
      '            if held is None:'),
-    ("gate: the failure formatter goes back to nesting the detail", REG,
+    ("gate: the failure formatter goes back to nesting the detail", COMMON,
      '    text = "%s: %s" % (label, detail) if detail else label',
-     '    text = "%s%s" % (label, (": %s" % detail) if detail else "")  # mutated'),
+     '    text = "%s: %s" % (label, *detail) if detail else label  # mutated'),
     ("delegation: a suite that ran signs nothing", REG,
      '    _delegation("JS page suites", True, ROOT / "tools")',
      '    pass  # mutated: the suite runs but does not sign for it'),
@@ -3536,6 +3625,24 @@ def main():
     print("clean tree runs the snippet: 0 failing checks, exit 0")
 
     in_place_requested = "--in-place" in sys.argv or str(os.environ.get("MUT_IN_PLACE", "")).lower() in ("1", "true")
+    if not in_place_requested and selected:
+        # Shadow verdicts are only evidence if an *unedited* shadow copy passes.
+        # The file shim alone can fail unrelated checks, which then makes every
+        # mutation read CAUGHT: measured 2026-11-18, every arm of any target
+        # reported 10 failures including a TypeError in `test_worker_headroom_layer`,
+        # and the same arms in-place failed exactly one check -- the intended one.
+        for _path in sorted({item[1] for item in selected}):
+            _name, _caught, _skipped, _labels, _code, _out, _ = eval_one_mutation(
+                ("shadow control", _path, "", ""))
+            if _skipped:
+                continue
+            if _labels:
+                print("REFUSED: the shadow shim for %s fails %d check(s) with no edit, "
+                      "so a CAUGHT verdict in this mode proves nothing -- rerun with "
+                      "--in-place" % (_path.name, len(_labels)))
+                for _label in _labels[:3]:
+                    print("      %s" % _label)
+                raise SystemExit(2)
     workers_env = os.environ.get("MUT_WORKERS", "").strip()
     workers = 0
     if workers_env:

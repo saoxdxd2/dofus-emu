@@ -459,6 +459,39 @@ class ThreatObserverMultiSlotTests(unittest.TestCase):
                 observer.observe(self._payload(875, ME, list(log), names))
             self.assertEqual(learned, 5, "learned %d for 5 real hits" % learned)
 
+    def test_a_published_max_hp_is_kept_without_a_battle_log(self):
+        """The hop that prices a kill: a payload with no log still teaches HP.
+
+        Most enemy rows omit `max_hp`, and the solver's kill bonus is
+        `0.35 * max_hp`; this is the only place the value can come from. It must
+        land in the file the solver reloads, and a later smaller/absent value
+        must not erase it.
+        """
+        from combat.combat_ai_server import _ThreatObserver
+        from combat.threat import ThreatMemory
+
+        path = None
+        with tempfile.TemporaryDirectory(prefix="threat-hp-") as tmp:
+            path = Path(tmp) / "threat.json"
+            observer = _ThreatObserver(path=path)
+            payload = {"fight_id": 900, "my_id": ME,
+                       "fighters": [{"id": ME, "name": "me", "is_me": True,
+                                     "max_hp": 410},
+                                    {"id": -1, "name": "Barbakle",
+                                     "max_hp": 140}]}
+            self.assertEqual(observer.observe(payload), 0,
+                             "no log means no hit, not a fabricated one")
+            self.assertEqual(ThreatMemory.load(path).hp_of("Barbakle"), 140)
+            payload["fighters"][1]["max_hp"] = 120
+            observer.observe(payload)
+            missing = {"fight_id": 900, "my_id": ME,
+                       "fighters": [{"id": -1, "name": "Barbakle"}]}
+            observer.observe(missing)
+            self.assertEqual(ThreatMemory.load(path).hp_of("Barbakle"), 140,
+                             "a smaller or absent value must not lower it")
+            self.assertEqual(ThreatMemory.load(path).hp_of("me"), 410,
+                             "own row is kept but never prices an enemy")
+
     def test_its_memory_is_bounded(self):
         from combat.combat_ai_server import _MAX_TRACKED_FIGHTS, _ThreatObserver
 

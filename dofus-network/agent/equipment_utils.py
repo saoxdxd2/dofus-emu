@@ -68,7 +68,13 @@ def worn_slot_for(obs: Dict[str, Any], uid: Any) -> Optional[str]:
     if gid is None:
         return None
     block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
-    equipped = block.get("equipped") or obs.get("equipped") or []
+    # The page publishes what is worn *inside the bag*: `snap.inventory.equipped`
+    # (`scripts/mobile-disguise.js`, built from the client's `equippedItems`). The
+    # map block and the observation root carry no `equipped` list, so reading
+    # those two alone found nothing and every equip call went out slotless --
+    # the refusal this function exists to prevent.
+    equipped = (bag.get("equipped") or block.get("equipped")
+                or obs.get("equipped") or [])
     worn_slot = None
     for row in equipped:
         if not isinstance(row, dict):

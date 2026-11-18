@@ -1281,5 +1281,182 @@ class BoardMarksAndTrapChainsTests(unittest.TestCase):
         self.assertEqual(len(remaining_marks.marks), 0)
 
 
+class SpellParseCacheTests(unittest.TestCase):
+    """The per-frame spellbook parse is cached by payload content.
+
+    One fight re-sends every spellbook on every payload, and re-parsing them was
+    21% of a profiled decide. The cache must never answer for different content:
+    `casts_this_turn` and `castable` change within a turn, and a stale hit would
+    price a spell the character has already spent.
+    """
+
+    def _raw(self, **over):
+        raw = {"id": 7, "name": "Pince", "ap_cost": 3, "min_range": 1,
+               "range": 6, "casts_this_turn": 0, "castable": True,
+               "effects": [{"effect_id": 96, "dice_num": 11, "dice_side": 15}]}
+        raw.update(over)
+        return raw
+
+    def test_identical_payload_content_reuses_the_parsed_spell(self):
+        first = Board._spell(self._raw())
+        second = Board._spell(self._raw())
+        self.assertIs(first, second)
+
+    def test_a_changed_turn_field_parses_a_new_spell(self):
+        first = Board._spell(self._raw(casts_this_turn=0))
+        second = Board._spell(self._raw(casts_this_turn=1))
+        self.assertIsNot(first, second)
+        self.assertEqual(first.casts_this_turn, 0)
+        self.assertEqual(second.casts_this_turn, 1)
+
+    def test_a_changed_roll_is_not_a_cache_hit(self):
+        first = Board._spell(self._raw())
+        second = Board._spell(self._raw(
+            effects=[{"effect_id": 96, "dice_num": 1, "dice_side": 2}]))
+        self.assertEqual(first.effects[0].max_roll, 15)
+        self.assertEqual(second.effects[0].max_roll, 2)
+
+
+class GlyphProposalTests(unittest.TestCase):
+    """A glyph has no damage or heal line, so nothing priced it.
+
+    Measured 2026-11-18 on the recorded corpus: a castable glyph is available on
+    126 of 160 own turns and the solver proposed zero glyph plans. It is a
+    placement like a trap, and the same traffic price applies.
+    """
+
+    def _board(self, effect_id: int = 401) -> Board:
+        return board_with(
+            cell(20, 20), cell(24, 20), my_ap=6,
+            spells=[live_spell(id=20, name="Aggressive Glyph", ap_cost=3,
+                               min_range=1, max_range=5,
+                               effects=(LiveEffect(effect_id, 25, 25),),)])
+
+    def test_a_glyph_is_offered_as_a_placement_plan(self):
+        plans = BattleSolver().plan_candidates(self._board(), 6)
+        glyph = [p for p in plans if p.actions and p.actions[0].spell_id == 20]
+        self.assertTrue(glyph, "a castable glyph must be a candidate")
+        self.assertEqual(glyph[0].bucket, "setup")
+        self.assertTrue(glyph[0].actions[0].target_cell)
+
+    def test_the_same_spell_unmodelled_is_not_offered(self):
+        plans = BattleSolver().plan_candidates(self._board(9999), 6)
+        self.assertFalse([p for p in plans
+                          if p.actions and p.actions[0].spell_id == 20],
+                         "an effect with no kind is not a placement")
+
+
+class ProtectionProposalTests(unittest.TestCase):
+    """A protection buff has no damage or heal line, so nothing priced it.
+
+    Measured 2026-11-18: Rampart was castable on 33 of 160 recorded own turns and
+    Barricade on 5 more, and the solver proposed neither. A shield is priced in
+    the HP it absorbs; a damage reduction whose magnitude the tables do not
+    settle is still a legal turn and carries no price.
+    """
+
+    def test_a_shield_spell_is_offered_on_the_caster(self):
+        board = board_with(
+            cell(20, 20), cell(24, 20), my_ap=6,
+            spells=[live_spell(id=31, name="Ataraxia", ap_cost=3,
+                               min_range=0, max_range=0,
+                               effects=(LiveEffect(1040, 40, 40),),)])
+        plans = BattleSolver().plan_candidates(board, 6)
+        shield = [p for p in plans if p.actions and p.actions[0].spell_id == 31]
+        self.assertTrue(shield, "a castable shield must be a candidate")
+        self.assertEqual(shield[0].actions[0].target_id, 1)
+        self.assertEqual(shield[0].bucket, "setup")
+        self.assertGreater(shield[0].score, 0.0,
+                           "40 shield points are priced like 40 healed HP")
+
+    def test_a_shield_can_target_an_ally_in_range(self):
+        board = board_with(
+            cell(20, 20), cell(24, 20), my_ap=6, ally_cell=cell(21, 20),
+            spells=[live_spell(id=31, name="Ataraxia", ap_cost=3,
+                               min_range=0, max_range=2,
+                               effects=(LiveEffect(1040, 40, 40),),)])
+        plans = BattleSolver().plan_candidates(board, 6)
+        targets = {p.actions[0].target_id for p in plans
+                   if p.actions and p.actions[0].spell_id == 31}
+        self.assertIn(3, targets, "the ally inside the ring is a recipient")
+
+    def test_an_unpriced_reduction_is_classified_but_not_planned(self):
+        """265's magnitude is unresolved (8 on Rampart, 5000 on Barricade), so the
+        spell is not a plan; it must still leave the "other" bucket."""
+        board = board_with(
+            cell(20, 20), cell(24, 20), my_ap=6,
+            spells=[live_spell(id=4, name="Rampart", ap_cost=2,
+                               min_range=0, max_range=0,
+                               effects=(LiveEffect(265, 8, 8),),)])
+        spell = board.spells[0]
+        self.assertTrue(spell.has_protection)
+        self.assertEqual(spell.effects[0].kind, "damage_reduction")
+        self.assertFalse(spell.protection.is_priced)
+        plans = BattleSolver().plan_candidates(board, 6)
+        self.assertFalse([p for p in plans
+                          if p.actions and p.actions[0].spell_id == 4],
+                         "an unpriced reduction cannot be ranked, so it is not a plan")
+
+    def test_a_buff_that_is_not_protection_is_not_offered(self):
+        board = board_with(
+            cell(20, 20), cell(24, 20), my_ap=6,
+            spells=[live_spell(id=422, name="Reinforced Protection", ap_cost=2,
+                               min_range=0, max_range=0,
+                               effects=(LiveEffect(138, 50, 50),),)])
+        plans = BattleSolver().plan_candidates(board, 6)
+        self.assertFalse([p for p in plans
+                          if p.actions and p.actions[0].spell_id == 422],
+                         "a power buff is not a protection cast")
+
+
+class KillPricingTests(unittest.TestCase):
+    """A kill costs `KILL_BONUS * max_hp`, and the payload omits max_hp.
+
+    Measured 2026-11-18: 922 of 1,396 recorded enemy rows publish no max_hp, and
+    every row of the level-5 packs the fights were against. The board then prices
+    a kill at 0.35, so the beam double-casts the 200-HP monster while an 8-HP one
+    stands killable. The learned table restores the intended price; without a
+    table the pricing must be exactly what it was.
+    """
+
+    def _board(self):
+        from combat import threat
+        board = board_with(cell(20, 20), cell(22, 20), my_ap=6,
+                           spells=[live_spell(max_range=3)],
+                           extra_fighters=[fighter(
+                               4, "Barbakle", cell(23, 20), "enemy",
+                               hp=8, max_hp=0)])
+        return board, threat
+
+    def test_an_unknown_max_hp_kill_loses_to_a_bigger_hit_without_a_table(self):
+        board, _ = self._board()
+        plans = BattleSolver().plan_candidates(board, 3)
+        self.assertNotIn(4, plans[0].kills,
+                         "without a learned max_hp the kill is priced at 0.35")
+
+    def test_a_learned_max_hp_makes_the_kill_the_top_plan(self):
+        board, threat = self._board()
+        memory = threat.ThreatMemory()
+        memory.record_hp("Barbakle", 140)
+        plans = BattleSolver(memory=lambda: memory).plan_candidates(board, 3)
+        self.assertIn(4, plans[0].kills,
+                      "with the real max_hp the finished monster outranks a hit")
+
+    def test_the_board_teaches_the_table_before_pricing(self):
+        board, threat = self._board()
+        known = board_with(cell(20, 20), cell(22, 20), my_ap=3,
+                           spells=[live_spell(max_range=3)],
+                           extra_fighters=[fighter(
+                               4, "Barbakle", cell(23, 20), "enemy",
+                               hp=40, max_hp=140)])
+        memory = threat.ThreatMemory()
+        solver = BattleSolver(memory=lambda: memory)
+        solver.plan_candidates(known, 3)
+        self.assertEqual(memory.hp_of("Barbakle"), 140.0)
+        plans = solver.plan_candidates(board, 3)
+        self.assertIn(4, plans[0].kills,
+                      "the next board with the same monster prices the kill")
+
+
 if __name__ == "__main__":
     unittest.main()

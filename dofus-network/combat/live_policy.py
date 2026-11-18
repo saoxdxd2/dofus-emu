@@ -747,7 +747,9 @@ class LivePolicy:
                      ) -> Optional[Tuple[Dict[str, Any], bool, str]]:
         """The best legal solver plan for this turn, value/grid re-ranked."""
         try:
-            plans = self.solver.plan_candidates(board, max(2, int(self.plan_k)))
+            plans = self.solver.plan_candidates(
+                board, max(2, int(self.plan_k)),
+                deadline=self._plan_deadline())
         except Exception:  # noqa: BLE001 - a solver failure must not cost the turn
             return None
         plans = [plan for plan in plans
@@ -765,6 +767,31 @@ class LivePolicy:
         # number in the log, not an impression from watching the character.
         self._last_plan = picked
         return self._emit(board, picked, False, "solver", "solver_move")
+
+    @staticmethod
+    def _plan_deadline() -> Optional[float]:
+        """This turn's search deadline, from `DOFUS_COMBAT_PLAN_BUDGET_MS`.
+
+        Off unless set, because the bound is not free. Measured 2026-11-18 on
+        the recorded corpus (`tools/policy_over_record_boards.py`), shipped
+        interpreter, three concurrent instances: unbounded decide p50 4.4-5.1
+        / p95 10.6-11.4 ms with 13 casts and 85 walks over the 160 own turns;
+        a 1.5 ms budget gives p50 3.2-3.4 / p95 6.2-6.4 ms but changes 23 of
+        the 160 decisions (36 casts), because most turns' full search runs
+        longer than the budget and the shallow plan wins the re-ranking. No
+        outcome data ranks those two mixes yet, and the 5 ms ceiling is not
+        met under load either way, so the default keeps the decision mix and
+        the knob stays available for live tuning. 0, off, or a non-number
+        disables it; a positive value is milliseconds.
+        """
+        raw = os.environ.get("DOFUS_COMBAT_PLAN_BUDGET_MS", "0")
+        try:
+            budget_ms = float(raw)
+        except ValueError:
+            return None
+        if budget_ms <= 0.0:
+            return None
+        return time.perf_counter() + budget_ms / 1000.0
 
     @property
     def hp_choice_stats(self) -> Dict[str, int]:

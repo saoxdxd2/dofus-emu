@@ -718,6 +718,8 @@ namespace DofusBuild
                 // data/map_los/* (combat/map_field.py), models/board_pca_v1.json
                 // (combat/board_pca.py), models/encounter_selfplay.pkl, and the whole of
                 // data/cache + data/knowledge, which REQUIRED insists on.
+                || p.IndexOf("/combat/test_two_ply_world_model.py", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/agent/test_evidence.py", StringComparison.OrdinalIgnoreCase) >= 0
                 || p.IndexOf("/tools/delayed_belief_probe.py", StringComparison.OrdinalIgnoreCase) >= 0
                 || p.IndexOf("/tools/test_delayed_belief_probe.py", StringComparison.OrdinalIgnoreCase) >= 0
                 || p.IndexOf("/out/delayed_belief_", StringComparison.OrdinalIgnoreCase) >= 0

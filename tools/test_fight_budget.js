@@ -36,9 +36,9 @@ function between(startAnchor, endAnchor, includeEnd) {
     return src.slice(s, includeEnd ? e + endAnchor.length : e);
 }
 
-const A_START = 'var fighterBag = null;';
+const A_START = 'let fighterBag = null;';
 const A_END = "if (mp == null || isNaN(mp)) { mp = 3; mpFrom = 'assumed'; }";
-const B_START = 'var cost = desc.apCost != null ? desc.apCost : 1;';
+const B_START = 'const cost = desc.apCost != null ? desc.apCost : 1;';
 const B_END = 'candidates.push({ id: sid, spell: spell, cost: cost });';
 
 const budgetBlock = between(A_START, A_END, true);

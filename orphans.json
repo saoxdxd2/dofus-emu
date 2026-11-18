@@ -1,0 +1,378 @@
+[
+ {
+  "idx": 1,
+  "name": "settle-dialog: a hop waits for the journey's destination",
+  "file": "autopilot.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\autopilot.py",
+  "old": "            if bool(after_map) and after_map != before_map:\n                return True\n",
+  "new": "            if False and bool(after_map) and after_map != before_map:\n                return True\n"
+ },
+ {
+  "idx": 2,
+  "name": "settle-dialog: a reply settles only on an objective change",
+  "file": "autopilot.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\autopilot.py",
+  "old": "            elif args.get(\"reply\") is not None or args.get(\"reply_text\") is not None:\n",
+  "new": "            elif False:\n"
+ },
+ {
+  "idx": 3,
+  "name": "settle-dialog: a dialog tick counts as a new page",
+  "file": "autopilot.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\autopilot.py",
+  "old": "        return (bool(dialog.get(\"open\")), dialog.get(\"npc_id\"),\n",
+  "new": "        return (dialog.get(\"ids_ready\"), bool(dialog.get(\"open\")), dialog.get(\"npc_id\"),\n"
+ },
+ {
+  "idx": 24,
+  "name": "edge-step-off: the border cell is asked for directly, never stepped off",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var offEdge = pin ? null : _agentStepOffCell(currentCell, edgeAvoid);",
+  "new": "var offEdge = null;"
+ },
+ {
+  "idx": 26,
+  "name": "edge-step-off: a cell-pinned tutorial is stepped off anyway",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var pin = tutorialActive && allowedCells;",
+  "new": "var pin = false;"
+ },
+ {
+  "idx": 27,
+  "name": "edge-step-off: the walk back onto the border is never scheduled",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                                            iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);\n                                            window.__agentLastNav = { at: Date.now(),",
+  "new": "                                            window.__agentLastNav = { at: Date.now(),"
+ },
+ {
+  "idx": 47,
+  "name": "adjacent-border: a spent border still counts as an exit to walk",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "        exits = cls._observed_exits(obs)\n        if spent:",
+  "new": "        exits = cls._observed_exits(obs)\n        if False:"
+ },
+ {
+  "idx": 185,
+  "name": "the credit is never delivered",
+  "file": "autopilot.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\autopilot.py",
+  "old": "        self.controller.observe_outcome(self._pending, verdict)",
+  "new": "        pass"
+ },
+ {
+  "idx": 216,
+  "name": "a repeat is never refused (the 87-ask loop returns)",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "DIALOG_ASK_LIMIT = 2",
+  "new": "DIALOG_ASK_LIMIT = 99"
+ },
+ {
+  "idx": 267,
+  "name": "membership: the search enumerates the reference database again",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                var members = _groupMembers(a);",
+  "new": "                var members = (a.data && a.data.staticInfos\n                    && a.data.staticInfos.monsters) || [];"
+ },
+ {
+  "idx": 268,
+  "name": "membership: farm.start walks the actors itself again",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                    var hunt = _findMonsterGroup(wanted);",
+  "new": "                    var hunt = {group: null, groups: 0, monsters: [], path: 'actors'};"
+ },
+ {
+  "idx": 269,
+  "name": "membership: fight.join keeps a private group walk",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                    var found = _findMonsterGroup(wantMonster);",
+  "new": "                    var found = {group: null, key: null, groups: 0,\n                        monsters: [], path: 'actors'};"
+ },
+ {
+  "idx": 273,
+  "name": "membership: the NPC reader falls back to a name that is not in the bundle",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var _listNpcActors = function () {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && am.actors) || null;",
+  "new": "var _listNpcActors = function () {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && (am.actors || am.actorList)) || null;"
+ },
+ {
+  "idx": 274,
+  "name": "membership: the group search falls back to a name that is not in the bundle",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var _findMonsterGroup = function (wanted) {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && am.actors) || null;",
+  "new": "var _findMonsterGroup = function (wanted) {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && (am.actors || am.actorList)) || null;"
+ },
+ {
+  "idx": 275,
+  "name": "membership: the group listing falls back to a name that is not in the bundle",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var _listMonsterGroups = function () {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && am.actors) || null;",
+  "new": "var _listMonsterGroups = function () {\n            var am = window.actorManager\n                || (window.isoEngine && window.isoEngine.actorManager) || null;\n            var actors = (am && (am.actors || am.actorList)) || null;"
+ },
+ {
+  "idx": 286,
+  "name": "refusal: an empty map is no longer told apart from an unread one",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    if seen <= 0:\n        return \"empty_map\"",
+  "new": "    if seen <= 0:\n        return \"unread_members\""
+ },
+ {
+  "idx": 290,
+  "name": "refusal: the bridge envelope is never unwrapped",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    data = refusal_payload(detail)",
+  "new": "    data = detail if isinstance(detail, dict) else {}"
+ },
+ {
+  "idx": 306,
+  "name": "ready: the claim loop is back to one ready entry",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "READY_SCAN_LIMIT = 8",
+  "new": "READY_SCAN_LIMIT = 1"
+ },
+ {
+  "idx": 308,
+  "name": "ready: a read counts as naming the target",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    if tool in READ_ONLY_TOOLS:\n        return False",
+  "new": "    if tool in READ_ONLY_TOOLS:\n        return True"
+ },
+ {
+  "idx": 309,
+  "name": "ready: walking out an exit counts as a destination",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    if tool == \"nav.goto\":\n        return args.get(\"map_id\") is not None",
+  "new": "    if tool == \"nav.goto\":\n        return True"
+ },
+ {
+  "idx": 310,
+  "name": "ready: a validation request is no longer recognised as a target",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    if tool == \"quest.advance\":\n        return (args.get(\"npc_id\") is not None\n                or args.get(\"objective_id\") is not None)",
+  "new": "    if tool == \"quest.advance\":\n        return args.get(\"npc_id\") is not None"
+ },
+ {
+  "idx": 321,
+  "name": "progress: the quest's own step table is never consulted",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                        var sids = q && q.dbQuest && q.dbQuest.stepIds;",
+  "new": "                        var sids = null;"
+ },
+ {
+  "idx": 323,
+  "name": "progress: a quest object without a step stops the read",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                    var out = {index: 0, step_id: 0};\n                    try {",
+  "new": "                    var out = {index: 0, step_id: 0};\n                    if (true) {"
+ },
+ {
+  "idx": 341,
+  "name": "param: fight.join keeps the invented monster",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "        if declares_monster_target(obj) is False:\n            return {}\n        monster = p.get(\"parameter0\")\n        try:\n            return {\"monster\": int(monster)} if monster is not None else {}\n        except (TypeError, ValueError):\n            return {}\n    return {}",
+  "new": "        if False:\n            return {}\n        monster = p.get(\"parameter0\")\n        try:\n            return {\"monster\": int(monster)} if monster is not None else {}\n        except (TypeError, ValueError):\n            return {}\n    return {}"
+ },
+ {
+  "idx": 342,
+  "name": "param: farm.start keeps the invented monster",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "            except (TypeError, ValueError):\n                return {}\n        if declares_monster_target(obj) is False:\n            return {}\n        monster = p.get(\"parameter0\")",
+  "new": "            except (TypeError, ValueError):\n                return {}\n        if False:\n            return {}\n        monster = p.get(\"parameter0\")"
+ },
+ {
+  "idx": 343,
+  "name": "param: the gate also blocks the deliver route",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    if tool == \"farm.start\":\n        if t in DELIVER_TYPES:",
+  "new": "    if tool == \"farm.start\":\n        if declares_monster_target(obj) is False:\n            return {}\n        if t in DELIVER_TYPES:"
+ },
+ {
+  "idx": 345,
+  "name": "param: the class name is dropped from the observation fallback",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "        if isinstance(entry.get(\"type\"), str) and entry.get(\"type\"):\n            obj[\"type\"] = entry[\"type\"]",
+  "new": "        if False:\n            obj[\"type\"] = entry[\"type\"]"
+ },
+ {
+  "idx": 360,
+  "name": "start: a tracker or ready entry no longer confirms its quest",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "    sources = [obs.get(\"current_objective\")]",
+  "new": "    sources = []"
+ },
+ {
+  "idx": 361,
+  "name": "start: a string quest id is kept as a string, so it never matches",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "            out.add(int(raw))",
+  "new": "            out.add(raw)"
+ },
+ {
+  "idx": 364,
+  "name": "links: the anchor pattern is dropped",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var anchor = /<a\\shref=['\"](.*?)['\"]\\s*>(.*?)<\\/a>/gi;",
+  "new": "var anchor = /<a-nomatch-zzz>/gi;"
+ },
+ {
+  "idx": 368,
+  "name": "links: reply text is never scanned for links",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "for (var i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);",
+  "new": "for (var i = 0; i < 0; i++) collect(texts[i], 'reply', i);"
+ },
+ {
+  "idx": 372,
+  "name": "links: the read starts sending on its own",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "        var _agentStartQuestOffered = function (links) {",
+  "new": "        window.dofus.sendMessage('QuestStartRequestMessage', {questId: 1});\n        var _agentStartQuestOffered = function (links) {"
+ },
+ {
+  "idx": 387,
+  "name": "accept: the wrong packet is sent",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var acceptSend = _cmSend('QuestStartRequestMessage',",
+  "new": "var acceptSend = _cmSend('NpcDialogReplyMessage',"
+ },
+ {
+  "idx": 395,
+  "name": "catalog: the step graph stops listing objectives",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];",
+  "new": "var oids = [];"
+ },
+ {
+  "idx": 404,
+  "name": "catalog: the planner reads every quest's rows",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "            if int(quest.get(\"id\")) != int(quest_id):\n                continue",
+  "new": "            if False:\n                continue"
+ },
+ {
+  "idx": 437,
+  "name": "catalog: the snapshot loop passes the shared budget into the builder",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                var cat = _agentQuestCatalog(q, qid, prog,\n                                                                 catalogBudget);",
+  "new": "                var cat = _agentQuestCatalog(q, qid, prog);"
+ },
+ {
+  "idx": 438,
+  "name": "catalog: the shared step budget is ignored",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                        var stepCap = Math.min(MAX_STEPS,\n                            Math.max(0, Math.floor(budget.steps)));",
+  "new": "                        var stepCap = MAX_STEPS;"
+ },
+ {
+  "idx": 439,
+  "name": "catalog: the shared objective budget is ignored",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                            var objCap = Math.min(MAX_OBJECTIVES,\n                                Math.max(0, Math.floor(budget.objectives)));",
+  "new": "                            var objCap = MAX_OBJECTIVES;"
+ },
+ {
+  "idx": 441,
+  "name": "build: the stamp stays on the old generation",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "    var AGENT_BUILD = '';",
+  "new": "    var AGENT_BUILD = '2026-10-25d';"
+ },
+ {
+  "idx": 458,
+  "name": "fight: the lowest-HP target is not chosen",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });",
+  "new": "var enemies = ctx.enemies.slice().sort(function(a, b) { return b.hp - a.hp; });"
+ },
+ {
+  "idx": 475,
+  "name": "goal: asking the bot to play is not Full Auto",
+  "file": "planner.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\planner.py",
+  "old": "if _RE_GOAL_AUTO_PLAY.search(text):",
+  "new": "if False:  # _RE_GOAL_AUTO_PLAY.search(text):"
+ },
+ {
+  "idx": 510,
+  "name": "login: the guest step is picked by button order, not by what is stored",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                    var step = saved ? '_continueGuest' : '_createGuest';",
+  "new": "                    var step = '_continueGuest';"
+ },
+ {
+  "idx": 512,
+  "name": "login: the tool writes credentials itself",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "                    var g = raw && JSON.parse(raw)['all#guestAccount'];",
+  "new": "                    var g = raw && JSON.parse(raw)['all#guestAccount'];\n                    if (g && g.login) { try { window.dofus.setCredentials(g.login, g.password); } catch (eX) {} }"
+ },
+ {
+  "idx": 578,
+  "name": "keep-alive: the tracker is looked for only on connectionManager again",
+  "file": "mobile-disguise.js",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\scripts\\mobile-disguise.js",
+  "old": "            var found = window.__agentActivityTracker();",
+  "new": "            var found = null;"
+ },
+ {
+  "idx": 607,
+  "name": "log: the challenges a fight started with stop being recorded",
+  "file": "combat_ai_server.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\combat\\combat_ai_server.py",
+  "old": "            \"challenges\": payload.get(\"challenges\") or [],",
+  "new": "            \"challenges\": [],"
+ },
+ {
+  "idx": 617,
+  "name": "log: the server stops stamping its own latency",
+  "file": "combat_ai_server.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\combat\\combat_ai_server.py",
+  "old": "    decision[\"server_latency_ms\"] = round(elapsed_ms, 2)",
+  "new": "    decision[\"server_latency_ms\"] = None"
+ },
+ {
+  "idx": 699,
+  "name": "gate: the failure formatter goes back to nesting the detail",
+  "file": "regression.py",
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\agent\\regression.py",
+  "old": "    text = \"%s: %s\" % (label, detail) if detail else label",
+  "new": "    text = \"%s%s\" % (label, (\": %s\" % detail) if detail else \"\")  # mutated"
+ }
+]

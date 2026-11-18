@@ -304,7 +304,7 @@ passes a finite forward check. The first Kaggle run (synthetic solver distillati
 `models/combat_grid/model.pkl`; it is **not** a live combat policy. It is wired as an
 opt-in read-only ranker (`fight.plan ranker=grid`), default is still `solver`, and
 it refuses when the board has no positive AP or the artifact is absent. The live
-gate is one actionable fight on the current page build (`2026-11-11a`; `2026-10-29bf` is still the
+gate is one actionable fight on the current page build (`2026-11-17b`; `2026-10-29bf` is still the
 newest one actually recorded), then a side-swapped win. Note that fights are now won live
 (§6 above) — what has not been seen is a board with positive AP reaching the grid ranker, so
 the model is still validated only on synthetic distillation (`data/combat_grid_synth_v2`:
@@ -368,8 +368,8 @@ The paired `decide()` measurement, the 135/135 identical-action result and the 3
 ledger are in `docs/ARCH_REASSESSMENT.md` §L.34.
 
 What the brain process itself costs, measured by the OS on the shipped runtime over 675 streamed
-decides (`python tools/brain_ram_probe.py` on `runtimes/python`): **34.1<!--f:brain_resident_mb--> MB resident,
-147.3<!--f:brain_peak_mb--> MB peak working set, 283<!--f:brain_commit_mb--> MB commit, 2.961<!--f:brain_decide_ms--> ms per
+decides (`python tools/brain_ram_probe.py` on `runtimes/python`): **44.2<!--f:brain_resident_mb--> MB resident,
+166.9<!--f:brain_peak_mb--> MB peak working set, 292.4<!--f:brain_commit_mb--> MB commit, 4.935<!--f:brain_decide_ms--> ms per
 `decide()`.** The staged breakdown says where that is: loading and warming the trained head adds
 2.4 MB resident, while `import numpy` alone reserves 233 MB of commit, so the weights are not the
 memory story and any future trimming should not aim at them (§L.36).
@@ -377,7 +377,7 @@ memory story and any future trimming should not aim at them (§L.36).
 parse-only sweep of 135 boards and 675 sustained decides all peak at the same ~146 MB and all end at
 33-34 MB resident, so the peak is a high-water mark the first unit of work touches rather than a
 per-turn cost, and **it does not grow with load**. The number to plan instances against is
-34.1<!--f:brain_resident_mb--> MB resident, not the 147.3<!--f:brain_peak_mb--> MB peak -- commit is not residency on
+44.2<!--f:brain_resident_mb--> MB resident, not the 166.9<!--f:brain_peak_mb--> MB peak -- commit is not residency on
 this box (§L.36, #84).
 
 The online loop for `p_win` (`combat/online_learn.py`) is the deployment path for

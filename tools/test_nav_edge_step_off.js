@@ -56,7 +56,7 @@ global.setTimeout = function (fn) { fn(); return 0; };
 
 // The real helper from the page, so the suite tests the shipped neighbours and
 // the walkability rule rather than a copy.
-const helperBody = block('var _agentStepOffCell = function(cell, avoid)');
+const helperBody = block('const _agentStepOffCell = function(cell, avoid)');
 check('the step-off helper is present', !!helperBody);
 const stepOff = helperBody
     ? vm.runInThisContext('(function(cell, avoid)' + helperBody + ')') : null;

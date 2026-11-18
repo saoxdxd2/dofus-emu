@@ -87,6 +87,7 @@ class PersistentMemory(ActionMemory):
         self._solutions: Dict[str, Dict[str, Dict[str, Any]]] = {}
         # context_key -> {call_sig: {"tool","args","count","last"}}
         self._dead: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._evidence_outcomes: Dict[str, Dict[str, Any]] = {}
         self._dirty = False
         self.loaded_from: Optional[str] = None
         self._load()
@@ -108,6 +109,13 @@ class PersistentMemory(ActionMemory):
             return
         self._solutions = doc.get("solutions") or {}
         self._dead = doc.get("dead") or {}
+        outcomes = doc.get("evidence_outcomes") or {}
+        if isinstance(outcomes, dict):
+            self._evidence_outcomes = {
+                k: v for k, v in list(outcomes.items())[-64:]
+                if isinstance(v, dict) and isinstance(v.get("context"), list)
+                and isinstance(v.get("args"), dict) and type(v.get("revision")) is int
+                and v.get("verdict") in (None, "advanced", "failed")}
         self.loaded_from = str(self.path)
 
     def save(self, path: Optional[Path] = None) -> Optional[Path]:
@@ -119,6 +127,7 @@ class PersistentMemory(ActionMemory):
             "saved_at": round(time.time(), 3),
             "solutions": self._solutions,
             "dead": self._dead,
+            "evidence_outcomes": self._evidence_outcomes,
         }
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +182,33 @@ class PersistentMemory(ActionMemory):
             bucket[sig] = row
             self._dirty = True
 
+    def replace_outcome(self, revision: Dict[str, Any]) -> bool:
+        action_id = revision["action_id"]
+        previous = self._evidence_outcomes.get(action_id)
+        identity = (revision["context"], revision["tool"], revision["args"])
+        if previous is not None:
+            if (previous["context"], previous["tool"], previous["args"]) != identity:
+                raise ValueError("an outcome id cannot change identity")
+            if revision["revision"] <= previous["revision"]:
+                return False
+        self._evidence_outcomes[action_id] = {
+            "context": list(revision["context"]), "tool": revision["tool"],
+            "args": dict(revision["args"]), "revision": revision["revision"],
+            "verdict": revision["verdict"] if revision["status"] == "confirmed" else None,
+            "order": revision["order"],
+        }
+        while len(self._evidence_outcomes) > 64:
+            key = min(self._evidence_outcomes, key=lambda k: self._evidence_outcomes[k]["order"])
+            row = self._evidence_outcomes.pop(key)
+            if row["verdict"] is not None:
+                self.observe(tuple(row["context"]), row["tool"], row["args"], row["verdict"])
+        self._dirty = True
+        return True
+
+    def _outcomes(self, context: Optional[Tuple]) -> List[Dict[str, Any]]:
+        return sorted((row for row in self._evidence_outcomes.values()
+                       if tuple(row["context"]) == tuple(context or ())), key=lambda row: row["order"])
+
     # -- querying ----------------------------------------------------------
 
     def failure_count(self, context: Optional[Tuple], tool: str,
@@ -186,7 +222,15 @@ class PersistentMemory(ActionMemory):
         """
         key = context_key(context)
         row = (self._dead.get(key) or {}).get(call_signature(tool, args)) or {}
-        return int(row.get("count", 0) or 0)
+        count = int(row.get("count", 0) or 0)
+        sig = call_signature(tool, args)
+        for outcome in self._outcomes(context):
+            if call_signature(outcome["tool"], outcome["args"]) == sig:
+                if outcome["verdict"] == "advanced":
+                    count = 0
+                elif outcome["verdict"] == "failed":
+                    count += 1
+        return count
 
     def known_failure(self, context: Optional[Tuple], tool: str,
                       args: Optional[Dict[str, Any]]) -> bool:
@@ -196,7 +240,13 @@ class PersistentMemory(ActionMemory):
     def solutions(self, context: Optional[Tuple],
                   limit: int = 8) -> List[Dict[str, Any]]:
         """Every call that has advanced this context, most-proven first."""
-        bucket = self._solutions.get(context_key(context)) or {}
+        bucket = {sig: dict(row) for sig, row in (self._solutions.get(context_key(context)) or {}).items()}
+        for outcome in self._outcomes(context):
+            if outcome["verdict"] != "advanced":
+                continue
+            sig = call_signature(outcome["tool"], outcome["args"])
+            row = bucket.setdefault(sig, {"tool": outcome["tool"], "args": outcome["args"], "wins": 0})
+            row["wins"] += 1
         ranked = sorted(bucket.items(),
                         key=lambda kv: (-int(kv[1].get("wins", 0)),
                                         -float(kv[1].get("last", 0.0))))
@@ -211,7 +261,15 @@ class PersistentMemory(ActionMemory):
 
     def dead_ends(self, context: Optional[Tuple], limit: int = 5) -> List[Dict[str, Any]]:
         key = context_key(context)
-        rows = list((self._dead.get(key) or {}).values())
+        candidates = {sig: dict(row) for sig, row in (self._dead.get(key) or {}).items()}
+        for outcome in self._outcomes(context):
+            candidates.setdefault(call_signature(outcome["tool"], outcome["args"]),
+                                  {"tool": outcome["tool"], "args": outcome["args"]})
+        rows = []
+        for row in candidates.values():
+            count = self.failure_count(context, row["tool"], row["args"])
+            if count:
+                rows.append(dict(row, count=count))
         rows.sort(key=lambda r: -int(r.get("count", 0)))
         return rows[:limit]
 

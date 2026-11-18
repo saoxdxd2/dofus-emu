@@ -146,6 +146,11 @@ class ActionMemory:
                     self._failed.pop(victim_tool, None)
                 total -= 1
 
+    def failure_count(self, context: Optional[Tuple], tool: str,
+                      args: Optional[Dict[str, Any]]) -> int:
+        self._ensure(context)
+        return self._failed.get(tool, {}).get(call_signature(tool, args), 0)
+
     def is_failed(self, context: Optional[Tuple], tool: str,
                   args: Optional[Dict[str, Any]]) -> bool:
         self._ensure(context)

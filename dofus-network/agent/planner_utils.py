@@ -14,9 +14,16 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from agent.compute_tree import IdentityMemo
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Quest ids are read from the same carried observation on every step while the
+# world is quiet. Keying by object identity makes a repeated read a dict lookup
+# instead of re-walking four sources and coercing every id to int.
+_QUEST_IDS_MEMO = IdentityMemo()
 
 # Goal lexicon path.
 _GOAL_LEXICON_PATH = REPO_ROOT / "data" / "goal_lexicon.json"
@@ -368,6 +375,12 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
         except (TypeError, ValueError):
             return {}
     if tool == "fight.join":
+        # The same declaration check as `farm.start`: a text-only objective's
+        # `parameter0` is a text id, not a creature (G27). Without it the wrapper
+        # number (715354) went out as `fight.join {monster: 715354}` and the
+        # client answered "target monster 715354 is not on this map".
+        if declares_monster_target(obj) is False:
+            return {}
         monster = p.get("parameter0")
         try:
             return {"monster": int(monster)} if monster is not None else {}
@@ -474,8 +487,51 @@ DIALOG_ASK_LIMIT = 2
 DIALOG_STALL_LIMIT = 16
 
 def client_quest_ids(obs: Dict[str, Any]) -> set:
-    """Quest IDs the client reports as active in the observation."""
-    active = obs.get("quests_active") if isinstance(obs, dict) else None
-    if isinstance(active, dict):
-        return set(active.keys())
-    return set()
+    """Quest IDs the client reports, from all four places it names one.
+
+    The guard that keeps a start request off a quest this game lacks is only as
+    good as this set: an id the client showed in `current_objective` or in a
+    ready objective is confirmed even when `quests_active` does not carry it
+    yet (a start the server has not answered), and dropping those sources made
+    the guard refuse quests the client had just reported.
+    """
+    if not isinstance(obs, dict):
+        return set()
+    return _QUEST_IDS_MEMO.get("quest_ids", obs, _client_quest_ids_uncached)
+
+
+def _client_quest_ids_uncached(obs: Dict[str, Any]) -> set:
+    out: set = set()
+    add = out.add
+
+    # One pass per source. The old shape built four temporary lists (keys of
+    # two dicts, then the ready list) only to concatenate them.
+    for field in ("quests_active", "quests_done"):
+        value = obs.get(field)
+        if isinstance(value, dict):
+            for raw in value:
+                try:
+                    add(int(raw))
+                except (TypeError, ValueError):
+                    continue
+        elif isinstance(value, (list, tuple, set)):
+            for raw in value:
+                try:
+                    add(int(raw))
+                except (TypeError, ValueError):
+                    continue
+    current = obs.get("current_objective")
+    if isinstance(current, dict) and current.get("quest_id") is not None:
+        try:
+            add(int(current["quest_id"]))
+        except (TypeError, ValueError):
+            pass
+    ready = obs.get("ready_objectives")
+    if isinstance(ready, (list, tuple, set)):
+        for entry in ready:
+            if isinstance(entry, dict) and entry.get("quest_id") is not None:
+                try:
+                    add(int(entry["quest_id"]))
+                except (TypeError, ValueError):
+                    continue
+    return out

@@ -1,5 +1,466 @@
 # TRAINING_PLAN — one shared learned brain (≤30M total / ≤10M active), the harness as its gym
 
+## Stage II — approved implementation plan (2026-11-17)
+
+**Status:** approved; Module 1 in progress. This section supersedes the historical
+next-action list below. Execute Modules 1 -> 5 sequentially; do not launch downstream
+training or promote a component before its prerequisites and outcome gates pass.
+
+**Objective:** a hierarchical, uncertainty-aware learned planner that proposes legal
+strategies, evaluates their consequences, executes one action, waits for evidence and
+replans. Completion means better complete fights and quest episodes, not higher teacher
+agreement. No commits, pushes, remote training or live-session launches are implied.
+
+### Architecture and ownership
+
+```text
+client observations + confirmed events
+  -> versioned facts + bounded task-relevant hypotheses
+  -> verified goals and prerequisite graph
+  -> learned proposals + legal candidate generation
+  -> bounded consequence search + outcome-trained value/cost estimates
+  -> validate_call + existing execution/safety guards
+  -> one action + confirmation/revision
+  -> evidence memory + experience -> next decision
+
+offline: confirmed experience -> stronger search -> policy iteration
+         -> held-out paired evaluation -> separately authorized promotion
+```
+
+Code owns known mechanics, legality, execution and recovery. Data owns verified quest,
+map and spell facts. Models learn proposals, strategic priorities, outcome values and
+costs. Search checks combinations. Memory preserves source order, uncertainty and
+revisions outside neural weights. Unknown mechanics and missing tools stay explicit;
+they are never silently interpreted as zero damage or fabricated executable actions.
+
+Confirmed, observed, predicted, unknown and conflicted facts have distinct meanings.
+Retain only bounded, decision-relevant alternative hypotheses; attach probabilities
+only when their calibration is supported. The current source-ordered evidence ledger
+is a foundation, not an implemented latent-state or exact Bayesian filter.
+
+### Module 1 — transition fidelity and the combat foundation
+
+- Pin the exact live policy chain, artifact identities, corpus and simulator versions.
+  Compare the actual chain and `_hp_choice` explicitly; do not assume the HP ranker is
+  the only reachable branch.
+- Reuse existing whole-turn search and the two-ply evaluator. Their presence is not
+  evidence of complete initiative-ordered simulation or a measured gameplay gain.
+- Establish a shared post-plan projection for HP, life status, cells and acting-player
+  AP/MP. Use the solver's recorded displacement, not a second approximation. Build
+  occupancy from surviving fighters at successor positions; never let a dead fighter
+  or a vacated cell provide cover.
+- Extend supported typed mechanics and structural state cloning: damage/heal/shields,
+  AP/MP changes, displacement, cast limits/cooldowns and explicitly known timed states.
+  Share immutable geometry and spell records; do not deepcopy the board per candidate.
+- Differentially test search, replay and offline transitions against one contract.
+  Every mechanic needs a focused witness, an interaction witness and a failing control;
+  compare with recorded transitions where live evidence is available.
+- Progress from the current damage-reply estimate to initiative-ordered, resource-legal
+  responses with actual target selection and resulting state changes. Unsupported
+  enemy support, summon and boss-state behavior remains visible as model uncertainty.
+- Measure the decision-leverage ceiling before adding horizon. Compare our turn,
+  plausible enemy response and our next opportunity; do not spend more search on
+  near-equivalent choices without evidence of additional outcome headroom.
+
+**First implementation slice:** shared HP/cell/AP/MP successor projection used by the
+reply evaluator and duel replay, with dead-blocker, recorded-displacement, immutable
+branch and replay-parity witnesses. This is narrower than a complete mechanics engine;
+initiative-aware multi-target replies and state/cooldown evolution remain open.
+
+### Module 2 — expressive proposals and bounded tactical planning
+
+- Add spell-conditioned relational scoring, starting with the rank-16 bilinear head.
+  Score spell, target, position and sequence together rather than reusing one target
+  ranking for every spell. Prove representability and input leverage before fitting.
+- Generate complete legal turns across damage, protection, setup, displacement and
+  verified boss-mechanic opportunities. Update the simulated board after each action;
+  regenerate legality and collapse equivalent successor states.
+- Use constrained within-turn beam search and a bounded inter-turn tree, with learned
+  terminal values. Spend additional depth only on decisions with measured leverage.
+- Evaluate plausible opponent-response scenarios from verified spellbooks and observed
+  behavior. Use catastrophic-risk checks without pretending every monster is omniscient.
+- Unblind and verify relevant 8-actor inputs, then measure party reservations separately
+  against an identical independent-scoring arm. Existing controlled results favor
+  spell-target scoring; they do not establish coordination as the main missing gain.
+
+### Module 3 — contingent quests, useful observations and honest credit
+
+- Compile verified quest/objective identities into prerequisites, alternative routes
+  and executable subplans. Reuse the AND/OR planning stack through its decision seam;
+  a learning-only adapter is not a decision connection.
+- Each subplan carries preconditions, expected effects, completion evidence, duration,
+  resource cost, dependencies and invalidation conditions. Preserve it through ordinary
+  waiting; replan on relevant changes or contradicted prerequisites.
+- Search only known transitions. Unknown dialog or quest consequences require an
+  observation or an empirically trained outcome estimate, never an invented transition.
+- Gather information only when its possible answers can change the chosen action enough
+  to justify the cost. Identical snapshots are not independent information or progress.
+- Keep macro objective credit separate from micro execution credit. Use confirmed,
+  revision-aware outcome identities; censor unresolved/conflicted examples rather than
+  turning missing confirmation into failure. Train dialog/verifier heads on noncircular
+  outcomes, retaining calibration and episode-held-out gates.
+- Execute one validated action, retain pending ownership, observe and replan. Stop,
+  disconnect, identity and repeat guards remain outside learned control.
+
+### Module 4 — stall-only visual guard
+
+Use structured observations first. Invoke the NumPy image guard or optional tiny INT8
+ONNX classifier only for a suspected UI/observation mismatch. Gate on detected real
+mismatches and false interventions; do not replace structured planning with screen guesses.
+
+### Module 5 — policy iteration, adaptation and targeted WSP
+
+- Learn proposal, terminal value and duration/resource-cost heads from confirmed
+  episodes plus provenance-preserving counterfactual transitions in validated domains.
+- Continue counterfactual rollouts with the policy being evaluated. Refresh data on
+  states the updated policy reaches; do not train a policy-dependent value against a
+  continuation that deployment will not follow.
+- Treat the requested 50/50 real/counterfactual mix as an experimental arm, with separate
+  source metrics and ablations. Real and simulated evidence never become indistinguishable.
+- Begin online adaptation with bounded experience estimates and guarded small adapters;
+  retrain the shared core offline. Revisions replace old credit rather than duplicating it.
+- Apply targeted WSP only after the desired behavior is expressible and useful. Require
+  no-op and support/norm-matched random controls, unchanged-leaf/artifact witnesses and
+  terminal-outcome gates. Ordinary supervised fitting is training, not WSP.
+- Glicko-2 may summarize an opponent pool; it never replaces paired promotion tests.
+
+### Non-negotiable runtime and release gates
+
+- Runtime: stdlib + NumPy + ONNX Runtime only in live agent/combat/world-model/planning/
+  networkhealth modules; torch/jax and HTTP remain outside these runtime paths.
+- Shared parameters <=30M; active non-text parameters <=10M; full decide p95 <5 ms;
+  RAM <=45 MB per brain; installer <=67,108,864 bytes.
+- Measure the entire decision path on the shipped interpreter under multi-instance
+  load. Model-forward timing alone is not the latency gate. Bound nodes, wall time,
+  per-instance history and scratch memory; account separately for background CPU work
+  and reject stale cached/background plans.
+- Keep heavyweight search offline, batch online candidate scoring and share immutable
+  model/geometry data. Return the best validated candidate when the budget expires.
+- Combat: >=400 same-seed side-swapped pairs against the actual chain and `_hp_choice`,
+  positive paired gain with 95% bootstrap CI excluding zero, INERT spread >0, changed
+  decisions, and separately reported wins/losses/draws, legality and runtime. Reprice
+  comparators after every shared mechanics change; simulator wins are not live wins.
+- Quests: hold out complete chains; measure objectives/quests completed within a fixed
+  session budget, stalls, human interventions, ineffective repeated mutations and
+  elapsed/resource cost. Neighboring frames are not independent holdouts.
+- Attribute gains incrementally: baseline -> transition fixes -> candidate coverage ->
+  replies -> learned values -> information gathering -> coordination -> WSP.
+- Exclude every new dev artifact in both `tools/payload_audit.py::DEV_TIER` and
+  `builder/build.cs::SkipDevPayload`. Sync the toolkit, run sensitivity/anchor checks,
+  regressions and shipped-path probes, then rebuild/audit before release. Preserve
+  concurrent user changes and do not edit the tree during an active gate or mutation run.
+
+### Current verification and remaining work
+
+**First slice implemented; verification recorded 2026-11-18.** `Board.after_plan` now
+projects recorded HP/life/cell/AP/MP outcomes for both the reply evaluator and duel replay.
+Dead fighters no longer supply cover; recorded displacement is preserved without rerolling
+it. Mutable branch collections are isolated; immutable geometry and spell records are shared.
+
+Observed checks: 126 runtime-only combat tests passed on the shipped interpreter, 61
+combat/development tests passed on the JAX-capable development interpreter, and 14 focused
+regression/anchor/staging checks passed. These sets overlap; do not sum them as unique tests.
+The four new projection witnesses fail on the old implementation. Each of four targeted
+successor mutations independently fails a specific behavioral assertion with zero errors.
+The narrow shadow sweep also completed with clean preflight/restoration (0 failing checks),
+but its mutated runs include unrelated shadow-hook errors: the independent assertion checks,
+not a blanket CAUGHT count, establish sensitivity. The sweep's 18 stale suite references were
+corrected to their extracted owners; all 134 snippet test references resolve.
+
+**First slice verified (2026-11-18); the architecture remains unfinished.** The final
+source-snapshotted regression passed 2,510 checks with 0 failures; start/end source hashes
+matched (`e720eecda37a0214619581b56184c6064c19d5a96f6be4d84e16e3bfd568dcde`). This verifies
+the projection/cache/verification slice, not the remaining mechanics, planning or learned
+components. Prior full runs recorded 2,502 checks/1 stale-documentation
+failure, then 2,504 checks/2 failures (20.9 ms timing and a source-based coverage audit).
+All 206 module-defined suites were in the execution record. The audit now uses actual
+execution counts, with positive, missing-suite and newly-unasked-suite controls. The
+snippet counter counts dispatched entries across owners, with decoy/off-by-one controls.
+
+A subsequent source-snapshotted run recorded 2,508 checks/2 failures: development-Python
+timing at 27.5 ms and a witness registered after its audit. Start/end code hashes matched
+(`77d64cc7138a604b0359eb30c212235124cb1a0c13f905cc68012a9eb0036ccc`). The current runner
+places that witness before its audit. Profiling was ruled out; the timing suite had been
+launched by development Python 3.14 instead of shipped Python 3.11. A direct same-instrument
+comparison measured 26.1 ms versus 19.9 ms. The gate now runs this runtime-only suite via
+the shipped interpreter and its direct entrypoint; offline/JAX suites stay on development
+Python. The unchanged 20 ms limit and all 12 shipped suite tests passed. A wrong-interpreter
+mutation fails its specific assertion without a crash; 26 focused gate checks passed.
+
+A bounded 256-entry cache shares immutable buff-aging results, with mutable expiry deltas
+copied per branch. Earlier combined shipped timings were variable (including 21.4 ms);
+eight subsequent samples were below 20 ms. A slotted-state toy showed no median advantage
+and was not adopted. No small-loop result establishes full-decision p95. The first slice
+has cleared regression; full decide p95/RAM, >=400-pair outcomes, remaining Module 1
+fidelity/planning, live verification and installer rebuild/audit remain due. The active
+toolkit mirror is absent in this
+checkout; no archived mirror was recreated.
+
+**Live-policy baseline on recorded boards (2026-11-18).** `tools/policy_over_record_boards.py`
+now replays the recorded payload as it is by default and adds the imputation arm only under
+`--fill`, each under a distinct label; both arms are reached only through the live
+`LivePolicy.decide` chain. Corpus: 333 recorded boards / 160 own turns, 25,734,995 B, sha256
+`3250369fb3e3eb2f32fa168835ae49b7fcff1e64452863ac0c352a9042672be8`; checkpoint
+`encounter_selfplay.pkl`; shipped interpreter Python 3.11.9 / numpy 2.4.6.
+
+| arm | actionable own turns | casts | moves | passes | no action | p50 / p95 ms |
+|---|---|---|---|---|---|---|
+| as recorded | 139 / 160 | 13 (8.1%) | 85 | 41 | 21 | 3.0 / 6.6 |
+| `--fill` | 139 / 160 | 14 (8.8%) | 85 | 40 | 21 | 3.6 / 8.9 |
+
+The recorded contract already reports 139 of 160 own turns actionable (75 of 333 boards
+overall), so supplying the missing `max_hp`/`max_ap`/`max_mp` moves exactly one turn's action:
+the imputation hypothesis is not what limits the actor on this corpus. The chain's decisions
+are solver 72, solver_move 24, policy_pass 40, observation_not_actionable 21, no_legal_plan 1,
+policy_retreat 2. The trained critic reached its realization branch on 14 of the 27 cast
+decisions across both arms and picked a plan each time (`asked`/`fired` = 14/14), so the value
+head is present in the shipped path, not orphaned. These latency figures are the whole
+`decide` call (solver included) on the shipped runtime, not the brain-forward p95 gate, and no
+win rate is implied. The run emitted four `damage_calculator` env-parse warnings; noted, not
+attributed here.
+
+Re-verification after that change (2026-11-18): the full gate passed 84 of 86 suites (2
+advisory inventories), `agent.regression` recorded 2,515 checks / 0 failures, and the source
+snapshot over `dofus-network`, `builder`, `desktop` and `tools` was byte-identical before and
+after (`4b80b69ab2fdc084b0c038c9c5663ee3bc7924ba5df9316806f474909d2eefd7`). `doc_facts`
+rendered one document and its check passed. All 10 mutations that target the replay tool were
+caught and the tree restored to 0 failing checks.
+
+**Module 1 outcome gate (2026-11-18): run, and it does not promote the chain.** 400
+recorded boards -> 800 same-seed side-swapped games per comparison, round cap 16, shipped
+interpreter. Seat 1 wins 94-96% on every arm, so every win/loss verdict is
+`seat_dominated`; only the paired efficiency delta is evidence:
+
+| comparison | damage/turn diff | 95% bootstrap CI | boards for A / B | wins A / B |
+|---|---|---|---|---|
+| live chain vs solver | 0.00 | [0.0, 0.0] | 0 / 0 | 400 / 400 |
+| live chain vs `_hp_choice` | 0.00 | [0.0, 0.0] | 0 / 0 | 400 / 400 |
+| live chain vs two-ply `_hp_choice` | -1.02 | [-2.131, -0.161] | 0 / 16 | 387 / 413 |
+| random vs solver (sensitivity) | -71.42 | [-82.366, -60.975] | 210 / 590 | 210 / 590 |
+| solver vs solver (mirror) | 0.00 | [0.0, 0.0] | 400 / 400 | 400 / 400 |
+| two-ply vs solver | +1.00 | [0.149, 2.119] | 15 / 0 | 412 / 388 |
+| live-wide (beam 16/5) vs two-ply | -0.99 | [-2.095, -0.136] | 1 / 15 | 389 / 411 |
+
+What this establishes. The instrument can rank decisions: a random policy loses 71.42
+damage/turn with a CI nowhere near zero, and the mirror is exactly 0. The shipped chain is
+**bit-identical in outcome to the solver** on this corpus: the value critic re-picks among
+equal-damage plans (302 of 2,817 plans changed, 0.00 damage difference), and `_hp_choice`
+was **asked 0 times in 2,817 decisions** because the critic returns a plan 2,799 of 2,799
+times -- the `+1.00` two-ply gain is real on its own arm but unreachable behind the critic
+in the shipped chain, and widening the beam to 16/5 does not recover it (-0.99). So the
+outcome gate stays unmet: no positive paired gain, no promotion, no live-win claim.
+Artifacts: `module1_side_swap_summary.json`, `module1_controls_summary.json` and the
+per-comparison JSONs under `Documents/dofus-evidence`.
+
+**Reply ledger: initiative order, target choice, state changes (2026-11-18).**
+`evaluate_two_ply` no longer sums independent worst-case hits on the player. Replies are
+applied in initiative order to a per-ally HP/shield ledger; each enemy picks the target
+that costs the most HP share (not necessarily the player); an ally killed by an earlier
+reply is dropped as a target and its cell stops blocking line of sight, so the value is a
+state differential rather than a damage tally. New witnesses: the ally-target one returns
+the no-reply 0.25 under the old player-only model instead of 0.2333, and the same sniper
+board is worth 0.01591 or 0.03409 depending on initiative order (the old model returns the
+same value in both orders). Three targeted mutations -- dead ally blocks the line, dead
+ally stays a target, every reply prices the player -- each fail exactly their witness and
+the file restored byte-identical (`213c612b...b0b43d`). All seven paired comparisons above
+were repriced after the change and reproduce the pre-change values to the displayed
+precision, which is the expected invariance: the duel harness is 1v1, and with one ally the
+ledger is algebraically the old sum. Artifacts: `module1_*_pre_reply_ledger.json` hold the
+pre-change numbers. Still approximate and documented in the method: movement folded into
+the origin ring, zone spells price one target, summon/support/timed-state replies are not
+modelled.
+
+Verification for the reply-ledger slice (2026-11-18): the two-ply suite ran 14/14 on the
+shipped interpreter three times in a row; standalone `agent.regression` recorded 2,515
+checks / 0 failed (`data/last_gate_run.json`); the full gate passed 84 of 86 suites (the
+two advisory upgrade inventories) in 800 s. One earlier full-gate run failed only the
+`agent.regression` step with no check named in its tail and passed 608 s standalone and on
+the rerun -- recorded as a flake, not silently repaired. The mutated disk state restored
+to the same hash, and `doc_facts --render/--check` passes.
+
+**Runtime gates measured (2026-11-18).** `tools/policy_over_record_boards.py` run three
+times concurrently on the shipped interpreter (3.11.9) over the 160 own turns in the 333
+recorded boards. With the solver unbound the same method measured decide p50 4.4-5.1 ms and
+**p95 10.6-11.4 ms against the 5 ms ceiling -- unmet**, with a deterministic 13 casts / 85
+walks / 41 passes mix; the earlier 8.1-8.7 ms figure was the same method on a less loaded
+box, so only same-session comparisons are used below.
+
+`BattleSolver.plan_turn`/`plan_candidates` now take a wall-clock deadline
+(`DOFUS_COMBAT_PLAN_BUDGET_MS`, **default 0 = off**), read per expansion, per walk-ring cell
+and per candidate through one `expired()` predicate. The first expansion and the turn's
+first candidate are never suppressed, so an expired budget returns the best validated
+candidate instead of a silent pass -- a strict version that could expire before any
+expansion turned 9-10 of the 160 loaded turns from casts into passes. Witnesses:
+`combat/test_two_ply_world_model.py::SearchDeadlineTests` (expired budget still returns the
+first candidate; mid-search expiry returns the best plan so far; a generous deadline equals
+the unbounded search) and `combat/test_live_policy.py::PlanBudgetTests` (default off, a
+positive value is a future deadline, 0/off/nonsense disable, `_solver_turn` hands the budget
+to the search). The mutations "bounded-search: the wall-clock deadline never fires" and
+"bounded-search: the shipped default silently turns the budget on" each fail exactly their
+witnesses on the shipped interpreter and restore byte-identical (sha256 checked).
+
+The price of turning it on, same corpus (repriced after the spell cache, below): a 1.5 ms
+budget gives decide p50 2.9-3.0 / p95 5.7-6.2 ms under the same three-instance load, but
+**36 casts / 62 walks -- 23 of the 160 decisions change**, because most turns' full search
+runs longer than the budget and the shallow plan wins the re-ranking; single-instance the
+same budget measures p50 2.8 / p95 5.5. Longer budgets stop buying anything and stop being
+reproducible: 3 ms yields 17-21 casts depending on load, 4 ms 14 and 10 ms ~13 (cold-start
+calls still exceed it). No setting reaches 5 ms under load, and no outcome data ranks the
+two mixes, so the
+default stays off until a bound can be paid for with evidence. The remaining p95 floor is
+the fixed per-decide work outside the solver: a single-instance profile puts board
+construction at ~1.4 ms, slot binding ~0.6 ms, plan-value rows ~0.5 ms and the actor call
+~0.6 ms per decide, against the solver's own unbound p50 ~2.8 ms -- bounding the search
+cannot move that floor, so the next lever is the fixed overhead. `tools/brain_ram_probe.py`
+reported final resident 44.2 MB, peak 166.9 MB, commit 292.4 MB over 800 streamed decides
+(4.935 ms each; interpreter 3.11.9) -- the 45 MB brain ceiling is met at 44.2 MB with
+0.8 MB of margin. Neither number is a release claim.
+
+**Decision-leverage ceiling (2026-11-18): proposals, not horizon, are the limit.** Two
+substrates. On the recorded corpus the question has no signal: 78 of the 160 own turns
+offer two or more action plans and every one of them is move-only (expected damage 0,
+projected HP unchanged), so the one-ply and two-ply values are exactly 0 there and the
+probe's "100% near-equivalent" means the instrument cannot separate the plans, not that
+they are equal. On the duel harness (`make_normal_duel`, 40 seeded games, the same
+`Board`/`plan_candidates`/`evaluate_two_ply` API the live chain uses) 244 decisions offer
+two or more action plans and 240 deal damage. The one-ply HP share and `evaluate_two_ply`
+pick the same top plan in 244/244, the top two are within 1e-3 in 244/244, and only
+**1/244 (0.4%)** of the candidate sets contain two *distinct* projected HP outcomes --
+183 of the 244 differ only in the final cell. Walking our plan, then the opponent's
+solver-best reply, then our best one-ply damage on the next turn changes the preferred
+plan in 5/244 (2.0%) and changes the next-turn damage at all in 8/244 (3.3%); every one
+of those sits among plans whose current turn is outcome-identical. So on this harness an
+extra ply buys at most ~2% of decisions, and the ceiling is set by proposal collapse (one
+distinct outcome per decision), which is Module 2's first item -- the same collapse the
+outcome gate already measured (the critic re-picking among equal-damage plans,
+`_hp_choice` asked 0 times in 2,817 decisions). Limits: the duel is 1v1 between two fixed
+builds and the corpus is move-dominated, so neither is a live-fight distribution, and no
+horizon increase is justified by this evidence. Artifacts: `module1_leverage_duel.py`,
+`module1_leverage_ceiling.py` and their diagnostics under `Documents/dofus-evidence`.
+
+**Target leverage on the recorded corpus (2026-11-18): a kill is the only target
+signal.** Across the 333 recorded boards (160 own turns, 102 multi-enemy), every
+multi-enemy board is a single-species pack with one resist line and level, and 922 of
+1,396 enemy rows publish no `max_hp`. Replaying the encoder and the target binding over
+those boards, the expected-damage spread across targets is exactly 0 (identical
+species); only kill availability separates targets, in 11 of 83 spell decisions on 7
+boards. The solver's top plan takes that kill on 4 of 7; the target head picks a killer
+on 2 of 11 and is spell-invariant (the same target for every damage spell on 28/28
+boards). An HP-swap ablation (each enemy's `hp` exchanged with another enemy's, `max_hp`
+held) leaves 64/83 picks identical, 12 follow HP, and flips kill status on 11 of 11 --
+the probe can see the signal it is looking for. Artifacts:
+`module2_target_leverage.py`, `module2_kill_pricing_ab.py` under `Documents/dofus-evidence`.
+
+**The missing max_hp collapsed the kill price; it is now learned (2026-11-18).**
+`KILL_BONUS` prices a kill at 0.35 x max_hp, and a board without `max_hp` caps it at 1,
+so on a level-5 pack a kill is worth 0.35 against a 49-70 hit on the leader: the top plan
+double-casts the 200-HP monster while an 8-HP one stands killable. Holding the solver
+fixed and varying only the board, an oracle arm that fills every published `max_hp`
+switches 4 of 139 own-turn boards to a finishing blow and loses none; the documented
+`max_hp := hp` imputation *loses* 4 kills. The fix is live-honest rather than oracle:
+`ThreatMemory.record_hp` keeps the largest `max_hp` ever published per name, the combat
+server's observer stores each payload's value in `threat_model.json`, and `BattleSolver`
+snapshots the table per decision and prices only the rows the payload leaves blank --
+with no table the pricing is exactly what it was. Replay effect: the raw arm now takes
+the kills the oracle arm took (0 of 139 boards differ between them), while the emitted
+action mix and latency are unchanged (13 casts / 85 moves / 41 passes / 21 none, p50 3.3
+/ p95 9.4 ms, shipped interpreter). Witnesses: `KillPricingTests` and the observer test;
+all four arms -- "a learned max_hp never prices the kill", "the board never teaches the
+table", "a learned max_hp is never stored" and "the observer drops the max_hp hop" --
+are caught in place with one failing check each and the tree restored 0/0. Caveat: the
+table keys by name only and keeps the maximum, so a higher-level instance of the same
+species can overprice a low-level kill; it cannot underprice one.
+
+**Sweep instrument defect found while proving the above (2026-11-18).** The mutation
+tool's zero-mutation shadow mode is unusable on this tree: an *unedited* shadow copy of
+`battle_solver.py` fails 9 unrelated checks (a `TypeError` in `test_worker_headroom_layer`,
+a `NameError` in `test_board_payload_round_trip`), so every arm in that mode reads CAUGHT
+no matter what it changed. The same arms in `--in-place` mode fail exactly the intended
+check. The tool now runs that no-edit control per target and refuses shadow mode when it
+fails, naming `--in-place` instead of printing verdicts.
+
+**Proposal coverage on the recorded corpus (2026-11-18).** `module2_proposal_coverage.py`
+replays all 333 recorded boards and, for each of the 160 own turns, separates *available*
+(a castable spell carries the category), *proposed* (some top-6 candidate fires it) and
+*chosen* (the top plan fires it). Before the change: 99 boards had candidate plans, 40
+proposed damage, 9 displacement/push, 72 walk -- and **zero setup plans**, although a
+castable glyph was available on 126 boards, a trap on 25 and a summon on 34. The cause was
+mechanical, not a tuning choice: `_templates` had a trap branch and a summon branch and no
+glyph branch, and `LiveSpell.is_glyph` was defined and used nowhere, so a glyph fell through
+to the per-target loop and was dropped by both legs (the enemy leg wants damage or denial,
+the ally leg wants a heal). Glyphs now place like traps and are priced by the same traffic
+table. After: glyph proposed on 24 boards and chosen on 13, setup bucket populated 0 -> 13,
+admitted-but-unproposed spells 87 -> 68, and no plan's actions violate AP order or
+dead-target legality on replay (331 plans, 324 distinct successors, 7 equivalent-collapse
+duplicates). The live chain changes by exactly one emitted action on the 160 own turns
+(13 -> 14 casts, 85 -> 84 moves, 41 passes, 21 none); the latency comparison was taken while
+another session was editing the tree and is not quoted as a cost. Unmodelled effects remain
+the protection gap: Barricade (effect ids 265/406/792/950), Reinforced Protection, Feca
+Shield and Feca Exaltation all parse as kind "other", so protection proposals stay at zero
+until shield effect ids are derived and verified from the client table rather than typed.
+Artifacts: `module2_proposal_coverage.py/.json`, `module2_glyph_replay_on.log` and
+`module2_glyph_replay_off.log` under `Documents/dofus-evidence`. Witnesses:
+`combat/test_battle_solver.py::GlyphProposalTests` (a glyph plan exists and is classified
+setup; the same spell with an unmodelled effect id produces no plan); the placement branch
+removed makes the first test fail with one assertion and the tree restored.
+
+**Fixed per-decide overhead: the spellbook parse is cached (2026-11-18).** A cProfile
+of `decide` over the 160 own turns (shipped interpreter) put 4,317 `_spell` calls at 21%
+of the profiled time; the corpus has only 45 distinct own spellbooks and 11 enemy ones
+across 16 fights, so almost all of that parse is repeated work. `Board._spell` now keys a
+512-entry cache on a 16-byte blake2b digest of the raw spell payload's repr and returns
+the frozen `LiveSpell`; the per-turn fields (`casts_this_turn`, `castable`,
+`castable_error`) are part of the key, so a spent cast cannot ride a hit. Same-process
+A/B over the same 160 payloads (cache vs. the uncached parse, arms alternating): boards
+identical (spell ids, rolls, turn fields, fighter HP/cell), action mix identical (85
+moves / 41 passes / 21 none / 13 casts per pass), board build 0.70-0.86 vs 0.86-1.17
+ms/board, whole decide p50 3.2 vs 3.7 ms and p95 7.0 vs 7.4 ms. That is an unloaded
+single-process comparison, not the 3-instance gate, and it does not meet 5 ms. Witnesses:
+`combat/test_battle_solver.py::SpellParseCacheTests` (identical content reuses the object;
+a changed `casts_this_turn` and a changed damage roll each parse a new spell). Mutation
+"spell cache: any payload hits the first parsed spell" is caught and the tree restored
+(sha256 `def8fcb1c5916e5de68ed7dcf5ffa12a581240edba582ee94d059273d2cf2b6a` before and
+after). The 512-entry cap keeps the cache around 1 MB; re-running
+`tools/brain_ram_probe.py` with it reports 44.2 MB resident (up 0.6 MB), 166.9 MB peak and
+292.4 MB commit over 800 decides, still under the 45 MB ceiling with 0.8 MB of margin.
+
+Repriced after the cache, same session and the same three concurrent instances: budget 0
+gives p50 3.2-3.7 / p95 8.2-9.4 ms with the deterministic 13 casts / 85 walks; budget 1.5
+gives p50 2.9-3.0 / p95 5.7-6.2 with 36 casts / 62 walks, identical in all three instances;
+budget 3 gives p50 3.7-3.9 / p95 6.6-7.3 with **17, 21 and 18 casts** -- a wall-clock bound
+makes the decision mix depend on machine load once it straddles the search duration, which
+the deterministic 1.5 arm did not show. No setting reaches 5 ms p95 under load; the default
+stays off.
+
+Verification for the bounded-search slice (2026-11-18): the full gate passed 84 of 86
+suites -- the two advisory upgrade inventories are the rest -- in 937.7 s with exit
+status 0, `combat/test_live_policy.py` and `combat/test_two_ply_world_model.py` green
+within it. The tree was unmodified for the run; the leverage probes ran only after it
+finished.
+
+Verification after the kill-pricing and glyph slices (2026-11-18): all combat suites pass
+through the gate (30 of 32, the two advisory inventories the rest, 141.7 s). A full gate
+was attempted but `agent.regression` reported 12 failures from a *concurrent*, in-flight
+edit to `agent/autopilot.py`, `agent/planner_utils.py` and the new `agent/scheduler.py`
+(an unterminated read mid-write, missing mutation anchors, brain-start checks), none of
+which touch combat, the solver or the docs; the kill-pricing and doc-number checks that
+this session did touch ran green in the same pass (2,507 checks). The earlier failure that
+was mine -- the mutation snippet naming `combat.test_kill_pricing` while `run()` never
+executed it, which the witness ratchet correctly reported as `not_run` -- is fixed by
+calling the test in `agent/regression.py run()`. Rerun the full gate once the concurrent
+edit settles; do not edit the tree during its runs.
+
+No component is promoted and no in-game intelligence gain is claimed. Module 1 remains in
+progress (full decide p95 against the fixed per-decide overhead, the remaining fidelity
+items above, live verification and the installer rebuild/audit); its decision-leverage
+item is now measured, and the measurement points at proposal expressiveness rather than
+more search. Module 2 now has its target-leverage and kill-pricing measurements, the
+rank-16 head's representability and leverage results, and a measured proposal-coverage
+audit with the glyph gap closed; its remaining items are the protection vocabulary
+(shield effect ids unverified), the bounded inter-turn tree (leverage measured at 3.1% of
+pair-decided states), the 8-actor unblinding and the party-reservation arm. Modules 3-5,
+complete quest gains, live verification and final release gates remain pending.
+
 **User direction (2026-10-27).** The pipeline is tools and harness; the intelligence must be
 learned. Max **30M total shared params / 10M active** (the earlier 70M and 400MB ceilings were
 withdrawn as unnecessary); it is **shared across instances**,
@@ -275,7 +736,7 @@ the request without starting anything.
   session; safety, legality and recovery remain harness checks forever.
 - **30M total / 10M active cap** and 12-instance latency measured before enabling a larger trunk.
 
-## Immediate next actions
+## Historical next actions (2026-10-27)
 
 1. **Command encoder — measured offline, not yet live.** `ai/train_command_encoder.py` freezes
    the 24.9M domain trunk (`models/encoder30_v15`) and trains **0.29M heads** (user-span

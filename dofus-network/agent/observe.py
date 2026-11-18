@@ -92,6 +92,12 @@ def map_id_of(obs: Optional[Dict[str, Any]]) -> Any:
     """
     if not isinstance(obs, dict):
         return None
+    # The live loop hands the planner a view that `_lift_position` has already
+    # flattened. Re-copying that document only to read one key was the single
+    # most repeated copy in the planner profile; a present top-level key is
+    # exactly what `flatten` would return for it.
+    if obs.get("map_id") is not None:
+        return obs["map_id"]
     return flatten(obs).get("map_id")
 
 
@@ -103,6 +109,13 @@ def flatten(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     if not isinstance(obs, dict):
         return {}
+
+    # Fast path: already flat — map_id and level at top level, and inventory is
+    # not in the snapshot (items-list) format. Nothing to lift, so just copy.
+    if obs.get("map_id") is not None and obs.get("level") is not None:
+        inventory = obs.get("inventory")
+        if not (isinstance(inventory, dict) and isinstance(inventory.get("items"), list)):
+            return dict(obs)
 
     out = dict(obs)
 

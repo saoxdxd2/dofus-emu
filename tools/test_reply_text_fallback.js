@@ -35,7 +35,7 @@ function block(marker) {
     return null;
 }
 
-const body = block('var _agentReplyPlan = function (args, resolved)');
+const body = block('const _agentReplyPlan = function (args, resolved)');
 check('the reply-plan helper is present', !!body);
 const plan = body ? vm.runInThisContext('(function(args, resolved)' + body + ')') : null;
 
@@ -97,7 +97,7 @@ check('a page with no replies is refused, not answered blind',
 
 // The handler must route through the helper and report the substitution.
 check('the handler resolves replies through the helper',
-      src.indexOf('var plan = _agentReplyPlan(args, resolved);') >= 0
+      src.indexOf('const plan = _agentReplyPlan(args, resolved);') >= 0
       && src.indexOf("'no dialog reply matches the given text');") < 0,
       'the inline refusal is still present');
 check('the reply result reports which text was substituted',

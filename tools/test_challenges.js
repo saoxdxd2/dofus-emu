@@ -27,8 +27,8 @@ function extract(signature) {
     return end < 0 ? null : src.slice(start, end + 1);
 }
 
-const challengeSrc = extract('var _challenges = function()');
-check('the challenge reader exists', !!challengeSrc, 'var _challenges not found');
+const challengeSrc = extract('const _challenges = function()');
+check('the challenge reader exists', !!challengeSrc, 'const _challenges not found');
 check('the reader merges the client panel',
     /challengeIndicator/.test(src) && /challengesData/.test(src),
     'names live on gui.challengeIndicator.challengesData');

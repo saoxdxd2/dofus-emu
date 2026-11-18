@@ -434,10 +434,36 @@ def _login_lockout(obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def _quest_data_pending(obs: Any) -> bool:
-    """Whether quest data is still pending."""
+    """In the world with no quest block at all -- a snapshot taken too early.
+
+    The tell is the bag: a character that has been in the world long enough to hold items
+    has quests too, so an empty `quests_active` next to a non-empty bag means the client
+    has not published them yet. A genuinely questless character with an empty bag falls
+    through to the old verdict, and the caller bounds the wait anyway.
+
+    Measured 2026-11-07: right after a guest login the observation carried `in_world: true`,
+    four bag items and `quests_active: {}` / `ready_objectives: []` / `tutorial.active: false`,
+    while quests 3841 and 4260 were active minutes earlier. The policy returned no call, the
+    controller called the goal unmappable, and a 14-step run ended after one step. Waiting is
+    the right answer, and it must be bounded so a genuinely questless character still ends.
+    """
     if not isinstance(obs, dict):
         return False
-    return obs.get("quest_data_pending", False)
+    if obs.get("quest_data_pending"):
+        # A publisher may say it outright; that is a wait, never a reason not to.
+        return True
+    if not obs.get("in_world"):
+        return False
+    if obs.get("quests_active") or obs.get("ready_objectives"):
+        return False
+    if obs.get("current_objective"):
+        return False
+    tutorial = obs.get("tutorial")
+    if isinstance(tutorial, dict) and tutorial.get("active"):
+        return False
+    inventory = obs.get("inventory")
+    items = inventory.get("items") if isinstance(inventory, dict) else None
+    return bool(items)
 
 
 def _changed_keys(before: Any, after: Any) -> bool:

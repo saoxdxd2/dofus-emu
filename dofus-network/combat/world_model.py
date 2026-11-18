@@ -319,9 +319,10 @@ class DofusWorldModel:
         return reward
 
     @staticmethod
+    @lru_cache(maxsize=256)
     def _tick_buffs(buffs: Tuple[BuffEffect, ...]
-                    ) -> Tuple[Tuple[BuffEffect, ...], Dict[str, int]]:
-        """Age every buff one turn; collect the stat reverts of the expired ones."""
+                    ) -> Tuple[Tuple[BuffEffect, ...], Tuple[Tuple[str, int], ...]]:
+        """Age immutable buffs and return immutable expiry deltas."""
         kept: List[BuffEffect] = []
         reverts: Dict[str, int] = {}
         for buff in buffs:
@@ -329,7 +330,7 @@ class DofusWorldModel:
                 kept.append(replace(buff, turns_left=buff.turns_left - 1))
             elif buff.attr:
                 reverts[buff.attr] = reverts.get(buff.attr, 0) + buff.magnitude
-        return tuple(kept), reverts
+        return tuple(kept), tuple(reverts.items())
 
     @staticmethod
     def _apply_buff(buffs: Tuple[BuffEffect, ...], name: str, duration: int,
@@ -365,7 +366,8 @@ class DofusWorldModel:
                               info={"reason": "cooldown"})
 
         changes: Dict[str, Any] = {"action_points": state.action_points - spell.ap_cost}
-        buffs, reverts = cls._tick_buffs(state.active_buffs)
+        buffs, expired = cls._tick_buffs(state.active_buffs)
+        reverts = dict(expired)
         if state.cooldowns:
             cooldowns = tuple(sorted(
                 (sid, left - 1) for sid, left in state.cooldowns if left > 1))

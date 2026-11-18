@@ -38,10 +38,10 @@ function between(startAnchor, endAnchor, includeEnd) {
     return src.slice(s, includeEnd ? e + endAnchor.length : e);
 }
 
-const KEYS_START = 'var sampleFightKeys = function (storeName, bag) {';
+const KEYS_START = 'const sampleFightKeys = function (storeName, bag) {';
 const KEYS_END = "state.fighter_keys = sampleFightKeys('__agentFightObjectKeys', fighter);";
-const FILL_START = 'for (var fi = 0; fi < state.fighters.length; fi++) {';
-const FILL_END = 'var spellList = {};';
+const FILL_START = 'for (let fi = 0; fi < state.fighters.length; fi++) {';
+const FILL_END = 'let spellList = {};';
 
 const keysBlock = between(KEYS_START, KEYS_END, true);
 const fillBlock = between(FILL_START, FILL_END, false);
@@ -254,7 +254,7 @@ if (bundle === null) {
 }
 
 // --- the "do not ask for a board that can only be refused" guard ---
-const GUARD_START = 'var liveEnemy = false;';
+const GUARD_START = 'let liveEnemy = false;';
 const GUARD_END = 'if (!liveEnemy) return false;';
 const guardBlock = between(GUARD_START, GUARD_END, true);
 check('the no-live-enemy guard is present in _askBrain', !!guardBlock, GUARD_START + ' not found');
@@ -283,7 +283,7 @@ if (guardBlock) {
 // `last_actions` was [] on all 333 recorded boards while `battle_log` held up to 52 rows
 // from the same fight, because this block read `fm.fightMessagesStack` directly and the
 // client clears that stack. The block must prefer the tap ring, like `_battleLog` does.
-const ACTIONS_START = 'var lastActions = [];';
+const ACTIONS_START = 'const lastActions = [];';
 const ACTIONS_END = 'state.last_actions = lastActions;';
 const actionsBlock = between(ACTIONS_START, ACTIONS_END, true);
 check('the last_actions assembly is present in fight.state', !!actionsBlock,
@@ -291,7 +291,7 @@ check('the last_actions assembly is present in fight.state', !!actionsBlock,
 if (actionsBlock) {
     const runActions = (win, fm) => new Function(
         'window', 'fm', 'text', 'num', '_agentHarvestStack',
-        'var state = {};\n' + actionsBlock + '\nreturn state.last_actions;')(
+        'const state = {};\n' + actionsBlock + '\nreturn state.last_actions;')(
             win, fm, (v) => (v == null ? '' : String(v)), num, () => 0);
 
     // The shape the tap produces: `spell`/`source`/`target`, not `spell_id`/`source_id`.
@@ -340,8 +340,8 @@ if (actionsBlock) {
 // threw" the same observation. The recorded corpus cannot show the difference either
 // way -- `castable` is absent from all 1,341 spell rows across the 333 boards, because
 // the field postdates them -- so the distinction has to be pinned by running the block.
-const SPELL_START = 'var prop = function(spell, name, fallback) {';
-const SPELL_END = 'var lastActions = [];';
+const SPELL_START = 'const prop = function(spell, name, fallback) {';
+const SPELL_END = 'const lastActions = [];';
 const spellBlock = between(SPELL_START, SPELL_END, false);
 check('the spell-facts block is present in fight.state', !!spellBlock,
     SPELL_START + ' .. ' + SPELL_END + ' not found');

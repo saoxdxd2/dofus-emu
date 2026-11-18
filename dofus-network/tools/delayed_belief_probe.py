@@ -271,7 +271,7 @@ def run_probe(*, episodes: int = 256, horizon: int = 32, capacity: int = 8,
         "bounded_storage": maximum_buffer <= capacity,
         "delays_and_duplicates_exercised": delayed_count > 0 and status_counts.get("duplicate", 0) > 0,
         "lower_nll_than_arrival_order": ci[1] < 0,
-        "existing_attribution_failure_reproduced": controls["delayed_credited"] == ["B"],
+        "unidentified_effect_credit_abstains": controls["delayed_credited"] == [],
     }
     return {
         "scope": "synthetic finite-state filtering; not gameplay or causal attribution",

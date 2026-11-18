@@ -28,12 +28,12 @@ function extract(signature) {
     return end < 0 ? null : src.slice(start, end + 1);
 }
 
-const rowSrc = extract('var _agentBattleRow = function(msg, type)');
-const logSrc = extract('var _battleLog = function(limit)');
-const harvestSrc = extract('var _agentHarvestStack = function()');
-check('the row builder exists', !!rowSrc, 'var _agentBattleRow not found');
-check('the reader exists', !!logSrc, 'var _battleLog not found');
-check('the stack harvester exists', !!harvestSrc, 'var _agentHarvestStack not found');
+const rowSrc = extract('const _agentBattleRow = function(msg, type)');
+const logSrc = extract('const _battleLog = function(limit)');
+const harvestSrc = extract('const _agentHarvestStack = function()');
+check('the row builder exists', !!rowSrc, 'const _agentBattleRow not found');
+check('the reader exists', !!logSrc, 'const _battleLog not found');
+check('the stack harvester exists', !!harvestSrc, 'const _agentHarvestStack not found');
 if (!rowSrc || !logSrc || !harvestSrc) { console.log('FAILURES: ' + (fail || 1)); process.exit(1); }
 
 // static: the tap is in the incoming-message wrapper and only for fight names

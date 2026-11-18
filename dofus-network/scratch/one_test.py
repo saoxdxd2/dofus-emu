@@ -28,10 +28,10 @@ def main(argv):
         if not callable(fn):
             print("no such test: %s" % name)
             return 2
-        R._CHECKS = 0
+        R._common._CHECKS = 0
         del R._FAILURES[:]
         fn()
-        print("\n%s: %d checks, %d failed" % (name, R._CHECKS, len(R._FAILURES)))
+        print("\n%s: %d checks, %d failed" % (name, R._common._CHECKS, len(R._FAILURES)))
         if R._FAILURES:
             rc = 1
             print("FAILURES:\n  " + "\n  ".join(R._FAILURES))

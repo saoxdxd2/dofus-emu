@@ -129,6 +129,8 @@ ENCODED_TOP = frozenset({
 
 IGNORED_TOP: Dict[str, str] = {
     "agent_build": "provenance of the recorder, not world state",
+    "source_snapshot": "producer epoch and observation sequence, not a policy feature",
+    "action_evidence": "bounded source-ordered callbacks, not a policy feature",
     "auto_fight": "a policy setting, not an observation",
     "current_objective": "duplicates ready_objectives",
     "farm_session": "session bookkeeping",
@@ -136,6 +138,7 @@ IGNORED_TOP: Dict[str, str] = {
     "connected": "transport state; a stale True is worse than no feature",
     "in_world": "implied by position.map_id being present",
     "knowledge": "the model's own memory, not the world",
+    "evidence_memory": "revisable action evidence; surfaced separately from fixed model features",
     "last_disconnect": "historical event, not current state",
     "last_nav": "historical event, not current state",
     "last_talk": "directive-scoped completion evidence, not a policy feature",
@@ -217,12 +220,20 @@ IGNORED_ENTITY = {
 
 
 def _num(value: Any, default: float = 0.0) -> float:
+    # Exact types first: the encoder reads mostly ints and floats, and the
+    # subclass checks below are the expensive part of a call this hot.
+    kind = type(value)
+    if kind is int:
+        return float(value)
+    if kind is float:
+        return default if math.isnan(value) else value
+    if kind is bool:
+        return 1.0 if value else 0.0
     if isinstance(value, bool):
         return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
-        if isinstance(value, float) and math.isnan(value):
-            return default
-        return float(value)
+        number = float(value)
+        return default if math.isnan(number) else number
     # Quest ids arrive as strings (`{"3841": 0}`), and a string read as 0 made
     # every quest_id feature identically zero — a silent hole in the block.
     if isinstance(value, str):
@@ -264,6 +275,12 @@ def _size(value: Any) -> int:
     return 0
 
 
+_WALK_BITS: Tuple[Tuple[bool, bool, bool, bool], ...] = tuple(
+    tuple(bool(nibble & (1 << bit)) for bit in range(4))
+    for nibble in range(16)
+)
+
+
 def walkable_cells(terrain: Optional[str]) -> List[bool]:
     """Expand the packed terrain into one bool per cell.
 
@@ -274,13 +291,13 @@ def walkable_cells(terrain: Optional[str]) -> List[bool]:
     if not isinstance(terrain, str) or not terrain:
         return []
     out: List[bool] = []
+    extend = out.extend
     for char in terrain:
         try:
             nibble = int(char, 16)
         except ValueError:
             return []
-        for bit in range(4):
-            out.append(bool(nibble & (1 << bit)))
+        extend(_WALK_BITS[nibble])
     return out
 
 
@@ -392,14 +409,27 @@ def _catalog_counts(catalog: Any) -> Dict[str, int]:
     the counts are encoded. A consumer that needs the graph should read it once
     per session from `to_dict()["quests"]["catalog"]`.
     """
-    quests = _dicts(catalog)
+    if not isinstance(catalog, list):
+        return {"quests": 0, "steps": 0, "objectives": 0}
+    quests = 0
     steps = 0
     objectives = 0
-    for quest in quests:
-        for step in _dicts(quest.get("steps")):
+    for quest in catalog:
+        if not isinstance(quest, dict):
+            continue
+        quests += 1
+        quest_steps = quest.get("steps")
+        if not isinstance(quest_steps, list):
+            continue
+        for step in quest_steps:
+            if not isinstance(step, dict):
+                continue
             steps += 1
-            objectives += len(_dicts(step.get("objectives")))
-    return {"quests": len(quests), "steps": steps, "objectives": objectives}
+            step_objectives = step.get("objectives")
+            if isinstance(step_objectives, list):
+                objectives += sum(1 for row in step_objectives
+                                  if isinstance(row, dict))
+    return {"quests": quests, "steps": steps, "objectives": objectives}
 
 
 def from_observation(obs: Any) -> WorldState:
@@ -609,6 +639,7 @@ def encode(state: WorldState) -> Dict[str, Any]:
     challenges = state.challenges
     won = sum(1 for row in challenges if row.get("success"))
     walk = walkable_cells(state.terrain)
+    walk_count = sum(walk)
     here_walkable = 0.0
     if walk and state.cell is not None:
         index = int(state.cell)
@@ -648,7 +679,7 @@ def encode(state: WorldState) -> Dict[str, Any]:
         (won / len(challenges)) if challenges else 0.0,
         min(1.0, state.prices / 100.0),
         min(1.0, len(state.step_objectives) / 10.0),
-        (sum(1 for cell in walk if cell) / len(walk)) if walk else 0.0,
+        (walk_count / len(walk)) if walk else 0.0,
         here_walkable,
     ]
 

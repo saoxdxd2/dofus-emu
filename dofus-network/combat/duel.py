@@ -293,13 +293,15 @@ def apply_plan(state: DuelState, plan: TurnPlan) -> DuelState:
     """Apply the plan's HP/cell/AP/MP results and mark a winner."""
     actor = state.actor
     opponent = state.opponent
-    for ident, hp in plan.final_hp.items():
-        target = state.by_id(int(ident))
-        target.hp = max(0.0, min(target.max_hp, float(hp)))
-        target.alive = target.hp > 0.0
-    actor.cell = int(plan.final_cell)
-    actor.ap = max(0.0, float(plan.remaining_ap))
-    actor.mp = max(0.0, float(plan.remaining_mp))
+    successor = board_for(state, actor).after_plan(plan)
+    for fighter in successor.fighters:
+        target = state.by_id(fighter.id)
+        if fighter.id in plan.final_hp:
+            target.hp = float(fighter.hp)
+            target.alive = fighter.alive
+        target.cell = fighter.cell
+    actor.ap = max(0.0, float(successor.my_ap))
+    actor.mp = max(0.0, float(successor.my_mp))
     if not actor.alive and not opponent.alive:
         state.done, state.winner = True, None
     elif not opponent.alive:

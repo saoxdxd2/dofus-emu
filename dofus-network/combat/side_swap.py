@@ -101,8 +101,11 @@ def make_hp_policy() -> Policy:
     candidate plans, so the comparison isolates the reply term and nothing
     else (same solver, same beam, same boards, same seeds).
     """
+    stats = {"decisions": 0, "changed_vs_solver": 0}
+
     def policy(state: DuelState, actor: Any, plans: Sequence[Any],
                rng: random.Random, model: Any = None) -> Any:
+        stats["decisions"] += 1
         if len(plans) < 2:
             return plans[0]
 
@@ -117,7 +120,11 @@ def make_hp_policy() -> Policy:
                     theirs += share
             return mine - theirs
 
-        return max(plans, key=margin)
+        picked = max(plans, key=margin)
+        if picked is not plans[0]:
+            stats["changed_vs_solver"] += 1
+        return picked
+    policy.stats = stats  # type: ignore[attr-defined]
     return policy
 
 
@@ -129,9 +136,11 @@ def make_hp2_policy(solver: BattleSolver) -> Policy:
     and a ranker that wins games but blows the budget is not a promotion.
     """
     timing = {"seconds": 0.0, "calls": 0}
+    stats = {"decisions": 0, "changed_vs_solver": 0}
 
     def policy(state: DuelState, actor: Any, plans: Sequence[Any],
                rng: random.Random, model: Any = None) -> Any:
+        stats["decisions"] += 1
         if len(plans) < 2:
             return plans[0]
         started = time.perf_counter()
@@ -139,10 +148,95 @@ def make_hp2_policy(solver: BattleSolver) -> Policy:
                                          top_k=6)
         timing["seconds"] += time.perf_counter() - started
         timing["calls"] += 1
-        return ranked[0][0] if ranked else plans[0]
+        picked = ranked[0][0] if ranked else plans[0]
+        if picked is not plans[0]:
+            stats["changed_vs_solver"] += 1
+        return picked
 
     policy.timing = timing  # type: ignore[attr-defined]
+    policy.stats = stats  # type: ignore[attr-defined]
     return policy
+
+
+def make_live_policy(checkpoint: Optional[Path] = None, beam_width: int = 8,
+                     max_actions: int = 4) -> Policy:
+    """The shipped `LivePolicy.decide` chain on the duel's own board.
+
+    `Board.to_fight_state()` was written for this seam: the duel hands `decide()` the
+    payload the page would send instead of a hand-rolled selector. The chain still
+    answers with one action while a duel turn is a whole plan, so the action is matched
+    to the candidate plan whose first action it is; an action no candidate expresses
+    falls back to the solver's plan and is counted. The branch census comes from the
+    chain's own `reason` field, so a run where `_value_choice` never fires is visible
+    rather than assumed.
+    """
+    from combat.live_policy import LivePolicy
+
+    live = LivePolicy(checkpoint=checkpoint, beam_width=beam_width,
+                      max_actions=max_actions)
+    stats = {"decisions": 0, "cast": 0, "move": 0, "pass": 0, "unmatched": 0,
+             "changed_vs_solver": 0, "errors": 0, "seconds": 0.0, "reasons": {}}
+
+    def policy(state: DuelState, actor: Any, plans: Sequence[Any],
+               rng: random.Random, model: Any = None) -> Any:
+        started = time.perf_counter()
+        try:
+            decision = live.decide(board_for(state, actor).to_fight_state())
+        except Exception:  # noqa: BLE001 - an arm that crashes is still a datum
+            stats["errors"] += 1
+            stats["seconds"] += time.perf_counter() - started
+            return plans[0]
+        stats["seconds"] += time.perf_counter() - started
+        stats["decisions"] += 1
+        reason = str(decision.get("reason"))
+        stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
+        action = decision.get("action") or {}
+        kind = action.get("type")
+        stats[kind if kind in ("cast", "move", "pass") else "pass"] += 1
+        picked = _plan_for_action(plans, action)
+        if picked is None:
+            stats["unmatched"] += 1
+            picked = plans[0]
+        elif picked is not plans[0]:
+            stats["changed_vs_solver"] += 1
+        return picked
+
+    policy.stats = stats  # type: ignore[attr-defined]
+    policy.live = live  # type: ignore[attr-defined]
+    return policy
+
+
+def _plan_for_action(plans: Sequence[Any], action: Dict[str, Any]) -> Optional[Any]:
+    """The candidate whose first action is the live chain's answer, or None."""
+    kind = action.get("type")
+    spell_id = action.get("spellId")
+    target_id = action.get("targetId")
+    cell = action.get("cell")
+    walk_first = None
+    for plan in plans:
+        if not plan.actions:
+            continue
+        first = plan.actions[0]
+        if kind == "cast" and first.kind == "cast":
+            if spell_id is not None and int(first.spell_id) != int(spell_id):
+                continue
+            if target_id is not None and first.target_id is not None \
+                    and int(first.target_id) == int(target_id):
+                return plan
+            if cell is not None and first.target_cell is not None \
+                    and int(first.target_cell) == int(cell):
+                return plan
+        elif kind == "move" and cell is not None:
+            # `_emit` walks first only when the plan's cast starts elsewhere, and it
+            # emits the pre-cast cell -- not the plan's final cell.
+            if first.kind == "cast" and int(first.from_cell) == int(cell) \
+                    and walk_first is None:
+                walk_first = plan
+            elif first.kind == "move" and int(plan.final_cell) == int(cell):
+                return plan
+        elif kind == "pass" and first.kind == "pass":
+            return plan
+    return walk_first
 
 
 def resolve(spec: str, solver: BattleSolver) -> Policy:
@@ -157,13 +251,20 @@ def resolve(spec: str, solver: BattleSolver) -> Policy:
         return make_hp_policy()
     if spec == "hp2":
         return make_hp2_policy(solver)
+    if spec == "live" or spec.startswith("live:"):
+        checkpoint = Path(spec.split(":", 1)[1]) if ":" in spec else None
+        return make_live_policy(checkpoint)
+    if spec == "live-wide":
+        # Diagnostic only: the shipped chain's selectors on the harness's own
+        # candidate width, so a difference against `hp2` cannot be the beam.
+        return make_live_policy(None, beam_width=16, max_actions=5)
     if spec.startswith("value:"):
         model = _load_model(spec)
         return lambda state, actor, plans, rng, _m=None: value_policy(
             state, actor, plans, rng, model)
     if spec.startswith("residual:"):
         return make_residual_policy(_load_model(spec))
-    raise SystemExit("unknown policy %r: use solver, random, two-ply, hp, hp2, "
+    raise SystemExit("unknown policy %r: use solver, random, two-ply, hp, hp2, live, "
                      "value:<path> or residual:<path>" % spec)
 
 
@@ -323,7 +424,20 @@ def play_side_swapped(spec_a: str, spec_b: str, games: int = 20, seed: int = 0,
                            "damage_b": round(damage_b, 2)})
     score = score_games(played)
     latency: Dict[str, Any] = {}
+    arm_stats: Dict[str, Any] = {}
     for label, policy in (("a", policy_a), ("b", policy_b)):
+        stats = getattr(policy, "stats", None)
+        if stats:
+            arm_stats[label] = dict(stats)
+            if stats.get("seconds") is not None:
+                arm_stats[label]["mean_ms"] = round(
+                    1000.0 * stats["seconds"] / max(1, stats["decisions"]), 3)
+            live = getattr(policy, "live", None)
+            if live is not None:
+                # Which selectors the chain actually reached, so "the HP ranker" is a
+                # measurement rather than an assumption about the default path.
+                arm_stats[label]["hp_choice"] = live.hp_choice_stats
+                arm_stats[label]["value_choice"] = live.value_choice_stats
         timing = getattr(policy, "timing", None)
         if timing and timing["calls"]:
             latency[label] = {
@@ -333,7 +447,7 @@ def play_side_swapped(spec_a: str, spec_b: str, games: int = 20, seed: int = 0,
     return {"a": spec_a, "b": spec_b, "mirror": mirror_key, "seed": seed,
             "rounds": rounds, "score": score,
             "efficiency": efficiency(played), "value_head_spread": heads,
-            "decide_latency": latency, "games": played}
+            "decide_latency": latency, "arm_stats": arm_stats, "games": played}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -394,6 +508,15 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         for label, entry in report.get("decide_latency", {}).items():
             logger.debug("  decide latency %s: %.3f ms mean over %d calls"
                   % (label, entry["mean_ms"], entry["calls"]))
+        for label, entry in report.get("arm_stats", {}).items():
+            logger.debug("  arm %s: %d decisions, %.3f ms mean, cast %d move %d pass %d, "
+                  "unmatched %d, changed vs solver %d, reasons %s"
+                  % (label, entry["decisions"], entry["mean_ms"], entry["cast"],
+                     entry["move"], entry["pass"], entry["unmatched"],
+                     entry["changed_vs_solver"], entry["reasons"]))
+            if "hp_choice" in entry:
+                logger.debug("    selectors %s: hp %s, value %s"
+                      % (label, entry["hp_choice"], entry["value_choice"]))
         for label, spread in report["value_head_spread"].items():
             if spread is None:
                 logger.debug("  value head %s: could not be evaluated; the arm is the "

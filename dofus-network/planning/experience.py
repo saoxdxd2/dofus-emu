@@ -459,6 +459,7 @@ class ExperienceStore:
         self.snapshot_path = Path(snapshot_path)
         self.autosave_every = autosave_every
         self.params: Dict[str, Posterior] = {}
+        self.outcome_credit: Dict[str, Dict[str, Any]] = {}
         self.pending: List[Event] = []
         self.events_seen = 0
         # None = accept every source (used by the closed-loop demo, which runs on
@@ -480,6 +481,12 @@ class ExperienceStore:
                 if factory is not None:
                     self.params[key] = factory.from_dict(blob)
             self.events_seen = int(payload.get("events_seen") or 0)
+            credits = payload.get("outcome_credit") or {}
+            if isinstance(credits, dict):
+                self.outcome_credit = {
+                    k: v for k, v in list(credits.items())[-256:]
+                    if isinstance(v, dict) and v.get("key") in self.params
+                    and v.get("value") in (None, 0.0, 1.0) and type(v.get("revision")) is int}
 
     def save(self) -> None:
         self.flush_log()
@@ -487,6 +494,7 @@ class ExperienceStore:
         self.snapshot_path.write_text(json.dumps({
             "events_seen": self.events_seen,
             "params": {key: value.to_dict() for key, value in self.params.items()},
+            "outcome_credit": self.outcome_credit,
         }, indent=1), encoding="utf-8")
 
     def flush_log(self) -> None:
@@ -501,6 +509,7 @@ class ExperienceStore:
     def replay(self) -> int:
         """Rebuild every posterior from the event log. Returns events replayed."""
         self.params.clear()
+        self.outcome_credit.clear()
         self.events_seen = 0
         if not self.log_path.exists():
             return 0
@@ -559,8 +568,52 @@ class ExperienceStore:
             # and the loss was silent because the event counter still advanced.
             prior = dict(event.meta.get("prior") or {})
             posterior = self._ensure(event.key, event.kind, **prior)
-        posterior.update(event.value, event.weight, event.ts)
+        if "outcome_id" in event.meta:
+            self._replace_outcome(event, posterior)
+        else:
+            posterior.update(event.value, event.weight, event.ts)
         self.events_seen += 1
+
+    def _replace_outcome(self, event: Event, posterior: Posterior) -> bool:
+        if posterior.kind != "beta" or posterior.half_life != 0:
+            raise ValueError("revisable outcomes require a non-decaying Beta posterior")
+        outcome_id, revision = event.meta["outcome_id"], event.meta["revision"]
+        previous = self.outcome_credit.get(outcome_id)
+        if previous is not None:
+            if previous["key"] != event.key:
+                raise ValueError("an outcome cannot change its posterior")
+            if revision <= previous["revision"]:
+                return False
+            value = previous["value"]
+            if value is not None:
+                posterior.alpha -= value
+                posterior.beta -= 1.0 - value
+                posterior.n -= 1.0
+        value = event.value if event.meta.get("active") else None
+        if value is not None:
+            posterior.update(value, 1.0, event.ts)
+        self.outcome_credit[outcome_id] = {"key": event.key, "revision": revision, "value": value}
+        while len(self.outcome_credit) > 256:
+            del self.outcome_credit[next(iter(self.outcome_credit))]
+        return True
+
+    def record_outcome(self, key: str, outcome_id: str, value: Optional[float],
+                       revision: int, source: str = "live") -> Posterior:
+        if value not in (None, 0.0, 1.0) or type(revision) is not int or revision < 1:
+            raise ValueError("invalid outcome revision")
+        event = Event(kind="beta", key=key, value=0.0 if value is None else value,
+                      weight=0.0 if value is None else 1.0, source=source, ts=round(time.time(), 3),
+                      meta={"outcome_id": outcome_id, "revision": revision, "active": value is not None})
+        posterior = self._ensure(key, "beta")
+        if not self._accepts(event):
+            self.rejected_events += 1
+            return posterior
+        if self._replace_outcome(event, posterior):
+            self.pending.append(event)
+            self.events_seen += 1
+            if len(self.pending) >= self.autosave_every:
+                self.save()
+        return posterior
 
     def record(self, event: Event, **prior: Any) -> Posterior:
         """Update a parameter from one real observation, creating it if needed.

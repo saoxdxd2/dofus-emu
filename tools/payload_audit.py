@@ -129,6 +129,8 @@ def scan_secrets(blob: bytes, base: int, rows) -> dict:
 # data/map_los/* (combat/map_field.py), models/board_pca_v1.json (combat/board_pca.py), and
 # models/encounter_selfplay.pkl -- each has a real runtime reader.
 DEV_TIER = (
+    "/combat/test_two_ply_world_model.py",
+    "/agent/test_evidence.py",
     "/tools/delayed_belief_probe.py",
     "/tools/test_delayed_belief_probe.py",
     "/out/delayed_belief_",

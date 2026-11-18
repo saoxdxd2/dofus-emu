@@ -11,8 +11,8 @@ const path = require('path');
 
 const scriptPath = path.join(__dirname, '..', 'scripts', 'mobile-disguise.js');
 const src = fs.readFileSync(scriptPath, 'utf8').replace(/\r\n/g, '\n');
-const start = src.indexOf('var _listNpcActors');
-const end = src.indexOf('var _agentTutorial', start);
+const start = src.indexOf('const _listNpcActors');
+const end = src.indexOf('const _agentTutorial', start);
 if (start < 0 || end < 0) {
     console.error('cannot extract the NPC helpers from ' + scriptPath);
     process.exit(2);

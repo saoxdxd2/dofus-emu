@@ -34,8 +34,8 @@ function block(marker) {
     return null;
 }
 
-const resultFn = block('var _agentResult = function');
-const numFn = block('var _agentNum = function');
+const resultFn = block('const _agentResult = function');
+const numFn = block('const _agentNum = function');
 const handler = block("'inv.equip': function(args) {");
 check('the handler and its helpers are present', !!resultFn && !!numFn && !!handler);
 

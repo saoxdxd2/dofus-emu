@@ -25,7 +25,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disgui
 const bundleFile = path.resolve(__dirname, '..', 'desktop', 'client', 'www', 'build', 'script.js');
 const bundle = fs.existsSync(bundleFile) ? fs.readFileSync(bundleFile, 'utf8') : null;
 
-const START = 'var bag = inv;';
+const START = 'let bag = inv;';
 const start = src.indexOf(START);
 check('the equip read is present in the snapshot builder', start >= 0, START);
 const tail = src.indexOf('snap.inventory.in_fight_inventory', start);

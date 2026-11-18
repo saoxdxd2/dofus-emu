@@ -19,6 +19,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import socket
 import sys
 import urllib.request
@@ -49,13 +50,11 @@ def page_build(path: Path = PAGE) -> Optional[str]:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    marker = "var AGENT_BUILD = '"
-    at = text.find(marker)
-    if at < 0:
-        return None
-    rest = text[at + len(marker):]
-    end = rest.find("'")
-    return rest[:end] if end > 0 else None
+    # The page's declarations moved from `var` to `const`; a reader pinned to `var`
+    # reported no build at all and the owed-session audit then read every doc line
+    # as pointing at a build the tree does not ship.
+    match = re.search(r"(?:var|let|const)\s+AGENT_BUILD\s*=\s*'([^']*)'", text)
+    return match.group(1) if match else None
 
 
 def _tail_lines(path: Path, max_bytes: int = 400_000) -> List[str]:

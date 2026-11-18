@@ -21,7 +21,7 @@ function check(name, ok, detail) {
 }
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
-const HEAD_START = 'var _listMonsterGroups = function () {';
+const HEAD_START = 'const _listMonsterGroups = function () {';
 const HEAD_END = 'scan.matched += 1;';
 const start = src.indexOf(HEAD_START);
 const end = src.indexOf(HEAD_END, start);
@@ -76,8 +76,8 @@ check('the matching actors are the groups, so a non-empty list has a matching co
 // The full lister, not just the census head: a group row used to reference an
 // undefined `si`, so the first real group threw and the observation returned
 // `groups: []` on the exact tutorial map where the planner needed it.
-const fullStart = src.indexOf('var _groupMembers = function (a) {');
-const fullEnd = src.indexOf('var _agentTutorial = function', fullStart);
+const fullStart = src.indexOf('const _groupMembers = function (a) {');
+const fullEnd = src.indexOf('const _agentTutorial = function', fullStart);
 check('the full group lister can be extracted', fullStart >= 0 && fullEnd > fullStart);
 if (fullStart >= 0 && fullEnd > fullStart) {
     const fullBody = src.slice(fullStart, fullEnd)
@@ -133,13 +133,13 @@ check('the group count and the census stay separate facts',
 //
 // Anchor note: scripts/mobile-disguise.js is CRLF, so every needle in this file is single-line --
 // a two-line needle cannot match the bytes that were just read.
-const HELPERS_START = 'var _groupMembers = function (a) {';
-const HELPERS_END = 'var _listMonsterGroups';
+const HELPERS_START = 'const _groupMembers = function (a) {';
+const HELPERS_END = 'const _listMonsterGroups';
 const hStart = src.indexOf(HELPERS_START);
 const hEnd = src.indexOf(HELPERS_END, hStart);
 check('the shared membership helper exists', hStart >= 0, HELPERS_START);
 check('the shared group search exists',
-    src.indexOf('var _findMonsterGroup = function (wanted) {') >= 0, '_findMonsterGroup is gone');
+    src.indexOf('const _findMonsterGroup = function (wanted) {') >= 0, '_findMonsterGroup is gone');
 if (hStart >= 0 && hEnd > hStart) {
     const helpersSrc = src.slice(hStart, hEnd);
     const load = (win) => new Function('window', helpersSrc
@@ -233,12 +233,12 @@ if (hStart >= 0 && hEnd > hStart) {
     check('a leaderless group is not skipped', r.group !== null, 'a group with only minions lost');
 
     check('the map listing uses the shared membership read',
-        src.indexOf('var rawMembers = _groupMembers(a);') >= 0, 'the lister enumerated its own way');
+        src.indexOf('const rawMembers = _groupMembers(a);') >= 0, 'the lister enumerated its own way');
     check('the join handler uses the shared search',
-        src.indexOf('var found = _findMonsterGroup(wantMonster);') >= 0,
+        src.indexOf('const found = _findMonsterGroup(wantMonster);') >= 0,
         'fight.join still walks the actors itself');
     check('farm.start uses the shared search',
-        src.indexOf('var hunt = _findMonsterGroup(wanted);') >= 0,
+        src.indexOf('const hunt = _findMonsterGroup(wanted);') >= 0,
         'farm.start still walks the actors itself');
     check('no reader is left matching monsters alone',
         src.indexOf('gsi.monsters') < 0, 'a second membership read reappeared');

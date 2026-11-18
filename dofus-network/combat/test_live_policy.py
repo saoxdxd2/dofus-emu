@@ -10,8 +10,11 @@ cast, and padding must be identifiable without looking at the id.
 
 from __future__ import annotations
 
+import os
+import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from combat.battle_solver import NB_CELLS, Board, _POINTS
 from combat.encounter.env import Config
@@ -110,6 +113,47 @@ class SolverOwnsTheWalkTests(unittest.TestCase):
         board = Board.from_fight_state(board_payload())
         action, _fallback, _reason = self.solver_only()._solver_turn(board)
         self.assertEqual(action["type"], "cast", action)
+
+
+class PlanBudgetTests(unittest.TestCase):
+    """The search bound ships off: at its fast setting it changes 23 of 160 decisions."""
+
+    def test_the_default_is_off(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DOFUS_COMBAT_PLAN_BUDGET_MS", None)
+            self.assertIsNone(LivePolicy._plan_deadline())
+
+    def test_a_positive_budget_is_a_future_deadline(self):
+        with mock.patch.dict(os.environ,
+                             {"DOFUS_COMBAT_PLAN_BUDGET_MS": "1.5"}):
+            started = time.perf_counter()
+            deadline = LivePolicy._plan_deadline()
+        self.assertIsNotNone(deadline)
+        self.assertGreaterEqual(deadline, started)
+        self.assertLess(deadline, started + 0.5)
+
+    def test_zero_off_and_nonsense_disable_the_budget(self):
+        for raw in ("0", "0.0", "-3", "off", "nonsense"):
+            with mock.patch.dict(os.environ,
+                                 {"DOFUS_COMBAT_PLAN_BUDGET_MS": raw}):
+                self.assertIsNone(LivePolicy._plan_deadline(), raw)
+
+    def test_solver_turn_hands_the_budget_to_the_search(self):
+        seen = []
+        policy = policy_stub()
+        policy.solver = SimpleNamespace(
+            plan_candidates=lambda *a, **kw: seen.append((a, kw)) or [])
+        policy.plan_k = 8
+        board = Board.from_fight_state(board_payload())
+        started = time.perf_counter()
+        with mock.patch.dict(os.environ,
+                             {"DOFUS_COMBAT_PLAN_BUDGET_MS": "7"}):
+            self.assertIsNone(policy._solver_turn(board))
+        self.assertEqual(len(seen), 1)
+        deadline = seen[0][1].get("deadline")
+        self.assertIsNotNone(deadline)
+        self.assertGreaterEqual(deadline, started + 0.007)
+        self.assertLess(deadline, time.perf_counter() + 0.007)
 
 
 class SlotBindingTests(unittest.TestCase):

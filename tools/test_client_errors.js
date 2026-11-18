@@ -16,7 +16,7 @@ function check(name, ok, detail) {
 }
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
-const marker = 'var _agentMakeErrorHook = function (store)';
+const marker = 'const _agentMakeErrorHook = function (store)';
 const start = src.indexOf(marker);
 check('the page declares the error hook', start > 0);
 if (start < 0) { console.log('FAILURES: ' + fail); process.exit(1); }

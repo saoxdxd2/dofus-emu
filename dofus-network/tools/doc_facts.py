@@ -258,7 +258,21 @@ def snippet_tests() -> Optional[int]:
                         value = ast.literal_eval(node.value)
                     except ValueError:
                         return None
-                    return value.count("r.test_") if isinstance(value, str) else None
+                    if not isinstance(value, str):
+                        return None
+                    for loop in ast.walk(ast.parse(value)):
+                        if not isinstance(loop, ast.For) or not isinstance(loop.iter, (ast.Tuple, ast.List)):
+                            continue
+                        for statement in loop.body:
+                            call = statement.value if isinstance(statement, ast.Expr) else None
+                            if (isinstance(call, ast.Call)
+                                    and isinstance(call.func, ast.Attribute)
+                                    and call.func.attr == "_run_test"
+                                    and isinstance(loop.target, ast.Name)
+                                    and len(call.args) == 1
+                                    and isinstance(call.args[0], ast.Name)
+                                    and call.args[0].id == loop.target.id):
+                                return len(loop.iter.elts)
     return None
 
 
@@ -460,7 +474,7 @@ FACTS: Dict[str, Tuple[object, str, Tuple[str, ...]]] = {
         "a negative literal both renders and re-parses badly, so the direction is prose",
         (r"cost", r"paired delta")),
     "mutations": (mutation_count, "len(tools/mutate_cause_gate.py MUTATIONS)", (r"mutations?",)),
-    "snippet_tests": (snippet_tests, "r.test_ references in tools/mutate_cause_gate.py SNIPPET", (r"snippet", r"gate tests")),
+    "snippet_tests": (snippet_tests, "dispatched test entries in tools/mutate_cause_gate.py SNIPPET", (r"snippet", r"gate tests")),
     "py_lines": (lambda: brain_python()[1], "dofus-network/**/*.py minus caches, models, artifacts and the kaggle mirror", (r"Python",)),
     "py_files": (lambda: brain_python()[0], "same scope as py_lines", (r"Python",)),
     "cs_lines": (lambda: _code((".cs",), (REPO / "desktop", REPO / "builder"))[1], "desktop/**/*.cs + builder/**/*.cs minus bin/obj", (r"C#",)),

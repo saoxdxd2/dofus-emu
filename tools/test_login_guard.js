@@ -30,8 +30,8 @@ check('only one initial login press is allowed at a time',
     /_singleFlight\[name\] && now - _lastLoginPress < 20000/.test(src),
     'the host seeder and an auto-started AI can press inside one round trip');
 
-const start = src.indexOf("var _LOGIN_BUSY_STORE");
-const stop = src.indexOf('var _guardTimer');
+const start = src.indexOf("const _LOGIN_BUSY_STORE");
+const stop = src.indexOf('const _guardTimer');
 check('the guard block was located', start > 0 && stop > start, start + ':' + stop);
 if (start < 0 || stop <= start) { console.log('FAILURES: ' + (fail || 1)); process.exit(1); }
 const block = src.slice(start, stop);

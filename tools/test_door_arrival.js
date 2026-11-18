@@ -19,7 +19,7 @@ function check(name, ok, detail) {
 }
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
-const start = src.indexOf("var _DOOR_STORE = 'dofusFarm.doorCells';");
+const start = src.indexOf("const _DOOR_STORE = 'dofusFarm.doorCells';");
 // The page moved to one shared periodic ticker (2026-11-13): the old one-line
 // `setInterval(_agentDoorTick, 400)` became a registration with a fallback. The
 // extracted chunk has to end after that whole try/catch, whichever form ships,

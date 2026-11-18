@@ -99,6 +99,8 @@ def load_transitions(data: Path, split: str) -> Dict[str, np.ndarray]:
             # A read is not an action, and an action with no vector is not an example.
             if row.get("was_read") or not row.get("has_pair") or not row.get("x"):
                 continue
+            if row.get("source_identified") and not row.get("credit_eligible"):
+                continue
             if row.get("tool") not in TOOL_SLOT:
                 continue
             if len(row["x"]) != FEATURE_COUNT:

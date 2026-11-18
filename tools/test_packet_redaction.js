@@ -20,13 +20,13 @@ function check(name, ok, detail) {
 const pagePath = path.join(__dirname, '..', 'scripts', 'mobile-disguise.js');
 const page = fs.readFileSync(pagePath, 'utf8');
 
-const regexAt = page.indexOf('var _agentSecretPacketArg =');
+const regexAt = page.indexOf('const _agentSecretPacketArg =');
 const regexEnd = page.indexOf(';', regexAt);
 const regexSrc = regexAt >= 0 && regexEnd > regexAt
     ? page.slice(regexAt, regexEnd + 1) : null;
 check('the page declares the secret argument list', !!regexSrc, 'not found');
 
-const fnAt = page.indexOf('var _agentPacketArgs = function (a) {');
+const fnAt = page.indexOf('const _agentPacketArgs = function (a) {');
 let fnSrc = null;
 if (fnAt >= 0) {
     let depth = 0;
@@ -80,7 +80,7 @@ if (typeof packetArgs === 'function') {
 check('the outgoing ring stores only the filtered arguments',
       /args:\s*_agentPacketArgs\(arguments\[1\]\)/.test(page),
       'the wrapper does not use the filter');
-const wrapperAt = page.indexOf('var origSend = cm.sendMessage;');
+const wrapperAt = page.indexOf('const origSend = cm.sendMessage;');
 check('the filter is applied before the row is pushed',
       wrapperAt >= 0 && page.indexOf('_agentPacketArgs(arguments[1])', wrapperAt) > wrapperAt);
 

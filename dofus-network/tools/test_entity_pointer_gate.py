@@ -14,10 +14,18 @@ def manifest(actions=2000, progress=50):
             "tools": {name: 10 for name in tool_names()}}
 
 
-def step(instance="client", tool="quest.advance", ts=1.0, source="live"):
+def step(instance="client", tool="quest.advance", ts=1.0, source="live", done=0):
+    """One live step.
+
+    `done` is the quest counter the step's *observation* carries. The directive's
+    own snapshot is taken before the client applies the move (measured
+    2026-10-29 over 2,139 nav.goto calls: the snapshot showed the move 5 times,
+    the next observation 449), so the labeller reads the following observation as
+    the after-state and the snapshot only as a fallback.
+    """
     return {"kind": "step", "source": source, "instance": instance, "ts": ts,
             "tool": tool, "args": {}, "goal": "quests", "ok": True,
-            "observation": {"in_world": True, "objectives_completed": 0},
+            "observation": {"in_world": True, "objectives_completed": done},
             "result": {"snapshot": {"in_world": True, "objectives_completed": 1}}}
 
 
@@ -70,7 +78,12 @@ class PointerCoverageTests(unittest.TestCase):
         self.assertEqual(builder.coverage_gate(data)["undercovered_tools"], {"hdv.buy": 0})
 
     def test_build_counts_reads_separately_from_action_progress(self):
-        path = self.log("rows.jsonl", [step(), step(tool="state.snapshot", ts=2)])
+        # The action's effect is revealed in the read's *observation* -- the
+        # labeller's after-state. The read row itself never carries action
+        # progress: a read cannot move the world, and an unidentified late
+        # effect is not assigned to the preceding action either
+        # (`agent/regression_suites/quest.py` pins both rules).
+        path = self.log("rows.jsonl", [step(), step(tool="state.snapshot", ts=2, done=1)])
         rows, data = builder.build([path], 120)
         self.assertEqual(len(rows), 2)
         self.assertEqual(data["read_rows"], 1)

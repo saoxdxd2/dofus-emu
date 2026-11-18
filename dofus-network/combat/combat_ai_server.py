@@ -325,9 +325,28 @@ class _ThreatObserver:
         self._logs: "OrderedDict[Tuple[str, str], List[Any]]" = OrderedDict()
         self._lock = threading.Lock()
 
+    def _learn_hp(self, payload: Dict[str, Any]) -> None:
+        """Keep every max_hp a payload publishes, keyed by monster name.
+
+        Most enemy rows omit it (922 of 1,396 recorded rows) and the solver
+        prices a kill as `0.35 * max_hp`; without a learned value a standing
+        kill is scored at 0.35 and loses to a bigger hit on another monster.
+        """
+        with self._lock:
+            changed = False
+            for fighter in payload.get("fighters") or []:
+                if not isinstance(fighter, dict):
+                    continue
+                if self.memory.record_hp(str(fighter.get("name") or ""),
+                                         fighter.get("max_hp")):
+                    changed = True
+            if changed:
+                self.memory.save(self.path)
+
     def observe(self, payload: Dict[str, Any]) -> int:
         if not isinstance(payload, dict):
             return 0
+        self._learn_hp(payload)
         log = payload.get("battle_log")
         if not isinstance(log, list):
             log = payload.get("last_actions")
@@ -335,6 +354,14 @@ class _ThreatObserver:
             return 0
         key = _fight_key(payload)
         with self._lock:
+            names: Dict[int, str] = {}
+            for fighter in payload.get("fighters") or []:
+                if not isinstance(fighter, dict):
+                    continue
+                try:
+                    names[int(fighter.get("id"))] = str(fighter.get("name") or "")
+                except (TypeError, ValueError):
+                    continue
             seen = self._logs.pop(key, [])
             fresh = _new_messages(seen, log)
             # Re-insert at the end: the dict is ordered by use, so eviction below
@@ -344,14 +371,6 @@ class _ThreatObserver:
                 self._logs.popitem(last=False)
             if not fresh:
                 return 0
-            names: Dict[int, str] = {}
-            for fighter in payload.get("fighters") or []:
-                if not isinstance(fighter, dict):
-                    continue
-                try:
-                    names[int(fighter.get("id"))] = str(fighter.get("name") or "")
-                except (TypeError, ValueError):
-                    continue
             learned = self.memory.observe(fresh, payload.get("my_id"), names)
             if learned:
                 self.learned += learned

@@ -613,7 +613,7 @@ class QuestPlanner:
             if oid is None:
                 return self._explore_call(obj, obs, avoid=avoid, spent=spent)
             key = (obj.get("quest_id"), oid)
-        here = flatten(obs).get("map_id") if isinstance(obs, dict) else None
+        here = map_id_of(obs) if isinstance(obs, dict) else None
         if here is None:
             return self._explore_call(obj, obs, avoid=avoid, spent=spent)
         here_i = int(here)
@@ -3546,9 +3546,17 @@ class QuestPlanner:
         self.last_no_call = ""
 
         # One normalisation for the nested snapshot, so `map_id`, `level` and the
-        # inventory-by-id lookup are present instead of None. Without it the planner
-        # could not tell which map it was on and never saw the items it already had.
-        obs = flatten(observation)
+        # inventory-by-id lookup are present instead of None. When the observation
+        # already carries the flat keys (the live loop lifts them on the way in),
+        # reuse it directly: skipping the copy also lets identity-keyed caches
+        # (scene_key, quest_key, client_quest_ids) hit on a carried snapshot
+        # instead of missing on a fresh flatten() copy.
+        if isinstance(observation, dict) \
+                and observation.get("map_id") is not None \
+                and observation.get("level") is not None:
+            obs = observation
+        else:
+            obs = flatten(observation)
         here = map_id_of(obs)
         previous = (self._last_obs or {}).get("map_id")
         if here is not None and previous is not None and here != previous:

@@ -217,6 +217,8 @@ class PointerRows(Dataset):
 
     @staticmethod
     def _item(row: Dict[str, Any], goal: str) -> Optional[Dict[str, Any]]:
+        if row.get("source_identified") and not row.get("credit_eligible"):
+            return None
         candidates = _candidates(row)
         if len(candidates) < 2:
             return None

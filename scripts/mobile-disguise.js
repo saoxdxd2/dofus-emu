@@ -33,7 +33,32 @@
     // client's own adjacency form refuses, and the `door_step_off` marker. Unverified on
     // a live client -- the injected script is replaced only by a full app restart, so a
     // session reporting 2026-11-10a is still running the previous page.
-    const AGENT_BUILD = '2026-11-17a';
+    const AGENT_BUILD = '2026-11-17b';
+    window.__agentObservationEpoch = Array.from(
+        window.crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join('-');
+    window.__agentEvidenceSequence = 0;
+    let _agentSnapshotSequence = 0;
+    const _agentInstallEvidence = function () {
+        window.__agentEvidenceLog = [];
+        ['__agentLastNav', '__agentLastTalk', '__agentLastFight'].forEach(function (name) {
+            let current = null;
+            Object.defineProperty(window, name, {
+                configurable: true,
+                get: function () { return current; },
+                set: function (value) {
+                    if (!value || typeof value !== 'object') { current = value; return; }
+                    current = Object.assign({}, value, {
+                        source_epoch: window.__agentObservationEpoch,
+                        source_sequence: ++window.__agentEvidenceSequence
+                    });
+                    const event = Object.assign({ channel: name }, current);
+                    window.__agentEvidenceLog.push(event);
+                    if (window.__agentEvidenceLog.length > 64) window.__agentEvidenceLog.shift();
+                }
+            });
+        });
+    };
+    _agentInstallEvidence();
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -4362,7 +4387,11 @@
             return { alive: alive, life: life, max: max, state: state };
         };
         const _agentSnapshot = function() {
-            const snap = { connected: false, in_fight: false };
+            const snap = { connected: false, in_fight: false,
+                source_snapshot: { epoch: window.__agentObservationEpoch,
+                    sequence: ++_agentSnapshotSequence, at: Date.now(),
+                    evidence_sequence: window.__agentEvidenceSequence },
+                action_evidence: (window.__agentEvidenceLog || []).slice() };
             try {
                 // The fields this used to read do not exist in this client build.
                 // `playerData.character` is not an object with id/name/level (the
@@ -9273,8 +9302,8 @@
                             // transition itself uses the direction and the cell.
                             iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);
                             outcome.via = 'isoEngine.gotoNeighbourMap';
-                            window.__agentLastNav.stage = 'walk_then_change';
-                            window.__agentLastNav.via = outcome.via;
+                            window.__agentLastNav = Object.assign({}, window.__agentLastNav,
+                                { stage: 'walk_then_change', via: outcome.via });
                             return _agentResult(true, outcome);
                         }
                         if (typeof iso._movePlayerOnMap !== 'function'

@@ -37,13 +37,13 @@ function functionBody(marker) {
 }
 
 function constant(name) {
-    const m = page.match(new RegExp('var ' + name + ' = [^;]+;'));
+    const m = page.match(new RegExp('(?:var|let|const) ' + name + ' = [^;]+;'));
     return m ? m[0] : null;
 }
 
 const store = constant('_KICK_STORE');
 const ttl = constant('_KICK_TTL_MS');
-const knownFn = functionBody('var _knownKickSignatures = function() {');
+const knownFn = functionBody('const _knownKickSignatures = function() {');
 const clearFn = functionBody('window.__agentClearKick = function(questId, objectiveId) {');
 check('the page declares the kick store and its TTL', !!store && !!ttl, String(store));
 check('the page declares the known-signature reader', !!knownFn);

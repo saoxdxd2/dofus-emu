@@ -85,9 +85,9 @@ def _builder_host_sources(build_cs: Path) -> List[str]:
         return []
     names: List[str] = []
     for match in re.finditer(
-            r'Path\\.Combine\\(\\s*desktopDir\\s*,((?:\\s*\"[^\"]+\"\\s*,?)+)\\s*\\)',
+            r'Path\.Combine\(\s*desktopDir\s*,((?:\s*"[^"]+"\s*,?)+)\s*\)',
             text[start:end]):
-        parts = re.findall(r'\"([^\"]+)\"', match.group(1))
+        parts = re.findall(r'"([^"]+)"', match.group(1))
         name = "/".join(parts)
         if name not in names:
             names.append(name)

@@ -5028,7 +5028,7 @@ is a silent refusal, which is what the corpus recorded as "no effect".
 so the next decision waits up to `settle_s = 3.0` - the successful request-to-ack took 2.2 s. No
 claim is involved anywhere in the working path; the claims in the corpus were refused.
 
-**What remains** is not discovery but a live run on page build `2026-11-11a`: fresh guest, tutorial,
+**What remains** is not discovery but a live run on page build `2026-11-17b`: fresh guest, tutorial,
 4260/4262, and the loop should tap 513208 from an adjacent cell and settle. If it does not, G64 now
 records the client's own words and G68 records the element's type and skills, which is what the last
 attempt lacked.
@@ -5440,7 +5440,7 @@ version passed `9` as the only walkable cell, which is not a neighbour of `5` on
 refactor onto the same helper is covered by the existing `test_nav_doorless_exit.js` and
 `test_door_arrival.js`, both green.
 
-Not yet measured live: a `2026-11-11a` session that crosses at cell 535 or 21 either
+Not yet measured live: a `2026-11-17b` session that crosses at cell 535 or 21 either
 moves within the first settle or this entry is wrong.
 
 ## G82. A close that worked was reported as a failure *(measured 2026-10-30)*
@@ -5472,7 +5472,7 @@ with `closed:false`; a throwing path alone is not a send). Two mutations
 (`close-sent: ...`), both caught: reporting a sent close as a failure again, and counting
 a throwing path as sent.
 
-Not yet measured live: a `2026-11-11a` session should show zero "still open" rows whose
+Not yet measured live: a `2026-11-17b` session should show zero "still open" rows whose
 attempts all read `:ok`, and the reply that follows a close should find the dialog gone.
 
 ## G83. The blind explore walked straight back the way it came *(measured 2026-10-30)*
@@ -5513,7 +5513,7 @@ the previous map -- so the tool prints the return count and the changed count se
 The counting rule is pinned by four checks in `test_explore_returns_replay`, including the
 dead end the fix must keep.
 
-Not yet measured live: a `2026-11-11a` session on 145490946 should leave toward a fresh
+Not yet measured live: a `2026-11-17b` session on 145490946 should leave toward a fresh
 map instead of back to 145490434, and the 46-return shape should not reappear.
 
 ## G84. The report counted deliveries and called every page call a success *(measured 2026-10-30)*
@@ -5551,7 +5551,7 @@ caught. While adding them, the `session-play: an advancing pair is counted as de
 anchor was found stale -- it still matched the pre-refactor text and had been silently
 skipped -- and was repaired before use.
 
-Not yet measured live: on a `2026-11-11a` session the report should print a non-zero
+Not yet measured live: on a `2026-11-17b` session the report should print a non-zero
 `failed` whenever the client refuses calls, and the play census should name the pair.
 The six "the right exit leads to 145490945, not 145490946" refusals were checked against
 the current router rather than assumed: replaying the recorded observation through
@@ -5590,7 +5590,7 @@ Pinned by 12 checks in `tools/test_reply_text_fallback.js` (the helper runs from
 page source; two checks pin the handler's use of it and the reported substitution) and
 four `reply-fallback:` mutations, all caught. Page build is now `2026-10-31a`.
 
-Not yet measured live: on a `2026-11-11a` session the 37 single-reply refusals should
+Not yet measured live: on a `2026-11-17b` session the 37 single-reply refusals should
 become answers whose `text_fallback.asked_text` names the text the plan sent. Separate
 and still open: **118 no-npc replies** (73 with a dialog open in the observation, 45 with
 it already closed) -- a reply issued outside a dialog has no NPC to reopen; that is a
@@ -5632,7 +5632,7 @@ Pinned by three checks in `test_combined_objectives` (the budget ends the walk, 
 does not, a group clears the memory) and three `gate-dry:` mutations, all caught; the
 section is now in the mutation driver's `SNIPPET` (it was outside it).
 
-Not yet measured live: on a `2026-11-11a` session the 145490946 shape should show at most
+Not yet measured live: on a `2026-11-17b` session the 145490946 shape should show at most
 `RETURN_LIMIT` visits between group sightings, and the 56 return trips should not
 reappear. The explore half of the bounce (leaving 946 toward the map just left) is G83's
 fix, already in the same build.
@@ -5666,7 +5666,7 @@ standing on the map is not a return, a different trip is planned and clears the 
 the walk is allowed again after it) and four `objective-travel:` mutations, all caught;
 the section is in the mutation driver's `SNIPPET`.
 
-Not yet measured live: on a `2026-11-11a` session, the 434 -> 946 return rows should not
+Not yet measured live: on a `2026-11-17b` session, the 434 -> 946 return rows should not
 exceed `RETURN_LIMIT` per objective per streak, and the 46-row shape should not reappear.
 
 ## G88. The explore search had no memory of the maps it had walked *(measured 2026-10-31)*
@@ -5704,7 +5704,7 @@ objective-derived key, an id-less objective staying stateless) and five `fresh-s
 mutations, all caught (483 total). One mutation anchor was updated: the hint guard line
 had been split, and a stale anchor skips silently.
 
-Not yet measured live: on a `2026-11-11a` session, an explore phase that revisits a map
+Not yet measured live: on a `2026-11-17b` session, an explore phase that revisits a map
 should show at most one fresh-destination search per objective before either the group
 appears or the search leaves the ring.
 
@@ -6665,7 +6665,7 @@ exposed to the bridge.
 **Why it matters.** Every live test of a page fix needs a client window restarted, which needs
 the host UI — so an agent working headlessly can write and unit-test a page fix but cannot
 claim it works live. The build stamp is the only signal that separates "the fix did not work"
-from "the fix is not running", which is why it is now `2026-11-11a` and the running clients
+from "the fix is not running", which is why it is now `2026-11-17b` and the running clients
 still report `2026-11-10a`.
 
 **Not fixed.** Exposing a script-push directive on the bridge would close it (the host method
@@ -6954,7 +6954,7 @@ nothing was reading the place where it was written down.
 
 **Not fixed, deliberately:** the ring is a page change, and a page change cannot be verified live in
 the session that makes it (G110); the stamp bump would also invalidate the ~20 "what is owed is a
-`2026-11-11a` session" lines that are the project's honest ledger. The two edits are named here so
+`2026-11-17b` session" lines that are the project's honest ledger. The two edits are named here so
 they land with the next page build: filter the emitter names out of `incoming`, and have the
 `GameMapNoMovementMessage` handler record `keys` alongside `at` so the next session reads the real
 field names off the row instead of guessing them again.

@@ -241,6 +241,7 @@ class Controller:
         self._last_obs: Optional[Dict[str, Any]] = None
         self._last_obs_at = 0.0
         self._strategies: Dict[str, StrategyStat] = {}
+        self._outcome_credit: Dict[str, Dict[str, Any]] = {}
         self._history: List[Dict[str, Any]] = []
         # Controller state changes on every step, but a disk write per step is
         # pure overhead: a live step is seconds apart and the file is a recovery
@@ -278,6 +279,7 @@ class Controller:
             self.state_dir.mkdir(parents=True, exist_ok=True)
             payload = self.stats()
             payload["strategies_raw"] = {k: asdict(v) for k, v in self._strategies.items()}
+            payload["outcome_credit"] = self._outcome_credit
             payload["state_key"] = self.state_key
             path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
             self._last_save = now
@@ -293,6 +295,12 @@ class Controller:
             for key, raw in (data.get("strategies_raw") or {}).items():
                 self._strategies[key] = StrategyStat(attempts=raw.get("attempts", 0),
                                                      successes=raw.get("successes", 0))
+            credits = data.get("outcome_credit") or {}
+            if isinstance(credits, dict):
+                self._outcome_credit = {
+                    k: v for k, v in list(credits.items())[-64:]
+                    if isinstance(v, dict) and v.get("strategy") in self._strategies
+                    and v.get("verdict") in (None, "advanced", "failed")}
             self.replans = int(data.get("replans", 0) or 0)
         except (OSError, ValueError) as exc:
             logger.warning("[controller] state load failed: %s", exc)
@@ -632,7 +640,8 @@ class Controller:
 
     # -- memory -----------------------------------------------------------
 
-    def observe_outcome(self, decision: Decision, next_verdict: Any) -> None:
+    def observe_outcome(self, decision: Decision, next_verdict: Any,
+                        outcome_id: Optional[str] = None) -> None:
         """Credit or blame the previous decision, once its result is known.
 
         This is what makes the table worth keeping: without it the controller
@@ -640,9 +649,37 @@ class Controller:
         """
         key = "%s:%s" % (decision.cause, decision.strategy or decision.action)
         stat = self._strategies.setdefault(key, StrategyStat())
+        if outcome_id is not None:
+            previous = self._outcome_credit.get(outcome_id)
+            if previous is not None and previous["strategy"] != key:
+                raise ValueError("an outcome cannot credit two repair decisions")
+            self._outcome_credit.setdefault(outcome_id, {"strategy": key, "verdict": None})
+            self.revise_outcome(outcome_id, next_verdict)
+            while len(self._outcome_credit) > 64:
+                del self._outcome_credit[next(iter(self._outcome_credit))]
+            return
         stat.attempts += 1
         if getattr(next_verdict, "verdict", next_verdict) == "advanced":
             stat.successes += 1
+
+    def revise_outcome(self, outcome_id: str, next_verdict: Any) -> bool:
+        credit = self._outcome_credit.get(outcome_id)
+        if credit is None:
+            return False
+        verdict = getattr(next_verdict, "verdict", next_verdict)
+        verdict = verdict if verdict in ("advanced", "failed") else None
+        previous = credit["verdict"]
+        if verdict == previous:
+            return False
+        stat = self._strategies[credit["strategy"]]
+        if previous is not None:
+            stat.attempts -= 1
+            stat.successes -= int(previous == "advanced")
+        if verdict is not None:
+            stat.attempts += 1
+            stat.successes += int(verdict == "advanced")
+        credit["verdict"] = verdict
+        return True
 
     def _best_strategy(self, cause: str) -> Tuple[str, float]:
         best, score = "recover", 0.0

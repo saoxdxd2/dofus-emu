@@ -15,7 +15,7 @@ function check(name, ok, detail) {
 }
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
-const marker = 'var _agentTutorial = function ()';
+const marker = 'const _agentTutorial = function ()';
 const start = src.indexOf(marker);
 check('the page declares _agentTutorial', start > 0);
 if (start < 0) { console.log('FAILURES: ' + fail); process.exit(1); }

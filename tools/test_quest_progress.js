@@ -26,8 +26,8 @@ function check(name, ok, detail) {
 }
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disguise.js'), 'utf8');
-const H_START = 'var _questProgress = function (q) {';
-const H_END = 'var qs = { active: {},';
+const H_START = 'const _questProgress = function (q) {';
+const H_END = 'const qs = { active: {},';
 const start = src.indexOf(H_START);
 const afterHelper = src.indexOf(H_END, start);
 check('the progress helper is still where the snapshot block expects it',
@@ -86,7 +86,7 @@ check('the quest block still ends where the counter is emitted', blockEnd > bloc
 const block = src.slice(blockStart, blockEnd + BLOCK_END.length);
 
 check('the block takes the step position from the helper',
-    block.indexOf('var prog = _questProgress(q);') >= 0);
+    block.indexOf('const prog = _questProgress(q);') >= 0);
 check('the per-quest value the planner indexes with is that position',
     block.indexOf('qs.active[qid] = prog.index;') >= 0);
 check('the session counter is the sum of real positions',

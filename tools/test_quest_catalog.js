@@ -21,8 +21,8 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disgui
 const bundlePath = path.join(__dirname, '..', 'desktop', 'client', 'www', 'build', 'script.js');
 const bundle = fs.existsSync(bundlePath) ? fs.readFileSync(bundlePath, 'utf8') : null;
 
-const START = 'var _objParams = function (raw) {';
-const END = 'var qs = { active: {}, steps: {}, current: null, ready: [],';
+const START = 'const _objParams = function (raw) {';
+const END = 'const qs = { active: {}, steps: {}, current: null, ready: [],';
 const start = src.indexOf(START);
 const end = src.indexOf(END, start);
 check('the objective helpers and the catalogue builder are one block',

@@ -277,7 +277,7 @@ def build(paths: Iterable[Path], gap_s: float,
                     continue
                 if not isinstance(row, dict) or row.get("source") != "live":
                     continue
-                if row.get("kind") != "step" or not row.get("tool"):
+                if row.get("kind") not in ("step", "action_evidence") or not row.get("tool"):
                     continue
                 fingerprint = hashlib.sha256(json.dumps(
                     row, sort_keys=True, separators=(",", ":")).encode("utf-8")).digest()
@@ -327,6 +327,8 @@ def build(paths: Iterable[Path], gap_s: float,
                 "was_read": label["was_read"],
                 "moved": label["moved"],
                 "progress": label["progress"],
+                "source_identified": label.get("source_identified", False),
+                "credit_eligible": label.get("credit_eligible", False),
                 "changed": label["changed"],
                 "chosen": _chosen(label["tool"], label["args"]),
                 "entities": entities,

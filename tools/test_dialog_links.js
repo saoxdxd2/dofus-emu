@@ -40,8 +40,8 @@ const bundlePath = path.join(__dirname, '..', 'desktop', 'client', 'www', 'build
 const bundle = fs.existsSync(bundlePath)
     ? fs.readFileSync(bundlePath, 'utf8') : null;
 
-const START = 'var _agentDialogLinkPayloads = function (raw) {';
-const END = 'var _agentDialogState = function () {';
+const START = 'const _agentDialogLinkPayloads = function (raw) {';
+const END = 'const _agentDialogState = function () {';
 const start = page.indexOf(START);
 const end = page.indexOf(END, start);
 check('the link helpers are still in one block before the dialog state',
