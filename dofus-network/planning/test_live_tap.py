@@ -186,6 +186,60 @@ class DecisionBoundaryTests(TapFixture):
         self.assertIsNotNone(obj)
         self.assertEqual(obj["tool"], "farm.start")
 
+    def test_blueprint_carries_the_macro_target_and_strategy(self):
+        self.tap.submit_goal(1001, 3, level=60)
+        blue = self.tap.blueprint()
+        self.assertEqual(blue["tool"], "farm.start")
+        self.assertEqual(blue["item_id"], 1001)
+        self.assertEqual(blue["strategy_id"], "buy",
+                         "the root kind is the macro strategy, not the first leaf")
+        self.assertIsNone(self.blueprint_without_plan())
+
+    def blueprint_without_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "DofusFarm"
+            store = ExperienceStore(log_path=root / "experience.jsonl",
+                                    snapshot_path=root / "posteriors.json")
+            tap = attach(store, root=root, env={})
+            return tap.blueprint()
+
+    def test_arm_goal_submits_only_verified_prose_and_only_once(self):
+        # "Do all the quests" is not a falsifiable item goal: it must be
+        # rejected rather than turned into an invented quest id.
+        self.assertIsNone(self.tap.arm_goal("do all the quests", {}))
+        self.assertIsNone(self.tap.objective())
+        prose = "Apporter 1 Huile de sésame pour l acces otomai"
+        obs = {"guide_id": "acces_otomai"}
+        self.assertIsNotNone(self.tap.arm_goal(prose, obs))
+        self.assertIsNotNone(self.tap.objective())
+        self.assertEqual(self.tap.stats()["armed_goal"], prose)
+        # A resend of the same goal must not fork a second plan.
+        self.assertIsNone(self.tap.arm_goal(prose, obs))
+        self.assertEqual(self.tap.stats()["compiler"]["submitted"], 1)
+
+    def test_a_planned_call_is_recognised_and_an_off_plan_call_is_not(self):
+        self.tap.submit_goal(1001, 3, level=60)
+        leaf = self.tap.objective()
+        self.assertTrue(self.tap.matches_active(leaf["tool"], dict(leaf["args"])))
+        self.assertFalse(self.tap.matches_active("fight.join", {"monster_id": 1}))
+        # A farm.start with different identity args is not the planned step.
+        self.assertFalse(self.tap.matches_active(
+            "farm.start", {"monster": "Black Tiwabbit", "kill_count": 99}))
+
+    def test_a_planned_step_consumes_the_pointer_and_an_off_plan_step_does_not(self):
+        self.tap.submit_goal(1001, 3, level=60)
+        leaf = self.tap.objective()
+        self.tap.observe(call("fight.join", monster_id=1),
+                         result("fight.join", {"monster_id": 1, "kills": 2}))
+        self.assertEqual(self.tap.plan_steps, 0)
+        self.assertGreaterEqual(self.tap.off_plan_steps, 1)
+        self.assertEqual(self.tap.objective(), leaf,
+                         "an off-plan call must not advance the schedule")
+        self.tap.observe(call(leaf["tool"], **leaf["args"]),
+                         result(leaf["tool"], {"ok": True}))
+        self.assertEqual(self.tap.plan_steps, 1,
+                         "the planned call is consumed through tick/report")
+
     def test_submit_then_record_then_restore_keeps_the_schedule_state(self):
         # Two measured bugs (2026-11-13): the economy's save used to overwrite the
         # schedule's restore file, and `PlayerState.as_dict` used to emit a key the
@@ -200,6 +254,47 @@ class DecisionBoundaryTests(TapFixture):
         fresh = attach(self.store, root=self.root, env={})
         self.assertIsNotNone(fresh.manager.restore())
         self.assertIsNotNone(fresh.objective())
+
+
+class MacroCreditIsolationTests(TapFixture):
+    """HiMAC: micro execution failures may not constrain a macro route."""
+
+    def _fail(self, **kwargs):
+        from planning.outcome import Outcome
+        from planning.trace import Trace
+
+        base = dict(action="farm", tool="farm.start", args={},
+                    entity={"monster_id": 68, "monster_level": 10},
+                    outcome=Outcome(signal="unverified", achieved=False,
+                                    reason="backend refused"),
+                    source="live")
+        base.update(kwargs)
+        return Trace(**base)
+
+    def test_travel_misses_do_not_block_a_route(self):
+        for _ in range(4):
+            self.tap.manager.graph.update_from_trace(
+                self._fail(action="goto", tool="nav.goto", entity={"map_id": 5}))
+        self.assertEqual(self.tap.manager.graph.constraints(), [])
+
+    def test_off_target_failures_do_not_block_a_route(self):
+        for _ in range(4):
+            self.tap.manager.graph.update_from_trace(self._fail(on_target=False))
+        self.assertEqual(self.tap.manager.graph.constraints(), [])
+
+    def test_on_target_failures_still_block_a_route(self):
+        # BLOCK_MIN_ATTEMPTS=4, but the Beta(2, 2) prior keeps the mean above
+        # 0.25 until enough failures accumulate; use enough to cross both.
+        for _ in range(10):
+            self.tap.manager.graph.update_from_trace(self._fail(on_target=True))
+        self.assertEqual(len(self.tap.manager.graph.constraints()), 1)
+
+    def test_stale_sensing_is_never_credit(self):
+        rep = self.tap.observe(
+            call("farm.start", monster_id=68),
+            result("farm.start", {"monster_id": 68, "kills": 1}, ok=False),
+            layer="sensing:stale")
+        self.assertIsNone(self.tap.manager.graph.edges.get("monster:68"))
 
 
 class GoalCompilerStructuralTests(TapFixture):

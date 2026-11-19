@@ -217,7 +217,8 @@ class ScheduleManager:
             }
         return None
 
-    def report(self, result: Dict[str, Any]) -> Dict[str, Any]:
+    def report(self, result: Dict[str, Any], on_target: Optional[bool] = None,
+               layer: str = "") -> Dict[str, Any]:
         """Feed a tool result back: normalise -> learn -> trace -> replan decision."""
         if not self.history:
             return {"status": "ignored", "reason": "no step running"}
@@ -247,6 +248,8 @@ class ScheduleManager:
             step=self.pointer,
             cache_hit=bool(self.plan.cache_hit) if self.plan is not None else False,
             reasoning_ms=self.reasoning_ms,
+            on_target=on_target,
+            layer=layer,
         )
         outcome = ingest["outcome"]
 
@@ -299,6 +302,8 @@ class ScheduleManager:
         step: int = 0,
         cache_hit: bool = False,
         reasoning_ms: float = 0.0,
+        on_target: Optional[bool] = None,
+        layer: str = "",
     ) -> Dict[str, Any]:
         """The single learning path: payload -> outcome -> posteriors -> trace -> graph.
 
@@ -335,7 +340,7 @@ class ScheduleManager:
                                or math.isinf(predicted_minutes) else predicted_minutes),
             outcome=outcome, updates=updates, source=source,
             plan_id=plan_id, step=step, cache_hit=cache_hit,
-            reasoning_ms=reasoning_ms,
+            reasoning_ms=reasoning_ms, on_target=on_target, layer=layer,
         )
         graph_change = self.graph.update_from_trace(trace)
         self.traces.append(trace)
@@ -357,13 +362,26 @@ class ScheduleManager:
         predicted_minutes: Optional[float] = None,
         elapsed_minutes: float = 0.0,
         source: str = "live",
+        on_target: Optional[bool] = None,
+        layer: str = "",
     ) -> Dict[str, Any]:
         """Feed an action that did not come from the planner (chat, manual, retry)."""
         outcome = self._ingest(
             action=action, tool=tool, args=args, entity=entity or {},
             predicted_minutes=predicted_minutes, result=result, source=source,
             elapsed_minutes=elapsed_minutes, plan_id=self.plan_id or "manual",
+            on_target=on_target, layer=layer,
         )
+        # `report()` prices a planned step through the same posterior table; an
+        # off-plan step is still a run the economy should count, otherwise a
+        # session driven by chat/manual calls leaves the cost model blind.
+        payload = outcome["outcome"]
+        self.economy.record_run({
+            "kind": action or tool, "label": tool,
+            "minutes": round(float(elapsed_minutes), 2),
+            "kamas": int(payload.get("kamas")),
+            "ok": bool(result.get("ok")),
+        })
         self.economy.save()
         self.traces.flush()
         self.graph.save()

@@ -3707,14 +3707,21 @@ class QuestPlanner:
                 self._crossings.pop(entry, None)
 
     def choose(self, goal: str, observation: Optional[Dict[str, Any]],
-               tools: Optional[Sequence[str]] = None) -> Optional[Any]:
+               tools: Optional[Sequence[str]] = None,
+               objective: Optional[Dict[str, Any]] = None) -> Optional[Any]:
         """Choose, and stamp the deciding branch's reason onto the call.
 
         `ToolCall.why` rides `record_meta()` into the corpus; without it a live
         bounce has no attributable cause. Only the branch that logged a plan reason
         is stamped, and only when the returned call is that same call - a claim or a
         read keeps whatever it set itself.
+
+        ``objective`` is the schedule manager's macro blueprint (tool, quest_id,
+        target_map_id, item_id, strategy_id). It is context: the policy still
+        chooses, and only a quest-advance blueprint under a quest goal is
+        confirmed (§C).
         """
+        self._schedule_objective = objective if isinstance(objective, dict) else None
         call = self._choose(goal, observation, tools)
         last = getattr(self, "_last_plan", None)
         if call is not None and last and not getattr(call, "why", None):
@@ -3770,6 +3777,25 @@ class QuestPlanner:
         if dialog is not None:
             return dialog
         mode = _goal_mode(goal, legacy=(self._goal_router == "rules"))
+        # §C / G126 decision half: the schedule manager has already chosen a
+        # quest step. Under a quest goal, confirm that step instead of decoding
+        # an id from prose again. This is the blueprint the macro planner hands
+        # down; a dialog is still answered first (it is the urgent state), and an
+        # explicit farm/order goal is never hijacked.
+        blueprint = getattr(self, "_schedule_objective", None)
+        if (blueprint and mode in ("quest", "auto")
+                and blueprint.get("tool") == "quest.advance"
+                and blueprint.get("quest_id") is not None
+                and (tools is None or "quest.advance" in tools)):
+            try:
+                scheduled = int(blueprint["quest_id"])
+            except (TypeError, ValueError):
+                scheduled = None
+            if scheduled is not None:
+                self._last_plan = ("quest.advance", {"quest_id": scheduled},
+                                   "schedule objective", scheduled,
+                                   str(blueprint.get("why") or ""))
+                return ToolCall("quest.advance", {"quest_id": scheduled}, goal)
         if mode == "order":
             # The planner is the pinned policy, so simple orders must still reach
             # a parser instead of being hijacked into the quest curriculum.

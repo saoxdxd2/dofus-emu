@@ -78,6 +78,12 @@ class Trace:
     ts: float = field(default_factory=time.time)
     cache_hit: bool = False
     reasoning_ms: float = 0.0
+    # HiMAC credit levels. ``layer`` names where a failure happened
+    # ("sensing:stale", "dispatch:failed", ...); ``on_target`` says whether the
+    # action was dispatched toward the active macro objective. Both are optional
+    # because older traces and the standalone planners do not carry them.
+    layer: str = ""
+    on_target: Optional[bool] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -94,6 +100,8 @@ class Trace:
                                   else round(self.predicted_minutes, 2)),
             "cache_hit": self.cache_hit,
             "reasoning_ms": round(self.reasoning_ms, 2),
+            "layer": self.layer,
+            "on_target": self.on_target,
             "outcome": None if self.outcome is None else self.outcome.as_dict(),
             "updates": [u.as_dict() for u in self.updates],
         }

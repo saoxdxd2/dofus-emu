@@ -104,10 +104,24 @@ class ScheduleTap:
         self.last_falsifier: Optional[ActiveGoalFalsifier] = None
         self._warned = False
         self._last_report: Dict[str, Any] = {}
+        # Decision-half bookkeeping: the last prose a verified plan was attempted
+        # for, and how many executed steps were consumed by the plan vs off it.
+        # A resend of the same goal must not fork a second plan.
+        self._armed_prose = ""
+        self.plan_steps = 0
+        self.off_plan_steps = 0
 
     def observe(self, call: Any, result: Any, *, elapsed_ms: float = 0.0,
-                observation: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Feed one executed step. Never raises: a broken learner must not stop a run."""
+                observation: Optional[Dict[str, Any]] = None,
+                layer: str = "") -> Optional[Dict[str, Any]]:
+        """Feed one executed step. Never raises: a broken learner must not stop a run.
+
+        When the executed call is the plan's active objective, the step is
+        consumed through ``tick()``/``report()`` so the schedule pointer and the
+        economy's run record advance exactly once. Any other call is recorded as
+        an off-plan action (``on_target=False`` while a plan is active), which is
+        what keeps a micro travel miss out of macro credit.
+        """
         try:
             tool = str(getattr(call, "tool", "") or "")
             args = dict(getattr(call, "args", None) or {})
@@ -118,15 +132,25 @@ class ScheduleTap:
                 # Without a submitted plan `self.player` is None and `_ingest` buckets
                 # every posterior into level 1. The observation already knows better.
                 self.manager.player = PlayerState(level=int(level))
-            report = self.manager.record_action(
-                action=ARM_BY_TOOL.get(tool, ""),
-                tool=tool,
-                args=args,
-                result=payload,
-                entity=_entity(call, observation),
-                elapsed_minutes=max(0.0, float(elapsed_ms)) / 60000.0,
-                source=str(payload.get("source") or "live") or "live",
-            )
+            planned = self.matches_active(tool, args)
+            if planned and self.manager.tick(self.manager.player) is not None:
+                report = self.manager.report(payload, on_target=True, layer=layer)
+                self.plan_steps += 1
+            else:
+                active = self.manager.active_objective() is not None
+                report = self.manager.record_action(
+                    action=ARM_BY_TOOL.get(tool, ""),
+                    tool=tool,
+                    args=args,
+                    result=payload,
+                    entity=_entity(call, observation),
+                    elapsed_minutes=max(0.0, float(elapsed_ms)) / 60000.0,
+                    source=str(payload.get("source") or "live") or "live",
+                    on_target=False if active else None,
+                    layer=layer,
+                )
+                if active:
+                    self.off_plan_steps += 1
             self.observed += 1
             if report.get("signal") == "verified":
                 self.verified += 1
@@ -242,8 +266,81 @@ class ScheduleTap:
         return 0
 
     def objective(self) -> Optional[Dict[str, Any]]:
-        """The planner's current step, or None. Nothing in `agent/` consumes this yet."""
+        """The planner's current step, or None."""
         return self.manager.active_objective()
+
+    def blueprint(self) -> Optional[Dict[str, Any]]:
+        """The macro context handed to the policy: goal identity and strategy.
+
+        This is context, not a command. The policy still owns the tool call and
+        every safety guard; a caller may use ``quest_id`` to confirm the step the
+        schedule already chose instead of decoding it from prose. ``strategy_id``
+        names the plan root ("farm", "buy", ...), the macro level HiMAC keeps
+        separate from the micro decision.
+        """
+        obj = self.objective()
+        if obj is None:
+            return None
+        args = obj.get("args") or {}
+        plan = getattr(self.manager, "plan", None)
+        root = getattr(plan, "root", None) if plan is not None else None
+        goal = getattr(self.manager, "goal", None)
+        item_id = args.get("item_id")
+        if item_id is None:
+            item_id = getattr(goal, "item_id", None)
+        return {
+            "tool": obj.get("tool"),
+            "quest_id": obj.get("quest_id"),
+            "target_map_id": args.get("map_id"),
+            "item_id": item_id,
+            "strategy_id": getattr(root, "kind", None),
+            "why": obj.get("why"),
+        }
+
+    def matches_active(self, tool: str, args: Dict[str, Any]) -> bool:
+        """Whether an executed call is the plan's active objective.
+
+        Only identity-carrying arguments are compared. A plan leaf may name a
+        quest id while the client adds coordinates to the call; that is the same
+        step, and a strict dict equality would wrongly count it as off-plan.
+        """
+        obj = self.objective()
+        if obj is None or obj.get("tool") != tool:
+            return False
+        wanted = obj.get("args") or {}
+        for key in ("quest_id", "item_id", "map_id", "monster_id", "npc_id",
+                    "cell", "x", "y", "direction", "monster", "kill_count",
+                    "qty", "name"):
+            if key in wanted and wanted[key] is not None \
+                    and (args or {}).get(key) != wanted[key]:
+                return False
+        return True
+
+    def arm_goal(self, prose: str, observation: Optional[Dict[str, Any]] = None,
+                 level: int = 60) -> Any:
+        """Try to compile this run's goal into a verified plan, once.
+
+        Only the falsifiable compiler's verified goals are submitted. "Do all
+        the quests" has no item id and is therefore rejected rather than turned
+        into a fabricated one; the tap keeps recording in that case, and the
+        policy keeps deciding without a macro blueprint.
+        """
+        prose = (prose or "").strip()
+        if not prose or prose == self._armed_prose:
+            return None
+        if self.objective() is not None:
+            return None
+        self._armed_prose = prose
+        if isinstance(observation, dict):
+            value = observation.get("level")
+            if isinstance(value, (int, float)) and value > 0:
+                level = int(value)
+        try:
+            return self.submit_prose_goal(prose, observation, level=level)
+        except Exception as exc:  # noqa: BLE001 - compilation must not stop a run
+            log.warning("goal compilation skipped for %r: %s: %s",
+                        prose[:60], type(exc).__name__, exc)
+            return None
 
     def compile_prose(self, prose: str, observation: Optional[Dict[str, Any]] = None) -> GoalResolution:
         """Resolve prose and verify Condition (a) against quest requirements or recipe DAG."""
@@ -307,6 +404,10 @@ class ScheduleTap:
             "learned": self.learned, "failed": self.failed,
             "params": len(self.experience), "events": self.experience.events_seen,
             "objective": self.objective() is not None,
+            "blueprint": self.blueprint(),
+            "plan_steps": self.plan_steps,
+            "off_plan_steps": self.off_plan_steps,
+            "armed_goal": self._armed_prose,
             "root": str(self.root),
             "compiler": {
                 "submitted": self.goals_submitted,

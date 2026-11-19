@@ -723,6 +723,16 @@ class Autopilot:
         self._read_streak = 0
         self._read_escalations = 0
         self._read_stop_reason = ""
+        # Luminance stall guard: armed only by this loop's own stall signals, so a
+        # normal frame costs nothing. `_settle_timed_out` is set by `_settle` when
+        # its deadline expires without the promise arriving.
+        self._settle_timed_out = False
+        self._frame_route = ""
+        self._frame_guard_at = 0.0
+        self._waf_blocked = 0
+        # Whether the policy's choose() accepts the §C objective keyword. A
+        # hand-built test shim may not; the decision must keep working for it.
+        self._policy_takes_objective: Optional[bool] = None
         # A talk whose packet left and whose dialog never arrived, counted. Measured
         # live 2026-10-27: NpcGenericActionRequestMessage{npcId:-1,npcActionId:3}
         # matches the client's own menu handler field for field, and the server never
@@ -1437,6 +1447,9 @@ class Autopilot:
                     return best
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                # The promise never arrived. This is one of the two arming
+                # signals for the luminance guard; the read streak is the other.
+                self._settle_timed_out = True
                 break
             _activate_observation(self, best)
             _pause_owner(self, min(delay, remaining))
@@ -2303,7 +2316,27 @@ class Autopilot:
                     except Exception as exc:
                         # only the learned planner has one
                         logger.warning("[autopilot] last_stack clear failed: %s", exc)
-                    call = self.runtime.policy.choose(goal, before or {}, tools)
+                    # A stall already in progress is the only time the luminance
+                    # guard is allowed to look at pixels; the guard itself decides
+                    # whether the frame is a fault.
+                    self._check_frame_stall(before)
+                    # Delayed outcomes expire on the loop's own clock, not only
+                    # when a server event happens to arrive.
+                    self._commit_advance()
+                    # G126 decision half: compile this goal once (verified goals
+                    # only), then hand the schedule's macro blueprint to the
+                    # policy as context. The policy still chooses and the guards
+                    # still run.
+                    tap = getattr(self, "schedule_tap", None)
+                    objective = None
+                    if tap is not None:
+                        try:
+                            tap.arm_goal(goal, before)
+                            objective = tap.blueprint()
+                        except Exception as exc:  # noqa: BLE001 - context must not stop a run
+                            logger.warning("[autopilot] schedule context skipped: %s: %s",
+                                           type(exc).__name__, exc)
+                    call = self._policy_choose(goal, before or {}, tools, objective)
                     # The reason a no-call carries goes on the blocked row below, read
                     # from `last_no_call` at the one place that writes it. It used to be
                     # copied into `_forced_reason` here as well, which could never reach
@@ -2602,6 +2635,9 @@ class Autopilot:
                 # Observation only -- the tool call above is already fixed, and no
                 # objective is injected into it.
                 self._note_schedule(call, result, latency_ms, before)
+                # CACA: every world-changing dispatch is a promise with its own
+                # deadline, registered before the answer can arrive.
+                self._commit_dispatch(call, before, goal)
                 # The bridge returns the state immediately after the directive ran.
                 # Adopt it: it is the one after-state available without a second
                 # round trip. Calling observe() here handed back the pre-action
@@ -2719,6 +2755,8 @@ class Autopilot:
                                   completion_error=completion_error)
                 verdict = v.verdict
                 self._gate.observe(call.tool, call.args, verdict)
+                # One settled transition -> at most one credited commitment.
+                self._commit_resolve(before, after, verdict, result)
                 if self._outcome_action_id is not None:
                     self.runtime.record_action_outcome(self._outcome_action_id, verdict, after)
                     self._sync_evidence_credit()
@@ -4276,9 +4314,137 @@ class Autopilot:
                   % adopted)
         return adopted
 
+    def _policy_choose(self, goal: Any, observation: Any, tools: Any,
+                       objective: Optional[Dict[str, Any]] = None) -> Any:
+        """Call the policy with §C context when it accepts it.
+
+        The planner's own ``choose`` takes ``objective``; a hand-built test shim
+        may not. A shim is a shape, not a behaviour, so falling back to the
+        three-argument call is exact, while swallowing any other TypeError would
+        hide a real defect inside the policy.
+        """
+        choose = self.runtime.policy.choose
+        takes = getattr(self, "_policy_takes_objective", None)
+        if objective is None or takes is False:
+            return choose(goal, observation, tools)
+        try:
+            call = choose(goal, observation, tools, objective=objective)
+            self._policy_takes_objective = True
+            return call
+        except TypeError as exc:
+            if "objective" not in str(exc):
+                raise
+            self._policy_takes_objective = False
+            return choose(goal, observation, tools)
+
+    def _commit_ledger(self) -> Any:
+        """The commitment ledger, built on first use.
+
+        Lazy so a hand-built `Autopilot.__new__` shim (several tests use one)
+        and an import fault can never stop a run.
+        """
+        ledger = getattr(self, "commitments", None)
+        if ledger is not None:
+            return ledger
+        try:
+            from agent.commitment_ledger import CommitmentLedger
+
+            ledger = CommitmentLedger(max_items=8)
+        except Exception as exc:  # noqa: BLE001 - credit is never worth a crash
+            logger.debug("[autopilot] commitment ledger unavailable: %s", exc)
+            return None
+        self.commitments = ledger
+        return ledger
+
+    def _commit_dispatch(self, call: Any, before: Any, goal: Any) -> None:
+        """Record what this action promises, before the world answers."""
+        tool = str(getattr(call, "tool", "") or "")
+        if not tool or tool in READ_ONLY_TOOLS or tool in LISTING_TOOLS:
+            # A read promises an answer, not progress. Keeping it out of the
+            # bounded ledger is what leaves room for the actions that can move.
+            return
+        ledger = self._commit_ledger()
+        if ledger is None:
+            return
+        try:
+            ledger.register(tool, dict(getattr(call, "args", None) or {}),
+                            goal=goal, state=before if isinstance(before, dict) else None)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[autopilot] commitment registration skipped: %s", exc)
+
+    def _commit_advance(self) -> None:
+        ledger = getattr(self, "commitments", None)
+        if ledger is not None:
+            try:
+                ledger.advance(time.time())
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[autopilot] commitment advance skipped: %s", exc)
+
+    def _commit_resolve(self, before: Any, after: Any, verdict: Any,
+                        result: Any) -> None:
+        """Attribute one settled transition to at most one commitment."""
+        ledger = getattr(self, "commitments", None)
+        if ledger is None:
+            return
+        data = getattr(result, "data", None)
+        payload = data if isinstance(data, dict) else {}
+        try:
+            attribution = ledger.ingest(before, after, verdict=verdict,
+                                        payload=payload, ts=time.time())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[autopilot] commitment attribution skipped: %s", exc)
+            return
+        if attribution.status != "unclaimed":
+            self._append_log_line(_fast_dumps(dict(
+                attribution.as_dict(), kind="commitment", session=self.session,
+                index=self._index, at=time.time())) + b"\n")
+
+    def _check_frame_stall(self, observation: Any) -> Optional[str]:
+        """Arm the pixel guard on a stalled loop and route what it finds.
+
+        This is the visual half of the stall detector, not a second planner: it
+        runs only when a read streak has repeated or ``_settle`` timed out, and
+        it takes at most one frame every 30 s. A black canvas goes to the
+        existing world recovery; a uniform white frame is the WAF challenge the
+        desktop host owns, so it is counted and the same recovery is asked to
+        reload the page.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_frame_guard_at", 0.0) < 30.0:
+            return None
+        try:
+            from agent.awareness import stall_frame_route
+
+            route = stall_frame_route(
+                observation, streak=getattr(self, "_read_streak", 0),
+                settle_timed_out=getattr(self, "_settle_timed_out", False))
+        except Exception as exc:  # noqa: BLE001 - a failed guard is not a stall
+            logger.debug("[autopilot] frame guard skipped: %s", exc)
+            return None
+        if route is None:
+            return None
+        self._frame_guard_at = now
+        self._settle_timed_out = False
+        self._frame_route = route
+        if route == "white_waf":
+            self._waf_blocked = getattr(self, "_waf_blocked", 0) + 1
+        self._append_log_line(_fast_dumps({
+            "kind": "frame_stall", "session": self.session, "route": route,
+            "read_streak": getattr(self, "_read_streak", 0),
+            "at": time.time(),
+        }) + b"\n")
+        reason = ("black screen during stall" if route == "black_screen"
+                  else "waf challenge page during stall")
+        try:
+            self._recover_world(reason, trigger="frame_stall")
+        except TypeError:
+            # Older recovery shims take only the reason.
+            self._recover_world(reason)
+        return route
+
     def _note_schedule(self, call: Any, result: Any, latency_ms: float,
                        observation: Any) -> None:
-        """G126: one executed step -> one `ScheduleManager.record_action`.
+        """G126: one executed step -> one `ScheduleManager.record_action`/`report`.
 
         `ScheduleTap.observe` is total (it swallows its own errors), so this cannot
         stop a run. `getattr` keeps hand-built test shims of `Autopilot` working:
@@ -4287,7 +4453,10 @@ class Autopilot:
         tap = getattr(self, "schedule_tap", None)
         if tap is None:
             return
-        tap.observe(call, result, elapsed_ms=latency_ms,
+        # A carried stale snapshot is a sensing fault: the graph must not learn
+        # from it even when the tool's own result text looks like a failure.
+        layer = "sensing:stale" if getattr(self, "_obs_source", None) == "stale" else ""
+        tap.observe(call, result, elapsed_ms=latency_ms, layer=layer,
                     observation=observation if isinstance(observation, dict) else {})
 
     def _note_experience(self, decision: Any, verdict: Any,
@@ -4499,6 +4668,11 @@ class Autopilot:
             # at all: `wins / fights` is unreadable at 13 of 13, and a fight the
             # session abandoned is neither a win nor a draw.
             "fights": self._fight_summary(),
+            # CACA: what the bounded commitment ledger credited, abstained on,
+            # expired and saw duplicated. A session whose events are all
+            # `unclaimed` is a wiring finding, not a learning one.
+            "commitments": (self._commit_ledger().stats()
+                            if self._commit_ledger() is not None else {}),
             "open_listings": self._listing_total,
             "log": str(self.log_path),
             "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)

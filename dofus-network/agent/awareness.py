@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agent.compute_tree import IdentityMemo
 
@@ -23,6 +23,86 @@ try:
     import orjson as _orjson
 except ImportError:  # pragma: no cover - orjson ships with the runtime
     _orjson = None
+
+# -- luminance stall guard ---------------------------------------------------
+# A black canvas means the renderer never started (or the client crashed behind a
+# live bridge); a near-uniform white frame is the AWS WAF challenge the desktop
+# host intercepts. Both look like "the world did not move" to a structured
+# observation, so they need a claim about the *pixels* before the loop retires an
+# objective for it.
+#
+# The check is deliberately a pure-NumPy sample, not an image pipeline: the guard
+# runs inside the decision loop, and its budget is 0.2 ms. A source frame is
+# strided down to FRAME_MAX_SAMPLES values, so the cost is independent of the
+# window size and the answer is still exact for a flat frame.
+BLACK_MEAN, BLACK_STD = 8.0, 4.0
+WHITE_MEAN, WHITE_STD = 242.0, 8.0
+FRAME_MAX_SAMPLES = 4096
+
+
+def frame_stats(frame: Any) -> Optional[Tuple[float, float]]:
+    """``(mean, std)`` of a decoded frame or a precomputed stats block.
+
+    ``None`` for anything that is not a numeric array: a base64 PNG is a string,
+    and decoding it here would blow the guard's budget by three orders of
+    magnitude. The page may send ``{"mean": ..., "std": ...}`` when it already
+    measured the frame.
+    """
+    if isinstance(frame, dict):
+        try:
+            mean = float(frame["mean"])
+            std = float(frame["std"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return (mean, std) if mean == mean and std == std else None
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy ships with the runtime
+        return None
+    try:
+        array = np.asarray(frame)
+    except (TypeError, ValueError):
+        return None
+    if array.dtype.kind not in "biuf" or array.size < 16:
+        return None
+    flat = array.reshape(-1)
+    stride = max(1, flat.size // FRAME_MAX_SAMPLES)
+    sample = flat[::stride][:FRAME_MAX_SAMPLES].astype("float32", copy=False)
+    return float(sample.mean()), float(sample.std())
+
+
+def classify_frame(frame: Any) -> Optional[str]:
+    """``"black_screen"``, ``"white_waf"`` or ``None`` for a normal frame."""
+    stats = frame_stats(frame)
+    if stats is None:
+        return None
+    mean, std = stats
+    if mean < BLACK_MEAN and std < BLACK_STD:
+        return "black_screen"
+    if mean > WHITE_MEAN and std < WHITE_STD:
+        return "white_waf"
+    return None
+
+
+def stall_frame_route(observation: Any, streak: int = 0,
+                      settle_timed_out: bool = False) -> Optional[str]:
+    """Route a suspected stall to recovery, but only when it is one.
+
+    The guard is armed by the caller's own stall signals (a repeat streak or a
+    settle timeout), which is what keeps it off the normal path: a rendered frame
+    is not evidence of a fault unless the loop already failed to move.
+    """
+    if not (settle_timed_out or int(streak or 0) >= 2):
+        return None
+    if not isinstance(observation, dict):
+        return None
+    frame = observation.get("frame_stats")
+    if frame is None:
+        frame = observation.get("frame")
+    if frame is None:
+        frame = observation.get("screen")
+    return classify_frame(frame)
+
 
 # A carried snapshot is the same dict object across consecutive steps, so the
 # second fingerprint of it is pure repeated work. The memo holds the object it

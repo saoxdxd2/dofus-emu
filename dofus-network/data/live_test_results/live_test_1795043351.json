@@ -1,0 +1,115 @@
+{
+  "schema": "live_test_after_build.v1",
+  "model": "models\\tool_policy.onnx",
+  "model_sha256": "c456f76e23f5d22e94e638f5bbfd1f9c210e76dc1d93f3ddabae77acc5d73b60",
+  "baseline": "models\\tool_policy.onnx",
+  "baseline_sha256": "c456f76e23f5d22e94e638f5bbfd1f9c210e76dc1d93f3ddabae77acc5d73b60",
+  "at": 1795043351.9119413,
+  "overall": "FAIL",
+  "stages": [
+    {
+      "stage": "offline_model_scoring",
+      "model": "models\\tool_policy.onnx",
+      "model_sha256": "c456f76e23f5d22e94e638f5bbfd1f9c210e76dc1d93f3ddabae77acc5d73b60",
+      "val_corpus": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3\\val.jsonl",
+      "val_corpus_exists": true,
+      "candidate": "models\\tool_policy.onnx",
+      "reference": "models\\tool_policy.onnx",
+      "reference_sha256": "c456f76e23f5d22e94e638f5bbfd1f9c210e76dc1d93f3ddabae77acc5d73b60",
+      "candidate_sha256": "c456f76e23f5d22e94e638f5bbfd1f9c210e76dc1d93f3ddabae77acc5d73b60",
+      "arch": "dedicated-v1",
+      "params": 90305,
+      "corpus": {
+        "rows": 3719,
+        "sha256": "f1f76b0d86e8f2624c7f94471d2ebe29729c02eed81fc85bfbc0969afc65065f"
+      },
+      "base": {
+        "rows": 3719,
+        "val_accuracy": 0.914,
+        "optimal": 0.9209,
+        "macro_f1": 0.2122,
+        "macro_f1_common": 0.9108,
+        "ece": 0.023
+      },
+      "candidate_metrics": {
+        "rows": 3719,
+        "val_accuracy": 0.914,
+        "optimal": 0.9209,
+        "macro_f1": 0.2122,
+        "macro_f1_common": 0.9108,
+        "ece": 0.023
+      },
+      "paired": {
+        "comparable": true,
+        "rows": 3719,
+        "delta": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "gained": 0,
+        "lost": 0,
+        "significant": false
+      },
+      "paired_optimal": {
+        "comparable": true,
+        "rows": 3719,
+        "delta": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "gained": 0,
+        "lost": 0,
+        "significant": false
+      },
+      "decision": {
+        "expected_gain_model": 0.8048,
+        "expected_gain_teacher": 0.7957,
+        "expected_gain_oracle": 0.8209,
+        "gain_capture": 0.3604
+      },
+      "reachable": {
+        "count": 8,
+        "gained": [],
+        "lost": []
+      },
+      "gate": {
+        "promote": false,
+        "reasons": [
+          "no decision-gain improvement",
+          "no significant improvement in label accuracy (+0.00000, 95% CI [+0.00000, +0.00000]) or task optimality"
+        ],
+        "significant": {
+          "accuracy": false,
+          "optimal": false
+        }
+      }
+    },
+    {
+      "stage": "world_state_tests",
+      "exit_code": 0,
+      "decision": "PASS"
+    },
+    {
+      "stage": "dialog_tests",
+      "exit_code": 0,
+      "decision": "PASS"
+    },
+    {
+      "stage": "battle_solver_tests",
+      "exit_code": 0,
+      "decision": "PASS"
+    },
+    {
+      "stage": "planner_benchmark",
+      "seeds": "20000,20001,20002",
+      "steps": 1500,
+      "exit_code": 2,
+      "stdout_tail": "",
+      "stderr_tail": "usage: bench_quest_policies.py [-h] [--seeds SEEDS] [--seed-base SEED_BASE]\n                               [--steps STEPS] [--level LEVEL]\n                               [--policies POLICIES] [--depth DEPTH]\n                               [--score-mode {rate,cummean}] [--noise]\n                               [--deterministic] [--travel-cost]\n                               [--no-travel-cost] [--no-perturb] [--json]\nbench_quest_policies.py: error: argument --seeds: invalid int value: '20000,20001,20002'",
+      "decision": "FAIL"
+    },
+    {
+      "stage": "regression_gate",
+      "exit_code": 1,
+      "decision": "FAIL"
+    }
+  ]
+}

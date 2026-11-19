@@ -96,6 +96,32 @@ def is_inert_layer(layer: str) -> bool:
     return layer in INERT_LAYERS
 
 
+# Micro layers are execution steps: a missed crossing (G81) or a read that was
+# answered is evidence about *travelling/looking*, not about whether the macro
+# quest or farm route works. Their traces may still price their own edge, but
+# they may never write a structural constraint on the macro edge.
+MICRO_ACTIONS = frozenset({"goto"})
+MICRO_TOOLS = frozenset({"nav.goto", "state.snapshot", "map.read"})
+
+
+def macro_credit_allowed(trace: Trace) -> bool:
+    """Whether this trace may change macro structure (``blocked_below``).
+
+    HiMAC separation: an explicit ``on_target=False`` means the action was not
+    dispatched toward the active macro objective, and a travel miss is a micro
+    layer by construction. Absent ``on_target`` keeps the historical behaviour
+    for traces recorded before the credit split existed; the live tap always
+    sets it.
+    """
+    if trace.outcome is None:
+        return False
+    if trace.on_target is False:
+        return False
+    if trace.action in MICRO_ACTIONS or trace.tool in MICRO_TOOLS:
+        return False
+    return True
+
+
 class BOCPD:
     """Bayesian Online Change-Point Detection for a single posterior.
 
@@ -269,8 +295,10 @@ class DecisionGraph:
         if key is None:
             return None
 
-        # Gate: inert failures must not reshape the world graph.
-        layer = classify_outcome(trace)
+        # Gate: inert failures must not reshape the world graph. A layer carried
+        # on the trace (the live tap's attribution) wins over the text classifier:
+        # the tap knows the observation was stale even when the error text does not.
+        layer = trace.layer or classify_outcome(trace)
         if is_inert_layer(layer):
             self.rejected += 1
             return None
@@ -313,7 +341,10 @@ class DecisionGraph:
             change["observed_minutes"] = round(observed, 1)
 
         # Structural change: repeated failure at a level becomes a constraint.
+        # Only macro credit may write it; a run of missed border crossings or
+        # stale reads is not evidence that the farm/quest route is level-locked.
         if (edge.blocked_below is None
+                and macro_credit_allowed(trace)
                 and edge.attempts >= BLOCK_MIN_ATTEMPTS
                 and edge.success.mean() < BLOCK_MAX_SUCCESS):
             level = trace.entity.get("monster_level") or trace.entity.get("level")
